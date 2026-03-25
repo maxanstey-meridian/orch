@@ -51,4 +51,18 @@ describe('state', () => {
     expect(loaded).toEqual({ lastCompletedSlice: 3 });
     expect(loaded.implSessionId).toBeUndefined();
   });
+
+  it('discards fields with wrong types from valid JSON', async () => {
+    await writeFile(testPath, JSON.stringify({ implSessionId: 42, lastCompletedSlice: 'not-a-number', reviewSessionId: 'valid' }));
+    const loaded = await loadState(testPath);
+    expect(loaded).toEqual({ reviewSessionId: 'valid' });
+  });
+
+  it('returns default state for non-object JSON values', async () => {
+    await writeFile(testPath, '[1,2,3]');
+    expect(await loadState(testPath)).toEqual({});
+
+    await writeFile(testPath, '"hello"');
+    expect(await loadState(testPath)).toEqual({});
+  });
 });
