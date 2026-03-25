@@ -330,4 +330,109 @@ describe('processSlices', () => {
     // Second review checks changes against the advanced baseline
     expect(deps.hasChanges).toHaveBeenLastCalledWith('/tmp/repo', 'ref-after-fix');
   });
+
+  it('continues to next slice after implementation failure on first slice', async () => {
+    const implAgent = makeAgent([
+      makeResult({ exitCode: 1, assistantText: '' }), // slice 1 fails
+      makeResult(), // slice 2 succeeds
+    ]);
+    const deps = makeDeps({ implAgent });
+    const opts = makeOpts({ slices: [makeSlice(1), makeSlice(2)] });
+    await processSlices(opts, deps);
+
+    expect(implAgent.send).toHaveBeenCalledTimes(2);
+    expect(deps.saveState).toHaveBeenCalledTimes(1);
+    expect(deps.saveState).toHaveBeenCalledWith(
+      '/tmp/state.json',
+      expect.objectContaining({ lastCompletedSlice: 2 }),
+    );
+  });
+
+  it('marks slice complete even when review agent fails', async () => {
+    const reviewAgent = makeAgent([makeResult({ exitCode: 1, sessionId: 'sess-review' })]);
+    const deps = makeDeps({
+      reviewAgent,
+      hasChanges: vi.fn().mockResolvedValue(true),
+    });
+    const opts = makeOpts({ slices: [makeSlice(1)] });
+    await processSlices(opts, deps);
+
+    expect(deps.saveState).toHaveBeenCalledTimes(1);
+    expect(deps.saveState).toHaveBeenCalledWith(
+      '/tmp/state.json',
+      expect.objectContaining({ lastCompletedSlice: 1 }),
+    );
+  });
+
+  it('continues review cycle after execution failure in fix pass', async () => {
+    const reviewResult = makeResult({ assistantText: 'Found issue', sessionId: 'sess-review' });
+    const cleanResult = makeResult({ assistantText: 'No issues', sessionId: 'sess-review' });
+    const reviewAgent = makeAgent([reviewResult, cleanResult]);
+
+    // Fix pass 1 fails (exitCode 1), cycle continues to second review which is clean
+    const implAgent = makeAgent([makeResult(), makeResult({ exitCode: 1 })]);
+
+    const deps = makeDeps({
+      implAgent,
+      reviewAgent,
+      extractFindings: vi.fn()
+        .mockReturnValueOnce('Found issue')
+        .mockReturnValueOnce('No issues'),
+      isCleanReview: vi.fn()
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(true),
+      hasChanges: vi.fn().mockResolvedValue(true),
+      captureRef: vi.fn()
+        .mockResolvedValueOnce('ref-initial')
+        .mockResolvedValueOnce('ref-initial'), // NOT advanced — fix failed
+    });
+    const opts = makeOpts({ slices: [makeSlice(1)], maxReviewCycles: 2 });
+    await processSlices(opts, deps);
+
+    // Review ran twice — cycle continued after execution failure
+    expect(reviewAgent.send).toHaveBeenCalledTimes(2);
+    // Baseline was NOT advanced (captureRef not called again for advancement)
+    expect(deps.captureRef).toHaveBeenCalledTimes(1); // only initial baseline
+  });
+
+  it('updates state progressively across multiple slices', async () => {
+    const deps = makeDeps();
+    const opts = makeOpts({ slices: [makeSlice(1), makeSlice(2)] });
+    await processSlices(opts, deps);
+
+    expect(deps.saveState).toHaveBeenCalledTimes(2);
+    expect(deps.saveState).toHaveBeenNthCalledWith(1,
+      '/tmp/state.json',
+      expect.objectContaining({ lastCompletedSlice: 1 }),
+    );
+    expect(deps.saveState).toHaveBeenNthCalledWith(2,
+      '/tmp/state.json',
+      expect.objectContaining({ lastCompletedSlice: 2 }),
+    );
+  });
+
+  it('handles empty slices array with no side effects', async () => {
+    const deps = makeDeps();
+    const opts = makeOpts({ slices: [] });
+    await processSlices(opts, deps);
+
+    expect(deps.implAgent.send).not.toHaveBeenCalled();
+    expect(deps.reviewAgent.send).not.toHaveBeenCalled();
+    expect(deps.saveState).not.toHaveBeenCalled();
+  });
+
+  it('skips review loop entirely when maxReviewCycles is 0', async () => {
+    const deps = makeDeps({
+      hasChanges: vi.fn().mockResolvedValue(true),
+    });
+    const opts = makeOpts({ slices: [makeSlice(1)], maxReviewCycles: 0 });
+    await processSlices(opts, deps);
+
+    expect(deps.reviewAgent.send).not.toHaveBeenCalled();
+    expect(deps.saveState).toHaveBeenCalledTimes(1);
+    expect(deps.saveState).toHaveBeenCalledWith(
+      '/tmp/state.json',
+      expect.objectContaining({ lastCompletedSlice: 1 }),
+    );
+  });
 });
