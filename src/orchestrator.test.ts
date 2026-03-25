@@ -209,4 +209,22 @@ describe('runOrchestrator', () => {
 
     expect(deps.runGapAnalysis).toHaveBeenCalledTimes(2);
   });
+
+  it('passes per-group baseline to gap analysis, not run baseline', async () => {
+    const captureRefMock = vi.fn()
+      .mockResolvedValueOnce('run-baseline')
+      .mockResolvedValueOnce('group1-baseline')
+      .mockResolvedValueOnce('group2-baseline');
+
+    const deps = makeDeps({ captureRef: captureRefMock });
+    await runOrchestrator(makeArgs({ automatic: true }), deps);
+
+    expect(deps.runGapAnalysis).toHaveBeenCalledTimes(2);
+    // First group gets group1-baseline, not run-baseline
+    const call1 = (deps.runGapAnalysis as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call1.baseline).toBe('group1-baseline');
+    // Second group gets group2-baseline
+    const call2 = (deps.runGapAnalysis as ReturnType<typeof vi.fn>).mock.calls[1][0];
+    expect(call2.baseline).toBe('group2-baseline');
+  });
 });

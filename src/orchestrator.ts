@@ -91,6 +91,9 @@ export const runOrchestrator = async (
 
     deps.log(`Starting group: ${group.name}`);
 
+    // Capture per-group baseline for gap analysis
+    const groupBaseline = await deps.captureRef(CWD);
+
     // Process slices
     await deps.processSlices({
       slices: group.slices,
@@ -106,7 +109,7 @@ export const runOrchestrator = async (
     // Gap analysis
     await deps.runGapAnalysis({
       slices: group.slices,
-      baseline: runBaseline,
+      baseline: groupBaseline,
       profile,
       cwd: CWD,
       maxReviewCycles: MAX_REVIEW_CYCLES,
