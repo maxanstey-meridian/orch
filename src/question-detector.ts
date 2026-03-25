@@ -14,11 +14,15 @@ export const detectQuestion = (output: string): boolean => {
   if (!output) return false;
 
   const tail = output.slice(-TAIL_LENGTH);
-  const stripped = tail.replace(/[\s`]*$/, '');
+  const stripped = tail.replace(/[\s`]*$/, "");
 
-  if (stripped.endsWith('?')) return true;
+  if (stripped.endsWith("?")) return true;
 
-  const lastSentence = stripped.split(/[.\n]/).filter(s => s.trim()).pop() ?? '';
+  const lastSentence =
+    stripped
+      .split(/[.\n]/)
+      .filter((s) => s.trim())
+      .pop() ?? "";
 
   for (const pattern of PATTERNS) {
     if (pattern.test(lastSentence)) return true;

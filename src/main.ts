@@ -11,57 +11,59 @@
  *   npx ts-node src/main.ts --plan plan.md --group Auth      # start from group
  *   npx ts-node src/main.ts --plan plan.md --no-interaction  # suppress all prompts
  *   npx ts-node src/main.ts --plan plan.md --skip-fingerprint
+ *   npx ts-node src/main.ts --plan plan.md --review-threshold 50
  */
 
-import { resolve } from 'path';
-import { readFileSync } from 'fs';
-import { readFile } from 'fs/promises';
-import { createInterface } from 'readline';
-import { parsePlan, type Group, type Slice } from './plan-parser.js';
-import { loadState, saveState, clearState, type OrchestratorState } from './state.js';
-import { runFingerprint, wrapBrief } from './fingerprint.js';
-import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from './agent.js';
-import { captureRef, hasChanges, getStatus } from './git.js';
-import { assertGitRepo } from './repo-check.js';
-import { runTestGate } from './test-gate.js';
-import { isCleanReview } from './review-check.js';
-import { extractFindings } from './extract-findings.js';
-import { detectCreditExhaustion } from './credit-detection.js';
+import { resolve } from "path";
+import { readFileSync } from "fs";
+import { readFile } from "fs/promises";
+import { createInterface } from "readline";
+import { parsePlan, type Group, type Slice } from "./plan-parser.js";
+import { loadState, saveState, clearState, type OrchestratorState } from "./state.js";
+import { runFingerprint, wrapBrief } from "./fingerprint.js";
+import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
+import { captureRef, hasChanges, getStatus } from "./git.js";
+import { assertGitRepo } from "./repo-check.js";
+import { runTestGate } from "./test-gate.js";
+import { isCleanReview } from "./review-check.js";
+
+import { detectCreditExhaustion } from "./credit-detection.js";
+import { measureDiff, shouldReview } from "./review-threshold.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const CONFIG = {
   maxReviewCycles: 3,
-  stateFile: '.orchestrator-state.json',
-  briefDir: '.orch',
+  stateFile: ".orchestrator-state.json",
+  briefDir: ".orch",
 };
 
 // ─── ANSI ────────────────────────────────────────────────────────────────────
 
 const a = {
-  reset:      '\x1b[0m',
-  bold:       '\x1b[1m',
-  dim:        '\x1b[2m',
-  cyan:       '\x1b[36m',
-  magenta:    '\x1b[35m',
-  green:      '\x1b[32m',
-  red:        '\x1b[31m',
-  yellow:     '\x1b[33m',
-  white:      '\x1b[37m',
-  bgCyan:     '\x1b[46m\x1b[30m',
-  bgMagenta:  '\x1b[45m\x1b[30m',
-  bgGreen:    '\x1b[42m\x1b[30m',
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  cyan: "\x1b[36m",
+  magenta: "\x1b[35m",
+  green: "\x1b[32m",
+  red: "\x1b[31m",
+  yellow: "\x1b[33m",
+  white: "\x1b[37m",
+  bgCyan: "\x1b[46m\x1b[30m",
+  bgMagenta: "\x1b[45m\x1b[30m",
+  bgGreen: "\x1b[42m\x1b[30m",
 };
 
 const ts = (): string => {
   const d = new Date();
-  return `${a.dim}${d.toLocaleTimeString('en-GB', { hour12: false })}${a.reset}`;
+  return `${a.dim}${d.toLocaleTimeString("en-GB", { hour12: false })}${a.reset}`;
 };
 
 const log = (msg: string) => console.log(msg);
 
 const logSection = (title: string) => {
-  const line = '━'.repeat(64);
+  const line = "━".repeat(64);
   log(`\n${a.bold}${a.white}${line}${a.reset}`);
   log(`${a.bold}  ${title}${a.reset}`);
   log(`${a.bold}${a.white}${line}${a.reset}`);
@@ -69,25 +71,39 @@ const logSection = (title: string) => {
 
 // ─── Bot styles ──────────────────────────────────────────────────────────────
 
-const BOT_TDD: AgentStyle    = { label: 'TDD',    color: a.cyan,    badge: `${a.bgCyan} TDD ${a.reset}` };
-const BOT_REVIEW: AgentStyle = { label: 'REVIEW', color: a.magenta, badge: `${a.bgMagenta} REV ${a.reset}` };
-const BOT_GAP: AgentStyle    = { label: 'GAP',    color: a.yellow,  badge: `${a.yellow}${a.bold} GAP ${a.reset}` };
-const BOT_FINAL: AgentStyle  = { label: 'FINAL',  color: a.green,   badge: `${a.bgGreen} FIN ${a.reset}` };
+const BOT_TDD: AgentStyle = { label: "TDD", color: a.cyan, badge: `${a.bgCyan} TDD ${a.reset}` };
+const BOT_REVIEW: AgentStyle = {
+  label: "REVIEW",
+  color: a.magenta,
+  badge: `${a.bgMagenta} REV ${a.reset}`,
+};
+const BOT_GAP: AgentStyle = {
+  label: "GAP",
+  color: a.yellow,
+  badge: `${a.yellow}${a.bold} GAP ${a.reset}`,
+};
+const BOT_FINAL: AgentStyle = {
+  label: "FINAL",
+  color: a.green,
+  badge: `${a.bgGreen} FIN ${a.reset}`,
+};
 
 // ─── Agent helpers ───────────────────────────────────────────────────────────
 
-const BASE_FLAGS = ['--dangerously-skip-permissions'] as const;
+const BASE_FLAGS = ["--dangerously-skip-permissions"] as const;
 
 const spawnAgent = (style: AgentStyle, systemPrompt?: string): AgentProcess =>
   createAgent({
-    command: 'claude',
+    command: "claude",
     args: [
       ...BASE_FLAGS,
-      '-p',
-      '--input-format', 'stream-json',
-      '--output-format', 'stream-json',
-      '--verbose',
-      ...(systemPrompt ? ['--append-system-prompt', systemPrompt] : []),
+      "-p",
+      "--input-format",
+      "stream-json",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
     ],
     style,
   });
@@ -97,21 +113,86 @@ const spawnAgent = (style: AgentStyle, systemPrompt?: string): AgentProcess =>
 type Streamer = ((text: string) => void) & { flush: () => void };
 
 const makeStreamer = (style: AgentStyle): Streamer => {
-  let partial = '';
+  const gutter = `${style.color}│${a.reset} `;
+  const wrapIndent = `${style.color}│${a.reset}   `;
+  const maxWidth = (process.stdout.columns || 120) - 4;
+  let atLineStart = true;
+  let blankLines = 0;
+  let col = 0;
+
+  const highlight = (text: string): string =>
+    text
+      .replace(/\bRED\b/g, `${a.bold}${a.red}RED${a.reset}`)
+      .replace(/\bGREEN\b/g, `${a.bold}${a.green}GREEN${a.reset}`)
+      .replace(
+        /\b([Cc]ommitted at|[Cc]ommit) `([a-f0-9]{7,40})`/g,
+        `$1 ${a.bold}${a.yellow}\`$2\`${a.reset}`,
+      );
+
   const write = (text: string) => {
-    partial += text;
-    const lines = partial.split('\n');
-    partial = lines.pop() ?? '';
-    for (const line of lines) {
-      log(`${style.color}  ${style.label}${a.reset} ${a.dim}│${a.reset} ${line}`);
+    // Each assistant event is a full block — add separator if needed
+    if (!atLineStart) {
+      process.stdout.write("\n");
+      atLineStart = true;
+      blankLines = 1;
+    }
+    if (blankLines < 2) {
+      process.stdout.write(`${gutter}\n`);
+      blankLines++;
+    }
+
+    const formatted = highlight(text);
+    const words = formatted.split(/(\s+)/);
+
+    for (const word of words) {
+      if (atLineStart) {
+        process.stdout.write(gutter);
+        atLineStart = false;
+        col = 0;
+      }
+      if (word === "\n") {
+        process.stdout.write("\n");
+        atLineStart = true;
+        blankLines++;
+        col = 0;
+      } else if (word.includes("\n")) {
+        for (const ch of word) {
+          if (atLineStart) {
+            process.stdout.write(gutter);
+            atLineStart = false;
+            col = 0;
+          }
+          process.stdout.write(ch);
+          if (ch === "\n") {
+            atLineStart = true;
+            blankLines++;
+            col = 0;
+          } else {
+            blankLines = 0;
+            col++;
+          }
+        }
+      } else if (col + word.length > maxWidth && col > 0 && word.trim()) {
+        process.stdout.write("\n");
+        process.stdout.write(wrapIndent);
+        process.stdout.write(word);
+        col = 2 + word.length;
+        blankLines = 0;
+      } else {
+        process.stdout.write(word);
+        col += word.length;
+        blankLines = 0;
+      }
     }
   };
+
   write.flush = () => {
-    if (partial.trim()) {
-      log(`${style.color}  ${style.label}${a.reset} ${a.dim}│${a.reset} ${partial}`);
-      partial = '';
+    if (!atLineStart) {
+      process.stdout.write("\n");
+      atLineStart = true;
     }
   };
+
   return write;
 };
 
@@ -127,7 +208,10 @@ const withBrief = (prompt: string, brief: string): string => {
 const ask = (question: string): Promise<string> => {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise<string>((resolve) => {
-    rl.question(question, (answer: string) => { rl.close(); resolve(answer); });
+    rl.question(question, (answer: string) => {
+      rl.close();
+      resolve(answer);
+    });
   });
 };
 
@@ -150,7 +234,8 @@ const followUpIfNeeded = async (
     if (!answer.trim()) {
       log(`${ts()} ${a.dim}skipped — telling bot to proceed autonomously${a.reset}`);
       current = await agent.send(
-        'No preference — proceed with your best judgement. Make the decision yourself and continue implementing.', s,
+        "No preference — proceed with your best judgement. Make the decision yourself and continue implementing.",
+        s,
       );
     } else {
       current = await agent.send(answer, s);
@@ -233,9 +318,12 @@ If you find gaps, list each one as:
 
 If everything is well covered, respond with exactly: NO_GAPS_FOUND`;
 
-const buildFinalPasses = (baseSha: string, planContent: string): { name: string; prompt: string }[] => [
+const buildFinalPasses = (
+  baseSha: string,
+  planContent: string,
+): { name: string; prompt: string }[] => [
   {
-    name: 'Type fidelity',
+    name: "Type fidelity",
     prompt: `You are auditing type safety across all changes since commit ${baseSha}.
 
 Search for and report ANY of these violations:
@@ -255,7 +343,7 @@ For each finding report:
 If everything is clean, respond with exactly: NO_ISSUES_FOUND`,
   },
   {
-    name: 'Plan completeness',
+    name: "Plan completeness",
     prompt: `You are verifying that the implementation matches the plan.
 
 ## Plan
@@ -277,7 +365,7 @@ Report:
 If everything matches, respond with exactly: NO_ISSUES_FOUND`,
   },
   {
-    name: 'Cross-cutting integration',
+    name: "Cross-cutting integration",
     prompt: `You are reviewing cross-component integration across all changes since commit ${baseSha}.
 
 Check:
@@ -301,16 +389,18 @@ If everything integrates cleanly, respond with exactly: NO_ISSUES_FOUND`,
 
 const printSliceIntro = (slice: Slice) => {
   log(`\n${a.bold}${a.white}┌─ Slice ${slice.number}: ${slice.title}${a.reset}`);
-  const introLine = slice.content.split('\n').find((l: string) => l.trim() && !l.startsWith('#') && !l.startsWith('---'));
+  const introLine = slice.content
+    .split("\n")
+    .find((l: string) => l.trim() && !l.startsWith("#") && !l.startsWith("---"));
   if (introLine) log(`${a.dim}│  ${introLine.trim()}${a.reset}`);
   log(`${a.dim}└──${a.reset}\n`);
 };
 
 const printSliceSummary = (sliceNumber: number, summary: string) => {
   if (!summary.trim()) return;
-  log('');
+  log("");
   log(`${a.bold}${a.green}┌─ Slice ${sliceNumber} complete ────────────────────────────${a.reset}`);
-  for (const line of summary.trim().split('\n')) {
+  for (const line of summary.trim().split("\n")) {
     const formatted = line
       .replace(/^## (.+)/, `${a.bold}${a.white}│ $1${a.reset}`)
       .replace(/^- (.+)/, `${a.dim}│${a.reset}  - $1`)
@@ -333,26 +423,29 @@ const reviewFixLoop = async (
   reviewFirstMessage: { value: boolean },
   testCommand: string | undefined,
   exitOnCreditExhaustion: (result: AgentResult, agent: AgentProcess) => Promise<void>,
+  baseSha?: string,
 ): Promise<void> => {
-  let baseSha = await captureRef(cwd);
+  let reviewSha = baseSha ?? (await captureRef(cwd));
 
   for (let cycle = 1; cycle <= CONFIG.maxReviewCycles; cycle++) {
-    log(`\n${ts()} ${BOT_REVIEW.badge} ${a.magenta}review cycle ${cycle}/${CONFIG.maxReviewCycles}${a.reset}`);
+    log(
+      `\n${ts()} ${BOT_REVIEW.badge} ${a.magenta}review cycle ${cycle}/${CONFIG.maxReviewCycles}${a.reset}`,
+    );
 
-    if (!await hasChanges(cwd, baseSha)) {
+    if (!(await hasChanges(cwd, reviewSha))) {
       log(`${ts()} ${a.dim}no diff — skipping review${a.reset}`);
       break;
     }
 
     const reviewPrompt = reviewFirstMessage.value
-      ? withBrief(buildReviewPrompt(content, baseSha), brief)
-      : buildReviewPrompt(content, baseSha);
+      ? withBrief(buildReviewPrompt(content, reviewSha), brief)
+      : buildReviewPrompt(content, reviewSha);
     let s = makeStreamer(BOT_REVIEW);
     const reviewResult = await reviewAgent.send(reviewPrompt, s);
     s.flush();
     await exitOnCreditExhaustion(reviewResult, reviewAgent);
     reviewFirstMessage.value = false;
-    const reviewText = extractFindings(reviewResult);
+    const reviewText = reviewResult.assistantText;
 
     if (!reviewText || isCleanReview(reviewText)) {
       log(`${ts()} ${a.green}✓ Review clean — no findings.${a.reset}`);
@@ -363,20 +456,26 @@ const reviewFixLoop = async (
     const preFixSha = await captureRef(cwd);
     const fixPrompt = buildTddPrompt(content, reviewText);
     s = makeStreamer(BOT_TDD);
-    const fixResult = await tddAgent.send(tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt, s);
+    const fixResult = await tddAgent.send(
+      tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt,
+      s,
+    );
     s.flush();
     tddFirstMessage.value = false;
     await followUpIfNeeded(fixResult, tddAgent, noInteraction);
 
-    if (!await hasChanges(cwd, preFixSha)) {
+    if (!(await hasChanges(cwd, preFixSha))) {
       log(`${ts()} ${a.dim}TDD bot made no changes — review cycle complete${a.reset}`);
       break;
     }
 
     const testResult = await runTestGate({ testCommand });
     if (!testResult.passed) {
-      log(`${ts()} ${a.yellow}⚠ Tests failed after review fix cycle ${cycle}. Continuing...${a.reset}`);
+      log(
+        `${ts()} ${a.yellow}⚠ Tests failed after review fix cycle ${cycle}. Continuing...${a.reset}`,
+      );
     }
+
   }
 };
 
@@ -391,17 +490,23 @@ const main = async () => {
     return i !== -1 ? args[i + 1] : undefined;
   };
 
-  const planPath = resolve(getArg('--plan') ?? 'plan.md');
-  const auto = args.includes('--auto');
-  const skipFingerprint = args.includes('--skip-fingerprint');
-  const noInteraction = args.includes('--no-interaction');
-  const resetState = args.includes('--reset');
-  const groupFilter = getArg('--group');
+  const planPath = resolve(getArg("--plan") ?? "plan.md");
+  const auto = args.includes("--auto");
+  const skipFingerprint = args.includes("--skip-fingerprint");
+  const noInteraction = args.includes("--no-interaction");
+  const resetState = args.includes("--reset");
+  const groupFilter = getArg("--group");
+  const rawThreshold = getArg("--review-threshold");
+  const reviewThreshold = rawThreshold !== undefined ? Number(rawThreshold) : 30;
+  if (Number.isNaN(reviewThreshold)) {
+    console.error(`Invalid --review-threshold value: ${rawThreshold}`);
+    process.exit(1);
+  }
 
   // 1. Load skill prompts
-  const skillsDir = resolve(import.meta.dirname, '..', 'skills');
-  const tddSkill = readFileSync(resolve(skillsDir, 'tdd.md'), 'utf-8');
-  const reviewSkill = readFileSync(resolve(skillsDir, 'deep-review.md'), 'utf-8');
+  const skillsDir = resolve(import.meta.dirname, "..", "skills");
+  const tddSkill = readFileSync(resolve(skillsDir, "tdd.md"), "utf-8");
+  const reviewSkill = readFileSync(resolve(skillsDir, "deep-review.md"), "utf-8");
 
   // 2. Parse plan
   const groups = await parsePlan(planPath);
@@ -432,8 +537,14 @@ const main = async () => {
     tddAgent.kill();
     reviewAgent.kill();
   };
-  process.on('SIGINT', () => { cleanup(); process.exit(130); });
-  process.on('SIGTERM', () => { cleanup(); process.exit(143); });
+  process.on("SIGINT", () => {
+    cleanup();
+    process.exit(130);
+  });
+  process.on("SIGTERM", () => {
+    cleanup();
+    process.exit(143);
+  });
 
   // Closure over mutable `state` — always saves the latest value
   const exitOnCreditExhaustion = async (result: AgentResult, agent: AgentProcess) => {
@@ -441,19 +552,29 @@ const main = async () => {
     if (!signal) return;
     log(`\n${ts()} ${a.red}Credit exhaustion detected: ${signal.message}${a.reset}`);
     await saveState(resolve(cwd, CONFIG.stateFile), state);
-    if (signal.kind === 'mid-response') {
-      log(`${ts()} ${a.yellow}Agent was interrupted mid-response. The current slice will be re-run on resume.${a.reset}`);
+    if (signal.kind === "mid-response") {
+      log(
+        `${ts()} ${a.yellow}Agent was interrupted mid-response. The current slice will be re-run on resume.${a.reset}`,
+      );
     }
     cleanup();
     process.exit(2);
   };
 
   // 7. Startup banner
-  log(`\n${a.bold}🚀 Orchestrator${a.reset} ${a.dim}${new Date().toISOString().slice(0, 16)}${a.reset}`);
+  log(
+    `\n${a.bold}🚀 Orchestrator${a.reset} ${a.dim}${new Date().toISOString().slice(0, 16)}${a.reset}`,
+  );
   log(`   ${a.dim}Plan${a.reset}    ${planPath}`);
-  log(`   ${a.dim}Brief${a.reset}   ${brief ? `${a.green}✓${a.reset} .orch/brief.md` : `${a.dim}none${a.reset}`}`);
-  log(`   ${a.dim}Tests${a.reset}   ${profile.testCommand ? `${a.green}✓${a.reset} ${profile.testCommand}` : `${a.yellow}⚠ none detected${a.reset}`}`);
-  log(`   ${a.dim}Mode${a.reset}    ${groupFilter ? `start from "${groupFilter}"` : auto ? 'automatic' : 'interactive'}`);
+  log(
+    `   ${a.dim}Brief${a.reset}   ${brief ? `${a.green}✓${a.reset} .orch/brief.md` : `${a.dim}none${a.reset}`}`,
+  );
+  log(
+    `   ${a.dim}Tests${a.reset}   ${profile.testCommand ? `${a.green}✓${a.reset} ${profile.testCommand}` : `${a.yellow}⚠ none detected${a.reset}`}`,
+  );
+  log(
+    `   ${a.dim}Mode${a.reset}    ${groupFilter ? `start from "${groupFilter}"` : auto ? "automatic" : "interactive"}`,
+  );
   log(`   ${BOT_TDD.badge} ${a.dim}persistent (${tddAgent.sessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_REVIEW.badge} ${a.dim}persistent (${reviewAgent.sessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
@@ -464,48 +585,58 @@ const main = async () => {
     : 0;
 
   if (groupFilter && startIdx === -1) {
-    console.error(`No group "${groupFilter}". Available: ${groups.map((g) => g.name).join(', ')}`);
+    console.error(`No group "${groupFilter}". Available: ${groups.map((g) => g.name).join(", ")}`);
     cleanup();
     process.exit(1);
   }
 
   const remaining = groups.slice(startIdx);
-  log('');
+  log("");
   for (let g = 0; g < remaining.length; g++) {
     const grp = remaining[g];
-    const slices = grp.slices.map((s) => `${s.number}`).join(', ');
-    const marker = g === 0 ? `${a.bold}▸${a.reset}` : ' ';
-    log(`   ${marker} ${a.dim}${String(g + 1).padStart(2)}.${a.reset} ${g === 0 ? a.bold : a.dim}${grp.name}${a.reset} ${a.dim}(${slices})${a.reset}`);
+    const slices = grp.slices.map((s) => `${s.number}`).join(", ");
+    const marker = g === 0 ? `${a.bold}▸${a.reset}` : " ";
+    log(
+      `   ${marker} ${a.dim}${String(g + 1).padStart(2)}.${a.reset} ${g === 0 ? a.bold : a.dim}${grp.name}${a.reset} ${a.dim}(${slices})${a.reset}`,
+    );
   }
-  log('');
+  log("");
 
   const runBaseSha = await captureRef(cwd);
-  const planContent = await readFile(planPath, 'utf-8');
+  const planContent = await readFile(planPath, "utf-8");
 
   // 9. Group loop
   for (let i = 0; i < remaining.length; i++) {
     const group = remaining[i];
 
-    logSection(`Group: ${group.name} — ${group.slices.map((s: Slice) => `Slice ${s.number}`).join(', ')}`);
+    logSection(
+      `Group: ${group.name} — ${group.slices.map((s: Slice) => `Slice ${s.number}`).join(", ")}`,
+    );
 
     const groupBaseSha = await captureRef(cwd);
 
     // ── Slice loop ──
+    let reviewBase = groupBaseSha;
     for (const slice of group.slices) {
       if (state.lastCompletedSlice !== undefined && slice.number <= state.lastCompletedSlice) {
-        log(`\n${ts()} ${a.dim}⏭ Slice ${slice.number}: ${slice.title} — already completed${a.reset}`);
+        log(
+          `\n${ts()} ${a.dim}⏭ Slice ${slice.number}: ${slice.title} — already completed${a.reset}`,
+        );
         continue;
       }
 
       printSliceIntro(slice);
 
       // Resume support: TDD done but review was interrupted
-      const alreadyImplemented = state.lastSliceImplemented !== undefined
-        && slice.number <= state.lastSliceImplemented
-        && (state.lastCompletedSlice === undefined || slice.number > state.lastCompletedSlice);
+      const alreadyImplemented =
+        state.lastSliceImplemented !== undefined &&
+        slice.number <= state.lastSliceImplemented &&
+        (state.lastCompletedSlice === undefined || slice.number > state.lastCompletedSlice);
 
       if (alreadyImplemented) {
-        log(`${ts()} ${a.dim}⏩ TDD already ran for Slice ${slice.number} — resuming review${a.reset}`);
+        log(
+          `${ts()} ${a.dim}⏩ TDD already ran for Slice ${slice.number} — resuming review${a.reset}`,
+        );
       } else {
         log(`${ts()} ${BOT_TDD.badge} ${a.cyan}implementing...${a.reset}`);
 
@@ -519,14 +650,18 @@ const main = async () => {
         await followUpIfNeeded(tddResult, tddAgent, noInteraction);
 
         if (tddResult.exitCode !== 0) {
-          log(`\n${ts()} ${a.red}✗ TDD agent failed (exit ${tddResult.exitCode}) on Slice ${slice.number}. Continuing...${a.reset}`);
+          log(
+            `\n${ts()} ${a.red}✗ TDD agent failed (exit ${tddResult.exitCode}) on Slice ${slice.number}. Continuing...${a.reset}`,
+          );
           continue;
         }
 
         // Test gate
         const testResult = await runTestGate({ testCommand: profile.testCommand });
         if (!testResult.passed) {
-          log(`${ts()} ${a.red}✗ Tests failed after TDD agent on Slice ${slice.number}. Continuing...${a.reset}`);
+          log(
+            `${ts()} ${a.red}✗ Tests failed after TDD agent on Slice ${slice.number}. Continuing...${a.reset}`,
+          );
           continue;
         }
 
@@ -534,11 +669,32 @@ const main = async () => {
         await saveState(resolve(cwd, CONFIG.stateFile), state);
       }
 
-      // Review-fix loop
+      // Review-fix loop — gated on minimum diff threshold
+      const diffStats = await measureDiff(cwd, reviewBase);
+      if (!shouldReview(diffStats, reviewThreshold)) {
+        log(
+          `${ts()} ${a.dim}Diff too small (${diffStats.total} lines) — deferring review${a.reset}`,
+        );
+        // Don't advance reviewBase — let changes accumulate
+        state = { ...state, lastCompletedSlice: slice.number };
+        await saveState(resolve(cwd, CONFIG.stateFile), state);
+        continue; // skip to next slice
+      }
+
       await reviewFixLoop(
-        tddAgent, reviewAgent, slice.content, brief, cwd, noInteraction,
-        tddFirstMessage, reviewFirstMessage, profile.testCommand, exitOnCreditExhaustion,
+        tddAgent,
+        reviewAgent,
+        slice.content,
+        brief,
+        cwd,
+        noInteraction,
+        tddFirstMessage,
+        reviewFirstMessage,
+        profile.testCommand,
+        exitOnCreditExhaustion,
+        reviewBase,
       );
+      reviewBase = await captureRef(cwd);
 
       // Slice outro — summary via quiet mode
       log(`\n${ts()} ${a.dim}extracting slice summary...${a.reset}`);
@@ -567,9 +723,11 @@ Be concrete and specific. No filler.`,
 
     // ── Gap analysis ──
     if (await hasChanges(cwd, groupBaseSha)) {
-      log(`\n${ts()} ${BOT_GAP.badge} ${a.yellow}scanning for coverage gaps across group...${a.reset}`);
+      log(
+        `\n${ts()} ${BOT_GAP.badge} ${a.yellow}scanning for coverage gaps across group...${a.reset}`,
+      );
 
-      const groupContent = group.slices.map((s: Slice) => s.content).join('\n\n---\n\n');
+      const groupContent = group.slices.map((s: Slice) => s.content).join("\n\n---\n\n");
       const gapAgent = spawnAgent(BOT_GAP);
       const gapPrompt = withBrief(buildGapPrompt(groupContent, groupBaseSha), brief);
       let s = makeStreamer(BOT_GAP);
@@ -578,11 +736,13 @@ Be concrete and specific. No filler.`,
       await exitOnCreditExhaustion(gapResult, gapAgent);
 
       if (gapResult.exitCode !== 0) {
-        log(`${ts()} ${a.yellow}⚠ Gap analysis agent failed (exit ${gapResult.exitCode}) — skipping${a.reset}`);
+        log(
+          `${ts()} ${a.yellow}⚠ Gap analysis agent failed (exit ${gapResult.exitCode}) — skipping${a.reset}`,
+        );
       } else {
-        const gapText = extractFindings(gapResult);
+        const gapText = gapResult.assistantText;
 
-        if (gapText && !gapText.includes('NO_GAPS_FOUND')) {
+        if (gapText && !gapText.includes("NO_GAPS_FOUND")) {
           log(`${ts()} ${BOT_GAP.badge} ${a.yellow}gaps found — sending to TDD bot${a.reset}`);
 
           const gapBaseSha = await captureRef(cwd);
@@ -591,12 +751,15 @@ Be concrete and specific. No filler.`,
             `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
           );
           s = makeStreamer(BOT_TDD);
-          const gapFixResult = await tddAgent.send(tddFirstMessage.value ? withBrief(gapFixPrompt, brief) : gapFixPrompt, s);
+          const gapFixResult = await tddAgent.send(
+            tddFirstMessage.value ? withBrief(gapFixPrompt, brief) : gapFixPrompt,
+            s,
+          );
           s.flush();
           tddFirstMessage.value = false;
           await exitOnCreditExhaustion(gapFixResult, tddAgent);
           await followUpIfNeeded(gapFixResult, tddAgent, noInteraction);
-          if (!await hasChanges(cwd, gapBaseSha)) {
+          if (!(await hasChanges(cwd, gapBaseSha))) {
             log(`${ts()} ${a.dim}TDD bot made no changes for gaps${a.reset}`);
           } else {
             const testResult = await runTestGate({ testCommand: profile.testCommand });
@@ -604,8 +767,17 @@ Be concrete and specific. No filler.`,
               log(`${ts()} ${a.yellow}⚠ Tests failed after gap fixes${a.reset}`);
             } else {
               await reviewFixLoop(
-                tddAgent, reviewAgent, groupContent, brief, cwd, noInteraction,
-                tddFirstMessage, reviewFirstMessage, profile.testCommand, exitOnCreditExhaustion,
+                tddAgent,
+                reviewAgent,
+                groupContent,
+                brief,
+                cwd,
+                noInteraction,
+                tddFirstMessage,
+                reviewFirstMessage,
+                profile.testCommand,
+                exitOnCreditExhaustion,
+                gapBaseSha,
               );
               log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
             }
@@ -632,13 +804,15 @@ Be concrete and specific. No filler.`,
       reviewFirstMessage.value = true;
 
       const next = remaining[i + 1];
-      const nextLabel = `${next.name} (${next.slices.map((s: Slice) => `Slice ${s.number}`).join(', ')})`;
+      const nextLabel = `${next.name} (${next.slices.map((s: Slice) => `Slice ${s.number}`).join(", ")})`;
 
       if (auto || noInteraction) {
         log(`\n${ts()} ${a.dim}→ next: ${nextLabel}${a.reset}`);
       } else {
-        const answer = await ask(`\n${ts()} Group done. Run ${a.bold}${nextLabel}${a.reset} next? (Y/n) `);
-        if (answer.toLowerCase() === 'n') {
+        const answer = await ask(
+          `\n${ts()} Group done. Run ${a.bold}${nextLabel}${a.reset} next? (Y/n) `,
+        );
+        if (answer.toLowerCase() === "n") {
           log(`Stopped. Resume with --group "${next.name}"`);
           cleanup();
           process.exit(0);
@@ -649,7 +823,7 @@ Be concrete and specific. No filler.`,
 
   // 10. Final review passes
   if (await hasChanges(cwd, runBaseSha)) {
-    logSection('Final review — 3 targeted passes');
+    logSection("Final review — 3 targeted passes");
 
     const passes = buildFinalPasses(runBaseSha, planContent);
 
@@ -670,9 +844,9 @@ Be concrete and specific. No filler.`,
         continue;
       }
 
-      const findings = extractFindings(finalResult);
+      const findings = finalResult.assistantText;
 
-      if (!findings || findings.includes('NO_ISSUES_FOUND')) {
+      if (!findings || findings.includes("NO_ISSUES_FOUND")) {
         log(`${ts()} ${a.green}✓ ${pass.name}: clean${a.reset}`);
         continue;
       }
@@ -688,26 +862,40 @@ Be concrete and specific. No filler.`,
         `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
       );
       s = makeStreamer(BOT_TDD);
-      const fixResult = await tddAgent.send(tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt, s);
+      const fixResult = await tddAgent.send(
+        tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt,
+        s,
+      );
       s.flush();
       tddFirstMessage.value = false;
       await exitOnCreditExhaustion(fixResult, tddAgent);
       await followUpIfNeeded(fixResult, tddAgent, noInteraction);
-      if (!await hasChanges(cwd, preFixSha)) {
+      if (!(await hasChanges(cwd, preFixSha))) {
         log(`${ts()} ${a.dim}TDD bot made no changes for ${pass.name}${a.reset}`);
         continue;
       }
 
       const testResult = await runTestGate({ testCommand: profile.testCommand });
       if (!testResult.passed) {
-        log(`${ts()} ${a.yellow}⚠ Tests failed after ${pass.name} fixes — continuing with next pass${a.reset}`);
+        log(
+          `${ts()} ${a.yellow}⚠ Tests failed after ${pass.name} fixes — continuing with next pass${a.reset}`,
+        );
         continue;
       }
 
       // Review cycle on the fixes
       await reviewFixLoop(
-        tddAgent, reviewAgent, planContent, brief, cwd, noInteraction,
-        tddFirstMessage, reviewFirstMessage, profile.testCommand, exitOnCreditExhaustion,
+        tddAgent,
+        reviewAgent,
+        planContent,
+        brief,
+        cwd,
+        noInteraction,
+        tddFirstMessage,
+        reviewFirstMessage,
+        profile.testCommand,
+        exitOnCreditExhaustion,
+        preFixSha,
       );
       log(`${ts()} ${a.green}✓ ${pass.name}: resolved${a.reset}`);
     }

@@ -1,7 +1,7 @@
-import { spawn } from 'child_process';
-import { randomUUID } from 'crypto';
-import { Readable } from 'stream';
-import { detectQuestion } from './question-detector.js';
+import { spawn } from "child_process";
+import { randomUUID } from "crypto";
+import { Readable } from "stream";
+import { detectQuestion } from "./question-detector.js";
 
 export type AgentStyle = {
   readonly label: string;
@@ -18,12 +18,14 @@ export type AgentResult = {
 };
 
 type AssistantEvent = {
-  readonly type: 'assistant';
-  readonly message: { readonly content: readonly { readonly type: string; readonly text?: string }[] };
+  readonly type: "assistant";
+  readonly message: {
+    readonly content: readonly { readonly type: string; readonly text?: string }[];
+  };
 };
 
 type ResultEvent = {
-  readonly type: 'result';
+  readonly type: "result";
   readonly result: string;
   readonly duration_ms: number;
   readonly num_turns: number;
@@ -34,18 +36,18 @@ type StreamEvent = AssistantEvent | ResultEvent;
 const parseEvent = (line: string): StreamEvent | null => {
   try {
     const parsed: unknown = JSON.parse(line);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
     const obj = parsed as Record<string, unknown>;
 
-    if (obj.type === 'assistant') {
+    if (obj.type === "assistant") {
       const msg = obj.message;
-      if (typeof msg !== 'object' || msg === null || Array.isArray(msg)) return null;
+      if (typeof msg !== "object" || msg === null || Array.isArray(msg)) return null;
       const content = (msg as Record<string, unknown>).content;
       if (!Array.isArray(content)) return null;
       return parsed as StreamEvent;
     }
 
-    if (obj.type === 'result') return parsed as StreamEvent;
+    if (obj.type === "result") return parsed as StreamEvent;
 
     return null;
   } catch {
@@ -57,12 +59,12 @@ const forEachEvent = (
   stdout: Readable,
   onEvent: (event: StreamEvent) => void,
 ): { flush: () => void } => {
-  let buffer = '';
+  let buffer = "";
 
-  stdout.on('data', (chunk: Buffer) => {
+  stdout.on("data", (chunk: Buffer) => {
     buffer += chunk.toString();
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
 
     for (const line of lines) {
       const event = parseEvent(line);
@@ -103,11 +105,13 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
   let lastCloseCode = 1;
 
   const proc = spawn(opts.command, [...opts.args], {
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: ["pipe", "pipe", "pipe"],
   });
 
-  let stderrBuf = '';
-  proc.stderr?.on('data', (chunk: Buffer) => { stderrBuf += chunk.toString(); });
+  let stderrBuf = "";
+  proc.stderr?.on("data", (chunk: Buffer) => {
+    stderrBuf += chunk.toString();
+  });
 
   let onEvent: ((event: StreamEvent) => void) | null = null;
   let onDeath: (() => void) | null = null;
@@ -116,50 +120,50 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
     if (onEvent) onEvent(event);
   });
 
-  proc.on('close', (code: number | null) => {
+  proc.on("close", (code: number | null) => {
     isAlive = false;
     lastCloseCode = code ?? 1;
     flush();
     if (onDeath) onDeath();
   });
 
-  proc.on('error', () => {
+  proc.on("error", () => {
     isAlive = false;
     if (onDeath) onDeath();
   });
 
   const writeMessage = (prompt: string) => {
     const msg = JSON.stringify({
-      type: 'user',
-      message: { role: 'user', content: prompt },
+      type: "user",
+      message: { role: "user", content: prompt },
       session_id: sessionId,
     });
-    proc.stdin!.write(msg + '\n');
+    proc.stdin!.write(msg + "\n");
   };
 
   const send = (prompt: string, onText?: (text: string) => void): Promise<AgentResult> => {
     return new Promise<AgentResult>((resolve) => {
       if (!isAlive) {
-        resolve({ exitCode: 1, assistantText: '', resultText: '', needsInput: false, sessionId });
+        resolve({ exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId });
         return;
       }
 
       const assistantChunks: string[] = [];
-      let resultText = '';
+      let resultText = "";
 
       onEvent = (event) => {
-        if (event.type === 'assistant') {
+        if (event.type === "assistant") {
           for (const block of event.message.content) {
-            if (block.type === 'text' && block.text) {
+            if (block.type === "text" && block.text) {
               assistantChunks.push(block.text);
               if (onText) onText(block.text);
             }
           }
-        } else if (event.type === 'result') {
-          resultText = typeof event.result === 'string' ? event.result : '';
+        } else if (event.type === "result") {
+          resultText = typeof event.result === "string" ? event.result : "";
           onEvent = null;
           onDeath = null;
-          const assistantText = assistantChunks.join('');
+          const assistantText = assistantChunks.join("");
           resolve({
             exitCode: 0,
             assistantText,
@@ -173,7 +177,7 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
       onDeath = () => {
         onEvent = null;
         onDeath = null;
-        const assistantText = assistantChunks.join('');
+        const assistantText = assistantChunks.join("");
         resolve({
           exitCode: lastCloseCode,
           assistantText,
@@ -190,15 +194,15 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
   const sendQuiet = (prompt: string): Promise<string> => {
     return new Promise<string>((resolve) => {
       if (!isAlive) {
-        resolve('');
+        resolve("");
         return;
       }
 
-      let resultText = '';
+      let resultText = "";
 
       onEvent = (event) => {
-        if (event.type === 'result') {
-          resultText = typeof event.result === 'string' ? event.result : '';
+        if (event.type === "result") {
+          resultText = typeof event.result === "string" ? event.result : "";
           onEvent = null;
           onDeath = null;
           resolve(resultText);
@@ -218,9 +222,13 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
   return {
     send,
     sendQuiet,
-    kill: () => proc.kill('SIGTERM'),
-    get alive() { return isAlive; },
-    get stderr() { return stderrBuf; },
+    kill: () => proc.kill("SIGTERM"),
+    get alive() {
+      return isAlive;
+    },
+    get stderr() {
+      return stderrBuf;
+    },
     sessionId,
     style: opts.style,
   };
