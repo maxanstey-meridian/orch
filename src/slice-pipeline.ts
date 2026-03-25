@@ -30,9 +30,9 @@ export type SlicePipelineOptions = {
   readonly maxReviewCycles: number;
 };
 
-type FixOutcome = 'deliberate-rejection' | 'execution-failure' | 'successful-fix';
+export type FixOutcome = 'deliberate-rejection' | 'execution-failure' | 'successful-fix';
 
-const classifyFixOutcome = (
+export const classifyFixOutcome = (
   result: AgentResult,
   changed: boolean,
 ): FixOutcome => {
