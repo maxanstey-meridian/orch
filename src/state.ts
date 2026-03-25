@@ -1,27 +1,37 @@
-import { readFile, writeFile, rm } from 'fs/promises';
-import { z } from 'zod';
+import { readFile, writeFile, rm } from "fs/promises";
+import { z } from "zod";
 
-const stateSchema = z.object({
-  lastCompletedSlice: z.number().int().nonnegative().optional(),
-  lastCompletedGroup: z.string().min(1).optional(),
-  lastSliceImplemented: z.number().int().nonnegative().optional(),
-}).passthrough();
+const stateSchema = z
+  .object({
+    lastCompletedSlice: z.number().int().nonnegative().optional(),
+    lastCompletedGroup: z.string().min(1).optional(),
+    lastSliceImplemented: z.number().int().nonnegative().optional(),
+  })
+  .passthrough();
 
 export type OrchestratorState = Readonly<z.infer<typeof stateSchema>>;
 
 export const loadState = async (filePath: string): Promise<OrchestratorState> => {
   let raw: string;
-  try { raw = await readFile(filePath, 'utf-8'); }
-  catch { return {}; }
+  try {
+    raw = await readFile(filePath, "utf-8");
+  } catch {
+    return {};
+  }
 
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); }
-  catch { return {}; }
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
 
   const result = stateSchema.safeParse(parsed);
   if (!result.success) {
-    const issues = result.error.issues.map(i => `  ${i.path.join('.')}: ${i.message}`).join('\n');
-    throw new Error(`Corrupt state file (${filePath}):\n${issues}\nDelete the file to start fresh, or use --reset.`);
+    const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
+    throw new Error(
+      `Corrupt state file (${filePath}):\n${issues}\nDelete the file to start fresh, or use --reset.`,
+    );
   }
   return result.data;
 };

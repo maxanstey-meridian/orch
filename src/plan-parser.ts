@@ -1,4 +1,4 @@
-import { readFile } from 'fs/promises';
+import { readFile } from "fs/promises";
 
 export type Slice = {
   readonly number: number;
@@ -15,8 +15,8 @@ const GROUP_RE = /^## Group:\s*(.+)$/;
 const SLICE_RE = /^### (?:Slice|Phase)\s+(\d+)(?::\s*(.+))?$/;
 
 export const parsePlan = async (filePath: string): Promise<readonly Group[]> => {
-  const text = await readFile(filePath, 'utf-8');
-  const lines = text.split('\n');
+  const text = await readFile(filePath, "utf-8");
+  const lines = text.split("\n");
 
   const groups: { name: string; slices: Slice[] }[] = [];
   let currentGroup: { name: string; slices: Slice[] } | null = null;
@@ -27,7 +27,7 @@ export const parsePlan = async (filePath: string): Promise<readonly Group[]> => 
       currentGroup.slices.push({
         number: currentSlice.number,
         title: currentSlice.title,
-        content: currentSlice.lines.join('\n').trimEnd(),
+        content: currentSlice.lines.join("\n").trimEnd(),
       });
       currentSlice = null;
     }

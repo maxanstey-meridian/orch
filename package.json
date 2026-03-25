@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "lint": "oxlint src/",
+    "lint:fix": "oxlint --fix src/",
+    "fmt": "oxfmt --write src/",
+    "fmt:check": "oxfmt --check src/",
+    "check": "npm run fmt:check && npm run lint && npm run test",
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "tsc -p tsconfig.build.json",
@@ -14,6 +19,8 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
+    "oxfmt": "^0.42.0",
+    "oxlint": "^1.57.0",
     "typescript": "^5.7.0",
     "vitest": "^3.1.0"
   }
