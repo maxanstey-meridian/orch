@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { Readable } from 'stream';
 import { detectQuestion } from './question-detector.js';
@@ -88,7 +88,7 @@ const forEachEvent = (
   };
 };
 
-const spawnAgent = (command: string, args: readonly string[], prompt: string): ChildProcess =>
+const spawnAgent = (command: string, args: readonly string[], prompt: string) =>
   spawn(command, [...args, prompt], { stdio: ['inherit', 'pipe', 'pipe'] });
 
 export const runAgent = async (opts: AgentOptions): Promise<AgentResult> => {
@@ -111,7 +111,7 @@ export const runAgent = async (opts: AgentOptions): Promise<AgentResult> => {
       }
     });
 
-    proc.on('close', (code) => {
+    proc.on('close', (code: number | null) => {
       flush();
       const assistantText = assistantChunks.join('');
       resolve({
