@@ -321,6 +321,55 @@ describe('createAgent + send', () => {
     expect(result.resultText).toBe('final');
   });
 
+  it('writes correct NDJSON format to process stdin', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', [
+      'IFS= read -r line',
+      'echo "$line" > "$0.stdin.log"',
+      'echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'exit 0',
+    ].join('\n'));
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      sessionId: 'test-session-abc',
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    await agent.send('hello world');
+
+    const { readFile } = await import('fs/promises');
+    const logged = await readFile(`${script}.stdin.log`, 'utf-8');
+    const parsed = JSON.parse(logged.trim());
+
+    expect(parsed).toEqual({
+      type: 'user',
+      message: { role: 'user', content: 'hello world' },
+      session_id: 'test-session-abc',
+    });
+  });
+
+  it('does not throw when kill() is called twice', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', [
+      'while IFS= read -r line; do',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'done',
+    ].join('\n'));
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    agent.kill();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(agent.alive).toBe(false);
+
+    // Second kill should not throw
+    expect(() => agent.kill()).not.toThrow();
+  });
+
   it('resolves send with exitCode 1 when spawned command does not exist', async () => {
     const agent = createAgent({
       command: '/nonexistent/command/that/does/not/exist',
@@ -412,6 +461,31 @@ describe('createAgent + sendQuiet', () => {
 
     const result = await agent.sendQuiet('test');
     expect(result).toBe('');
+
+    agent.kill();
+  });
+
+  it('works after a prior send() on the same persistent process', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', [
+      'COUNT=0',
+      'while IFS= read -r line; do',
+      '  COUNT=$((COUNT + 1))',
+      '  echo "{\\\"type\\\":\\\"assistant\\\",\\\"message\\\":{\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"reply $COUNT\\\"}]}}"',
+      '  echo \'{"type":"result","result":"summary","duration_ms":100,"num_turns":1}\'',
+      'done',
+    ].join('\n'));
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    const r1 = await agent.send('first');
+    expect(r1.assistantText).toBe('reply 1');
+
+    const quiet = await agent.sendQuiet('summarize');
+    expect(quiet).toBe('summary');
 
     agent.kill();
   });
