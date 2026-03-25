@@ -523,6 +523,7 @@ Be concrete and specific. No filler.`,
         if (gapText && !gapText.includes('NO_GAPS_FOUND')) {
           log(`${ts()} ${BOT_GAP.badge} ${a.yellow}gaps found — sending to TDD bot${a.reset}`);
 
+          const gapBaseSha = await captureRef(cwd);
           const gapFixPrompt = buildTddPrompt(
             groupContent,
             `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests. Commit when done.`,
@@ -530,8 +531,6 @@ Be concrete and specific. No filler.`,
           const gapFixResult = await tddAgent.send(tddFirstMessage.value ? withBrief(gapFixPrompt, brief) : gapFixPrompt);
           tddFirstMessage.value = false;
           await followUpIfNeeded(gapFixResult, tddAgent, noInteraction);
-
-          const gapBaseSha = await captureRef(cwd);
           if (!await hasChanges(cwd, gapBaseSha)) {
             log(`${ts()} ${a.dim}TDD bot made no changes for gaps${a.reset}`);
           } else {
@@ -615,6 +614,7 @@ Be concrete and specific. No filler.`,
       // Fix cycle for final pass findings
       log(`${ts()} ${BOT_TDD.badge} ${a.cyan}fixing ${pass.name} findings...${a.reset}`);
 
+      const preFixSha = await captureRef(cwd);
       const fixPrompt = buildTddPrompt(
         planContent,
         `A final "${pass.name}" review found issues. Fix them all.\n\n## Findings\n${findings}\n\nFix each issue. Run tests after each change. Commit when done.`,
@@ -622,8 +622,6 @@ Be concrete and specific. No filler.`,
       const fixResult = await tddAgent.send(tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt);
       tddFirstMessage.value = false;
       await followUpIfNeeded(fixResult, tddAgent, noInteraction);
-
-      const preFixSha = await captureRef(cwd);
       if (!await hasChanges(cwd, preFixSha)) {
         log(`${ts()} ${a.dim}TDD bot made no changes for ${pass.name}${a.reset}`);
         continue;
