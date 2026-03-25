@@ -122,6 +122,18 @@ describe('handleFollowUps', () => {
     expect(agent.send).toHaveBeenCalledTimes(3);
   });
 
+  it('returns original result immediately when maxFollowUps is 0', async () => {
+    const question = makeResult({ needsInput: true, assistantText: 'Question?' });
+    const deps = makeDeps();
+    const agent = makeAgent();
+
+    const final = await handleFollowUps({ agent, result: question, deps, maxFollowUps: 0 });
+
+    expect(final).toBe(question);
+    expect(deps.promptOperator).not.toHaveBeenCalled();
+    expect(agent.send).not.toHaveBeenCalled();
+  });
+
   it('returns failure result when agent process fails during relay', async () => {
     const question = makeResult({ needsInput: true });
     const failure = makeResult({ exitCode: 1, needsInput: false, assistantText: '' });

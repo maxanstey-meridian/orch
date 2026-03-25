@@ -241,9 +241,101 @@ describe('createAgent + send', () => {
     const result = await agent.send('test');
     expect(result.exitCode).toBe(1);
   });
+
+  it('returns empty resultText when result event has non-string result field', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', [
+      'while IFS= read -r line; do',
+      '  echo \'{"type":"result","result":42,"duration_ms":100,"num_turns":1}\'',
+      'done',
+    ].join('\n'));
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    const result = await agent.send('test');
+    expect(result.resultText).toBe('');
+    expect(result.exitCode).toBe(0);
+
+    agent.kill();
+  });
+
+  it('accumulates text from multiple content blocks within a single assistant event', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', [
+      'while IFS= read -r line; do',
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"block1 "},{"type":"text","text":"block2"}]}}\'',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'done',
+    ].join('\n'));
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    const result = await agent.send('test');
+    expect(result.assistantText).toBe('block1 block2');
+
+    agent.kill();
+  });
+
+  it('ignores non-text content blocks and only captures text blocks', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', [
+      'while IFS= read -r line; do',
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1"},{"type":"text","text":"kept"},{"type":"image","url":"x"}]}}\'',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'done',
+    ].join('\n'));
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    const result = await agent.send('test');
+    expect(result.assistantText).toBe('kept');
+
+    agent.kill();
+  });
+
+  it('parses event from final line that lacks a trailing newline before process exits', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', [
+      'IFS= read -r line',
+      'echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"flushed"}]}}\'',
+      'printf \'{"type":"result","result":"final","duration_ms":100,"num_turns":1}\'',
+      'exit 0',
+    ].join('\n'));
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    const result = await agent.send('test');
+    expect(result.assistantText).toBe('flushed');
+    expect(result.resultText).toBe('final');
+  });
+
+  it('resolves send with exitCode 1 when spawned command does not exist', async () => {
+    const agent = createAgent({
+      command: '/nonexistent/command/that/does/not/exist',
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    const result = await agent.send('test');
+    expect(result.exitCode).toBe(1);
+    expect(agent.alive).toBe(false);
+  });
 });
 
 describe('createAgent + sendQuiet', () => {
+
   it('extracts result text from JSON output', async () => {
     const script = await makeScript(tempDir, 'agent.sh', [
       'while IFS= read -r line; do',
@@ -279,6 +371,47 @@ describe('createAgent + sendQuiet', () => {
 
     const result = await agent.sendQuiet('test');
     expect(result).toBe('only this');
+
+    agent.kill();
+  });
+
+  it('resolves with empty string when called on dead process', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', 'exit 0');
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    const waitForDeath = async () => {
+      for (let i = 0; i < 50; i++) {
+        if (!agent.alive) return;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    };
+    await waitForDeath();
+
+    expect(agent.alive).toBe(false);
+    const result = await agent.sendQuiet('test');
+    expect(result).toBe('');
+  });
+
+  it('returns empty string when result event has non-string result field', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', [
+      'while IFS= read -r line; do',
+      '  echo \'{"type":"result","result":null,"duration_ms":50,"num_turns":1}\'',
+      'done',
+    ].join('\n'));
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    const result = await agent.sendQuiet('test');
+    expect(result).toBe('');
 
     agent.kill();
   });
