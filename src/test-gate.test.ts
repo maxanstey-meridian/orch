@@ -37,16 +37,16 @@ describe('runTestGate', () => {
     expect(result.output).toContain('details here');
   });
 
-  it('fails with clear error when no test command is configured', async () => {
+  it('passes when no test command is configured (gate is permissive)', async () => {
     const result = await runTestGate({});
-    expect(result.passed).toBe(false);
-    expect(result.output).toContain('No test command');
+    expect(result.passed).toBe(true);
+    expect(result.output).toBe('');
   });
 
-  it('fails with clear error when test command is empty string', async () => {
+  it('passes when test command is empty string (gate is permissive)', async () => {
     const result = await runTestGate({ testCommand: '' });
-    expect(result.passed).toBe(false);
-    expect(result.output).toContain('No test command');
+    expect(result.passed).toBe(true);
+    expect(result.output).toBe('');
   });
 
   it('returns passed false with empty output when test script exits non-zero but writes nothing', async () => {

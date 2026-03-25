@@ -13,7 +13,8 @@
  *   npx ts-node src/main.ts --plan plan.md --skip-fingerprint
  */
 
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { readFile } from 'fs/promises';
 import { createInterface } from 'readline';
 import { parsePlan, type Group, type Slice } from './plan-parser.js';
@@ -31,7 +32,7 @@ const CONFIG = {
   maxReviewCycles: 3,
   stateFile: '.orchestrator-state.json',
   briefDir: '.orch',
-  fingerprintScript: resolve(import.meta.dirname ?? '.', '..', 'node_modules', '.bin', 'fingerprint'),
+  fingerprintScript: resolve(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '.bin', 'fingerprint'),
 };
 
 // ─── ANSI ────────────────────────────────────────────────────────────────────
@@ -517,7 +518,9 @@ Be concrete and specific. No filler.`,
       const gapPrompt = withBrief(buildGapPrompt(groupContent, groupBaseSha), brief);
       const gapResult = await gapAgent.send(gapPrompt);
 
-      if (gapResult.exitCode === 0) {
+      if (gapResult.exitCode !== 0) {
+        log(`${ts()} ${a.yellow}⚠ Gap analysis agent failed (exit ${gapResult.exitCode}) — skipping${a.reset}`);
+      } else {
         const gapText = extractFindings(gapResult);
 
         if (gapText && !gapText.includes('NO_GAPS_FOUND')) {
