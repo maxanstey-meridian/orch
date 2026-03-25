@@ -86,6 +86,7 @@ export type AgentProcess = {
   readonly kill: () => void;
   readonly alive: boolean;
   readonly sessionId: string;
+  readonly style: AgentStyle;
 };
 
 export type CreateAgentOptions = {
@@ -215,5 +216,6 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
     kill: () => proc.kill('SIGTERM'),
     get alive() { return isAlive; },
     sessionId,
+    style: opts.style,
   };
 };
