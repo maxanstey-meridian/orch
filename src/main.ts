@@ -6,21 +6,26 @@
  * No dep injection, no framework — reads top-to-bottom.
  *
  * Usage:
- *   npx ts-node src/main.ts --plan plan.md                  # interactive
- *   npx ts-node src/main.ts --plan plan.md --auto            # no inter-group prompts
- *   npx ts-node src/main.ts --plan plan.md --group Auth      # start from group
- *   npx ts-node src/main.ts --plan plan.md --no-interaction  # suppress all prompts
- *   npx ts-node src/main.ts --plan plan.md --skip-fingerprint
- *   npx ts-node src/main.ts --plan plan.md --review-threshold 50
+ *   npx ts-node src/main.ts --plan inventory.md              # generate plan from inventory
+ *   npx ts-node src/main.ts --plan inventory.md --plan-only  # generate plan only, don't orchestrate
+ *   npx ts-node src/main.ts --resume                          # resume last generated plan
+ *   npx ts-node src/main.ts --resume plan.md                  # resume specific plan
+ *   npx ts-node src/main.ts --resume --auto                   # no inter-group prompts
+ *   npx ts-node src/main.ts --resume --group Auth             # start from group
+ *   npx ts-node src/main.ts --resume --no-interaction         # suppress all prompts
+ *   npx ts-node src/main.ts --resume --skip-fingerprint
+ *   npx ts-node src/main.ts --resume --review-threshold 50
+ *   npx ts-node src/main.ts --init --plan inventory.md        # interactive project init
  */
 
 import { resolve } from "path";
-import { readFileSync } from "fs";
+import { readFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { readFile } from "fs/promises";
-import { createInterface } from "readline";
 import { parsePlan, type Group, type Slice } from "./plan-parser.js";
+import { generatePlan, isPlanFormat, GENERATED_PLAN_FILE } from "./plan-generator.js";
 import { loadState, saveState, clearState, type OrchestratorState } from "./state.js";
 import { runFingerprint, wrapBrief } from "./fingerprint.js";
+import { runInit, profileToMarkdown, createAsk } from "./init.js";
 import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
 import { captureRef, hasChanges, getStatus } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
@@ -86,6 +91,11 @@ const BOT_FINAL: AgentStyle = {
   label: "FINAL",
   color: a.green,
   badge: `${a.bgGreen} FIN ${a.reset}`,
+};
+const BOT_PLAN: AgentStyle = {
+  label: "PLAN",
+  color: a.white,
+  badge: `${a.bold}${a.white} PLN ${a.reset}`,
 };
 
 // ─── Agent helpers ───────────────────────────────────────────────────────────
@@ -205,15 +215,8 @@ const withBrief = (prompt: string, brief: string): string => {
 
 // ─── Prompt helper ───────────────────────────────────────────────────────────
 
-const ask = (question: string): Promise<string> => {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise<string>((resolve) => {
-    rl.question(question, (answer: string) => {
-      rl.close();
-      resolve(answer);
-    });
-  });
-};
+const rl = createAsk();
+const ask = rl.ask;
 
 // ─── Interactive follow-up ───────────────────────────────────────────────────
 
@@ -272,7 +275,14 @@ ${integration}
 ${autonomy}`;
   }
 
-  return `Implement the following plan slice.
+  return `Implement the following plan slice using strict RED→GREEN TDD cycles.
+
+The plan slice contains numbered cycles with RED and GREEN blocks. Follow them in order:
+1. Write the test described in RED. Run tests. Confirm it fails.
+2. Write the minimal code described in GREEN. Run tests. Confirm it passes.
+3. Move to the next cycle. Do NOT skip ahead or batch.
+
+If the plan slice does not contain explicit cycles, decompose it into behaviours yourself and apply the same process: one failing test, then minimal code to pass, repeat.
 
 ## Plan Slice
 ${sliceContent}
@@ -479,6 +489,24 @@ const reviewFixLoop = async (
   }
 };
 
+// ─── Plan generation helper ──────────────────────────────────────────────────
+
+const doGeneratePlan = async (
+  inventoryPath: string,
+  briefContent: string,
+  outputDir: string,
+): Promise<string> => {
+  log(`${a.bold}Generating plan from inventory...${a.reset}`);
+  const planAgent = spawnAgent(BOT_PLAN);
+  try {
+    const outPath = await generatePlan(inventoryPath, briefContent, planAgent, outputDir);
+    log(`${a.green}Plan written to ${outPath}${a.reset}`);
+    return outPath;
+  } finally {
+    planAgent.kill();
+  }
+};
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 const main = async () => {
@@ -490,16 +518,31 @@ const main = async () => {
     return i !== -1 ? args[i + 1] : undefined;
   };
 
-  const planPath = resolve(getArg("--plan") ?? "plan.md");
+  const inventoryPath = getArg("--plan");
+  const resumeMode = args.includes("--resume");
+  // --resume takes an optional path; only consume next arg if it's not another flag
+  const resumeIdx = args.indexOf("--resume");
+  const resumeNext = resumeIdx !== -1 ? args[resumeIdx + 1] : undefined;
+  const resumeRaw = resumeNext && !resumeNext.startsWith("-") ? resumeNext : undefined;
+  const planOnly = args.includes("--plan-only");
   const auto = args.includes("--auto");
   const skipFingerprint = args.includes("--skip-fingerprint");
   const noInteraction = args.includes("--no-interaction");
   const resetState = args.includes("--reset");
   const groupFilter = getArg("--group");
+  const initMode = args.includes("--init");
   const rawThreshold = getArg("--review-threshold");
   const reviewThreshold = rawThreshold !== undefined ? Number(rawThreshold) : 30;
   if (Number.isNaN(reviewThreshold)) {
     console.error(`Invalid --review-threshold value: ${rawThreshold}`);
+    process.exit(1);
+  }
+  if (initMode && groupFilter) {
+    console.error("--init and --group are mutually exclusive.");
+    process.exit(1);
+  }
+  if (!inventoryPath && !resumeMode) {
+    console.error("Provide --plan <inventory> to generate a plan, or --resume to continue an existing one.");
     process.exit(1);
   }
 
@@ -508,34 +551,100 @@ const main = async () => {
   const tddSkill = readFileSync(resolve(skillsDir, "tdd.md"), "utf-8");
   const reviewSkill = readFileSync(resolve(skillsDir, "deep-review.md"), "utf-8");
 
-  // 2. Parse plan
-  const groups = await parsePlan(planPath);
   const cwd = process.cwd();
+  const orchDir = resolve(cwd, CONFIG.briefDir);
 
-  // 3. Fingerprint + brief
+  // 2. Init (if requested) → fingerprint + brief
+  let initProfileChanged = false;
+  if (initMode) {
+    const initProfile = await runInit(cwd);
+    if (initProfile) {
+      mkdirSync(orchDir, { recursive: true });
+      writeFileSync(resolve(orchDir, "init-profile.md"), profileToMarkdown(initProfile));
+      initProfileChanged = true;
+    }
+  }
+
   const { brief, profile } = await runFingerprint({
     cwd,
-    outputDir: resolve(cwd, CONFIG.briefDir),
+    outputDir: orchDir,
     skip: skipFingerprint,
+    forceRefresh: initProfileChanged,
   });
 
-  // 4. Load state
+  // 3. Resolve plan path — generate from inventory or resume existing
+  let planPath: string;
+  const generatedPath = resolve(orchDir, GENERATED_PLAN_FILE);
+
+  if (resumeMode) {
+    // --resume [path]: use explicit path, or find existing plan
+    if (resumeRaw) {
+      planPath = resolve(resumeRaw);
+    } else if (existsSync(generatedPath)) {
+      planPath = generatedPath;
+    } else if (existsSync(resolve(cwd, "plan.md"))) {
+      planPath = resolve(cwd, "plan.md");
+    } else {
+      console.error("No plan found. Use --plan <inventory> to generate one.");
+      process.exit(1);
+    }
+  } else {
+    // --plan <input>: generate plan from inventory (or detect it's already a plan)
+    const inputPath = resolve(inventoryPath!);
+    const srcContent = readFileSync(inputPath, "utf-8");
+
+    if (isPlanFormat(srcContent)) {
+      // Already a plan — treat as resume
+      log(`${a.dim}Input is already a plan — treating as resume.${a.reset}`);
+      planPath = inputPath;
+    } else {
+      // Check if a generated plan already exists
+      if (existsSync(generatedPath)) {
+        if (noInteraction) {
+          log(`${a.dim}Using existing plan (--no-interaction).${a.reset}`);
+          planPath = generatedPath;
+        } else {
+          const answer = await ask("A generated plan already exists. Regenerate? (y/N) ");
+          if (answer.trim().toLowerCase() !== "y") {
+            log(`${a.dim}Using existing plan.${a.reset}`);
+            planPath = generatedPath;
+          } else {
+            planPath = await doGeneratePlan(inputPath, brief, orchDir);
+          }
+        }
+      } else {
+        planPath = await doGeneratePlan(inputPath, brief, orchDir);
+      }
+    }
+  }
+
+  if (planOnly) {
+    rl.close();
+    log(`Plan written to ${planPath} — review and run with --resume`);
+    process.exit(0);
+  }
+
+  // 4. Parse plan
+  const groups = await parsePlan(planPath);
+
+  // 5. Load state
   if (resetState) {
     await clearState(resolve(cwd, CONFIG.stateFile));
     log(`${a.dim}State cleared.${a.reset}`);
   }
   let state: OrchestratorState = await loadState(resolve(cwd, CONFIG.stateFile));
 
-  // 5. Spawn persistent agents with skill system prompts
+  // 6. Spawn persistent agents with skill system prompts
   let tddAgent = spawnAgent(BOT_TDD, tddSkill);
   let reviewAgent = spawnAgent(BOT_REVIEW, reviewSkill);
   const tddFirstMessage = { value: true };
   const reviewFirstMessage = { value: true };
 
-  // 6. Signal handlers
+  // 7. Signal handlers
   const cleanup = () => {
     tddAgent.kill();
     reviewAgent.kill();
+    rl.close();
   };
   process.on("SIGINT", () => {
     cleanup();
@@ -561,7 +670,7 @@ const main = async () => {
     process.exit(2);
   };
 
-  // 7. Startup banner
+  // 8. Startup banner
   log(
     `\n${a.bold}🚀 Orchestrator${a.reset} ${a.dim}${new Date().toISOString().slice(0, 16)}${a.reset}`,
   );
@@ -579,7 +688,7 @@ const main = async () => {
   log(`   ${BOT_REVIEW.badge} ${a.dim}persistent (${reviewAgent.sessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
 
-  // 8. Group list with start marker
+  // 9. Group list with start marker
   const startIdx = groupFilter
     ? groups.findIndex((g) => g.name.toLowerCase() === groupFilter.toLowerCase())
     : 0;
@@ -605,7 +714,7 @@ const main = async () => {
   const runBaseSha = await captureRef(cwd);
   const planContent = await readFile(planPath, "utf-8");
 
-  // 9. Group loop
+  // 10. Group loop
   for (let i = 0; i < remaining.length; i++) {
     const group = remaining[i];
 
@@ -821,7 +930,7 @@ Be concrete and specific. No filler.`,
     }
   }
 
-  // 10. Final review passes
+  // 11. Final review passes
   if (await hasChanges(cwd, runBaseSha)) {
     logSection("Final review — 3 targeted passes");
 
@@ -901,7 +1010,7 @@ Be concrete and specific. No filler.`,
     }
   }
 
-  // 11. Cleanup
+  // 12. Cleanup
   logSection(`${a.green}✅ All groups complete + final review done${a.reset}`);
   const status = await getStatus(cwd);
   log(`\n${status}`);
