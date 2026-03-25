@@ -58,6 +58,14 @@ describe('detectStack', () => {
     expect(result.deps).toEqual([]);
   });
 
+  it('returns unknown when package.json is malformed', async () => {
+    await writeFile(join(tempDir, 'package.json'), 'not json at all!!!');
+    const result = detectStack(tempDir);
+    expect(result.lang).toBe('unknown');
+    expect(result.framework).toBe('unknown');
+    expect(result.deps).toEqual([]);
+  });
+
   it('detects NestJS framework', async () => {
     await writeFile(join(tempDir, 'package.json'), JSON.stringify({
       dependencies: { '@nestjs/core': '^10.0.0' },
@@ -78,6 +86,12 @@ describe('detectProjects', () => {
   });
 
   it('returns empty array when no solution or workspaces', () => {
+    const result = detectProjects(tempDir);
+    expect(result).toEqual([]);
+  });
+
+  it('returns empty array when package.json is malformed', async () => {
+    await writeFile(join(tempDir, 'package.json'), '{broken json');
     const result = detectProjects(tempDir);
     expect(result).toEqual([]);
   });

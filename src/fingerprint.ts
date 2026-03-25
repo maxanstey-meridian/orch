@@ -4,7 +4,7 @@ import { execSync } from 'child_process';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export type StackInfo = {
+type StackInfo = {
   readonly lang: string;
   readonly framework: string;
   readonly target: string;
@@ -33,6 +33,14 @@ const fileExists = (p: string): boolean => existsSync(p);
 
 const tryRead = (p: string): string => {
   try { return readFileSync(p, 'utf-8'); } catch { return ''; }
+};
+
+const tryParseJson = (text: string): Record<string, unknown> | null => {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch { return null; }
 };
 
 const findFiles = (root: string, pattern: string, searchDirs = ['src', 'tests']): string[] => {
@@ -65,14 +73,11 @@ const dirTree = (root: string, dir: string, depth = 1): string[] => {
 // ─── Detectors ──────────────────────────────────────────────────────────────
 
 export const detectStack = (root: string): StackInfo => {
-  // .NET
-  const csprojs = findFiles(root, '*.csproj', ['.']);
-  // Also check src/ for csproj files
-  const srcCsprojs = findFiles(root, '*.csproj');
-  const allCsprojs = [...csprojs, ...srcCsprojs];
+  // .NET — only search src/ and tests/ (matches original behaviour)
+  const csprojs = findFiles(root, '*.csproj');
 
-  if (allCsprojs.length > 0) {
-    const allContent = allCsprojs.map((p) => tryRead(join(root, p))).join('\n');
+  if (csprojs.length > 0) {
+    const allContent = csprojs.map((p) => tryRead(join(root, p))).join('\n');
     const tfm = allContent.match(/<TargetFramework>(.*?)<\/TargetFramework>/)?.[1] ?? 'unknown';
     const deps = [...allContent.matchAll(/<PackageReference Include="(.*?)"/g)].map((m) => m[1]);
     const uniqueDeps = [...new Set(deps)];
@@ -85,15 +90,17 @@ export const detectStack = (root: string): StackInfo => {
   // TypeScript/Node
   const pkgPath = join(root, 'package.json');
   if (fileExists(pkgPath)) {
-    const pkg = JSON.parse(tryRead(pkgPath));
-    const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+    const pkg = tryParseJson(tryRead(pkgPath));
+    if (!pkg) return { lang: 'unknown', framework: 'unknown', target: 'unknown', deps: [] };
+    const allDeps = { ...(pkg.dependencies as Record<string, string> | undefined), ...(pkg.devDependencies as Record<string, string> | undefined) };
     const deps = Object.keys(allDeps);
     const framework = deps.includes('next') ? 'Next.js'
       : deps.includes('nuxt') ? 'Nuxt'
       : deps.includes('@nestjs/core') ? 'NestJS'
       : deps.includes('express') ? 'Express'
       : 'Node.js';
-    return { lang: 'TypeScript', framework, target: pkg.engines?.node ?? 'unknown', deps };
+    const engines = pkg.engines as Record<string, string> | undefined;
+    return { lang: 'TypeScript', framework, target: engines?.node ?? 'unknown', deps };
   }
 
   return { lang: 'unknown', framework: 'unknown', target: 'unknown', deps: [] };
@@ -111,8 +118,10 @@ export const detectProjects = (root: string): string[] => {
   // Package.json workspaces
   const pkgPath = join(root, 'package.json');
   if (fileExists(pkgPath)) {
-    const pkg = JSON.parse(tryRead(pkgPath));
-    if (pkg.workspaces) return Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces.packages ?? [];
+    const pkg = tryParseJson(tryRead(pkgPath));
+    if (!pkg) return [];
+    const ws = pkg.workspaces;
+    if (ws) return Array.isArray(ws) ? ws as string[] : ((ws as Record<string, unknown>).packages as string[] | undefined) ?? [];
   }
 
   return [];
@@ -162,7 +171,7 @@ export const detectCodePatterns = (root: string, files: string[]): string[] => {
   const seen = new Set<string>();
 
   const sampleFiles = files
-    .filter((f) => (f.endsWith('.cs') || f.endsWith('.ts')) && !f.includes('Tests') && !f.includes('.test.') && !f.includes('obj/'))
+    .filter((f) => f.endsWith('.cs') && !f.includes('Tests') && !f.includes('obj/'))
     .slice(0, 15);
 
   for (const f of sampleFiles) {
@@ -197,14 +206,12 @@ export const detectCodePatterns = (root: string, files: string[]): string[] => {
 export const detectAntiPatterns = (root: string): string[] => {
   const anti: string[] = [];
   const csFiles = findFiles(root, '*.cs').filter((f) => !f.includes('obj/') && !f.includes('Tests'));
-  const tsFiles = findFiles(root, '*.ts').filter((f) => !f.includes('.test.') && !f.includes('node_modules'));
-  const allFiles = [...csFiles, ...tsFiles];
 
   let hasInterface = false;
   let hasInheritance = false;
   let hasDynamic = false;
 
-  for (const f of allFiles.slice(0, 20)) {
+  for (const f of csFiles.slice(0, 20)) {
     const content = tryRead(join(root, f));
     if (/public interface I\w+/.test(content) && !/I(TypeSymbol|NamedType|Symbol|Operation)/.test(content)) hasInterface = true;
     if (/class \w+ : [A-Z]\w+[^,{]/.test(content) && !/: Exception/.test(content)) hasInheritance = true;
@@ -244,13 +251,13 @@ export const sampleFlow = (root: string): string => {
 
 // ─── Brief builder ──────────────────────────────────────────────────────────
 
-export const generateBrief = (root: string): string => {
-  const stack = detectStack(root);
+export const generateBrief = (root: string, precomputed?: { stack: StackInfo; testStyle: string }): string => {
+  const stack = precomputed?.stack ?? detectStack(root);
   const projects = detectProjects(root);
   const folders = detectFolderStructure(root);
   const arch = detectArchPattern(folders);
-  const testStyle = detectTestStyle(root);
-  const allSrcFiles = findFiles(root, '*.cs').length > 0 ? findFiles(root, '*.cs') : findFiles(root, '*.ts');
+  const testStyle = precomputed?.testStyle ?? detectTestStyle(root);
+  const allSrcFiles = stack.lang === 'C#' ? findFiles(root, '*.cs') : findFiles(root, '*.ts');
   const patterns = detectCodePatterns(root, allSrcFiles);
   const antiPatterns = detectAntiPatterns(root);
   const flow = sampleFlow(root);
@@ -326,7 +333,7 @@ export const generateBrief = (root: string): string => {
   }
 
   if (flow) {
-    const lang = findFiles(root, '*.cs').length > 0 ? 'csharp' : 'typescript';
+    const lang = stack.lang === 'C#' ? 'csharp' : 'typescript';
     lines.push('## Example flow (entry point)');
     lines.push('');
     lines.push(`\`\`\`${lang}`);
@@ -370,14 +377,14 @@ export const runFingerprint = async (opts: FingerprintOptions): Promise<Fingerpr
     }
   } catch { /* brief doesn't exist yet, generate it */ }
 
-  const brief = generateBrief(opts.cwd);
+  const stack = detectStack(opts.cwd);
+  const testStyle = detectTestStyle(opts.cwd);
+  const brief = generateBrief(opts.cwd, { stack, testStyle });
 
   // Write brief to disk
   mkdirSync(opts.outputDir, { recursive: true });
   writeFileSync(briefPath, brief);
 
-  const stack = detectStack(opts.cwd);
-  const testStyle = detectTestStyle(opts.cwd);
   const testCommand = deriveTestCommand(stack, testStyle);
 
   return {
