@@ -384,15 +384,18 @@ export const runFingerprint = async (opts: FingerprintOptions): Promise<Fingerpr
 
   // Check freshness — skip if brief exists and is <1h old
   const briefPath = join(opts.outputDir, 'brief.md');
+  const profilePath = join(opts.outputDir, 'profile.json');
   try {
     const stat = statSync(briefPath);
     if (Date.now() - stat.mtimeMs < ONE_HOUR_MS) {
       const brief = tryRead(briefPath).trim();
-      if (brief) {
-        const stack = detectStack(opts.cwd);
-        const testStyle = detectTestStyle(opts.cwd);
-        const testCommand = deriveTestCommand(stack, testStyle);
-        return { brief, profile: { stack: stack.lang, ...(testCommand ? { testCommand } : {}) } };
+      const cachedProfile = tryParseJson(tryRead(profilePath));
+      if (brief && cachedProfile) {
+        const profile: ProjectProfile = {
+          ...(typeof cachedProfile.stack === 'string' ? { stack: cachedProfile.stack } : {}),
+          ...(typeof cachedProfile.testCommand === 'string' ? { testCommand: cachedProfile.testCommand } : {}),
+        };
+        return { brief, profile };
       }
     }
   } catch { /* brief doesn't exist yet, generate it */ }
@@ -401,19 +404,18 @@ export const runFingerprint = async (opts: FingerprintOptions): Promise<Fingerpr
   const testStyle = detectTestStyle(opts.cwd);
   const brief = generateBrief(opts.cwd, { stack, testStyle });
 
-  // Write brief to disk
+  const testCommand = deriveTestCommand(stack, testStyle);
+  const profile: ProjectProfile = {
+    stack: stack.lang,
+    ...(testCommand ? { testCommand } : {}),
+  };
+
+  // Write brief and profile to disk
   mkdirSync(opts.outputDir, { recursive: true });
   writeFileSync(briefPath, brief);
+  writeFileSync(profilePath, JSON.stringify(profile));
 
-  const testCommand = deriveTestCommand(stack, testStyle);
-
-  return {
-    brief,
-    profile: {
-      stack: stack.lang,
-      ...(testCommand ? { testCommand } : {}),
-    },
-  };
+  return { brief, profile };
 };
 
 const deriveTestCommand = (stack: StackInfo, testStyle: string): string | undefined => {

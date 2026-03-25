@@ -138,40 +138,36 @@ const followUpIfNeeded = async (
 // ─── Prompt builders ─────────────────────────────────────────────────────────
 
 const buildTddPrompt = (sliceContent: string, fixInstructions?: string): string => {
+  const integration = `## Integration
+Before writing any code for this slice, read the existing codebase to understand how this capability is currently implemented (if at all). Check for existing utilities, scripts, patterns, and external files referenced in the plan or brief that should be reused. Your implementation must integrate with the real system, not exist in isolation.`;
+
+  const autonomy = `## Autonomy
+You are running inside an automated orchestrator. The plan slice is the spec — treat it as pre-approved.
+Do NOT ask for confirmation on interface design, test strategy, or approach. Make your best judgement and proceed.
+Only stop to ask if you are genuinely blocked — e.g. the plan is ambiguous in a way where the wrong choice would waste significant work, or you need information not available in the codebase. "Does this look right?" is not a valid reason to stop.`;
+
   if (fixInstructions) {
-    return `You are working on the following plan slice. A code review found issues — fix them.
+    return `A code review found issues with the current plan slice. Address them.
 
 ## Plan Slice
 ${sliceContent}
 
-## Review Feedback to Fix
+## Review Feedback
 ${fixInstructions}
 
-Fix all issues. Run tests after each change. Commit your changes when done.
+${integration}
 
-## Integration
-Before writing any code for this slice, read the existing codebase to understand how this capability is currently implemented (if at all). Check for existing utilities, scripts, patterns, and external files referenced in the plan or brief that should be reused. Your implementation must integrate with the real system, not exist in isolation.
-
-## Autonomy
-You are running inside an automated orchestrator. The plan slice is the spec — treat it as pre-approved.
-Do NOT ask for confirmation on interface design, test strategy, or approach. Make your best judgement and proceed.
-Only stop to ask if you are genuinely blocked — e.g. the plan is ambiguous in a way where the wrong choice would waste significant work, or you need information not available in the codebase. "Does this look right?" is not a valid reason to stop.`;
+${autonomy}`;
   }
 
-  return `Implement the following plan slice using red-green-refactor TDD.
+  return `Implement the following plan slice.
 
 ## Plan Slice
 ${sliceContent}
 
-Work through this slice fully. Commit your changes when done.
+${integration}
 
-## Integration
-Before writing any code for this slice, read the existing codebase to understand how this capability is currently implemented (if at all). Check for existing utilities, scripts, patterns, and external files referenced in the plan or brief that should be reused. Your implementation must integrate with the real system, not exist in isolation.
-
-## Autonomy
-You are running inside an automated orchestrator. The plan slice is the spec — treat it as pre-approved.
-Do NOT ask for confirmation on interface design, test strategy, or approach. Make your best judgement and proceed.
-Only stop to ask if you are genuinely blocked — e.g. the plan is ambiguous in a way where the wrong choice would waste significant work, or you need information not available in the codebase. "Does this look right?" is not a valid reason to stop.`;
+${autonomy}`;
 };
 
 const buildReviewPrompt = (sliceContent: string, baseSha: string): string =>
@@ -260,10 +256,10 @@ If everything matches, respond with exactly: NO_ISSUES_FOUND`,
 Check:
 - Do output types from one component match input types expected by the next?
 - Are discriminated union variants handled exhaustively in every switch/pattern match?
-- Are there any TsType variants added in one file but not handled in consumers?
+- Are there any type variants added in one file but not handled in consumers?
 - Do error paths propagate correctly (warnings emitted, not swallowed)?
-- Are there any unused registrations (types registered in ImportTypeRegistry but never referenced)?
-- Do the static helper method signatures stay consistent across files? (e.g. parameter ordering)
+- Are there any unused registrations (types registered but never referenced)?
+- Do shared function signatures stay consistent across files? (e.g. parameter ordering)
 
 For each finding report:
 - **File(s):** paths involved
