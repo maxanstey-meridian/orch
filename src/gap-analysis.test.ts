@@ -236,4 +236,16 @@ describe('runGapAnalysis', () => {
     expect(captureRefMock).toHaveBeenCalledTimes(2);
     expect(deps.hasChanges).toHaveBeenLastCalledWith('/tmp/repo', 'ref-2');
   });
+
+  it('skips review loop entirely when maxReviewCycles is 0', async () => {
+    const gapAgent = makeAgent([makeResult({ assistantText: 'Missing test' })]);
+    const deps = makeDeps({
+      gapAgent,
+      hasChanges: vi.fn().mockResolvedValue(true),
+    });
+    await runGapAnalysis(makeOpts({ maxReviewCycles: 0 }), deps);
+
+    expect(deps.reviewAgent.send).not.toHaveBeenCalled();
+    expect(deps.implAgent.send).toHaveBeenCalledTimes(1); // only gap fix, no review fixes
+  });
 });
