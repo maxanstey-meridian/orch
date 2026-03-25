@@ -13,7 +13,6 @@ export type SlicePipelineDeps = {
   readonly runTestGate: (input: { testCommand?: string }) => Promise<TestGateResult>;
   readonly handleFollowUps: (opts: FollowUpOptions) => Promise<AgentResult>;
   readonly extractFindings: (result: AgentResult) => string;
-  readonly extractFormattedFindings: (agent: AgentProcess, prompt: string) => Promise<string>;
   readonly isCleanReview: (text: string) => boolean;
   readonly saveState: (filePath: string, state: OrchestratorState) => Promise<void>;
   readonly log: (message: string) => void;
@@ -139,10 +138,7 @@ export const processSlices = async (
       }
     }
 
-    // 5. Extract summary via quiet mode
-    await deps.extractFormattedFindings(deps.implAgent, 'Summarise what you built');
-
-    // 6. Mark slice complete
+    // 5. Mark slice complete
     state = { ...state, lastCompletedSlice: slice.number };
     await deps.saveState(statePath, state);
   }

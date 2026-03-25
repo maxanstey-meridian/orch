@@ -47,7 +47,6 @@ const makeDeps = (overrides: Partial<SlicePipelineDeps> = {}): SlicePipelineDeps
   runTestGate: vi.fn().mockResolvedValue({ passed: true, output: '' }),
   handleFollowUps: vi.fn().mockImplementation(async (opts) => opts.result),
   extractFindings: vi.fn().mockReturnValue('No issues found'),
-  extractFormattedFindings: vi.fn().mockResolvedValue('## Summary\nDone.'),
   isCleanReview: vi.fn().mockReturnValue(true),
   saveState: vi.fn().mockResolvedValue(undefined),
   log: vi.fn(),
@@ -258,14 +257,6 @@ describe('processSlices', () => {
     // Should not attempt to extract findings from failed review
     expect(deps.extractFindings).not.toHaveBeenCalled();
     expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('review'));
-  });
-
-  it('extracts summary via quiet mode after processing', async () => {
-    const deps = makeDeps();
-    const opts = makeOpts({ slices: [makeSlice(1)] });
-    await processSlices(opts, deps);
-
-    expect(deps.extractFormattedFindings).toHaveBeenCalled();
   });
 
   it('continues test gate warning on failure during review cycle', async () => {

@@ -52,18 +52,30 @@ describe('state', () => {
     expect(loaded).toEqual({});
   });
 
-  it('ignores unknown fields like session IDs', async () => {
-    await writeFile(testPath, JSON.stringify({
-      implSessionId: 'sess-1',
-      reviewSessionId: 'sess-2',
-      gapSessionId: 'sess-3',
-      lastCompletedSlice: 5,
-    }));
+  it('discards lastCompletedGroup with wrong type and lastSliceImplemented with wrong type', async () => {
+    await writeFile(testPath, JSON.stringify({ lastCompletedGroup: 123, lastSliceImplemented: 'nope' }));
     const loaded = await loadState(testPath);
-    expect(loaded).toEqual({ lastCompletedSlice: 5 });
-    expect((loaded as Record<string, unknown>).implSessionId).toBeUndefined();
-    expect((loaded as Record<string, unknown>).reviewSessionId).toBeUndefined();
-    expect((loaded as Record<string, unknown>).gapSessionId).toBeUndefined();
+    expect(loaded).toEqual({});
+  });
+
+  it('discards empty string lastCompletedGroup and negative lastSliceImplemented', async () => {
+    await writeFile(testPath, JSON.stringify({ lastCompletedGroup: '', lastSliceImplemented: -1 }));
+    const loaded = await loadState(testPath);
+    expect(loaded).toEqual({});
+  });
+
+  it('persists lastCompletedGroup and loads it back', async () => {
+    const state = { lastCompletedSlice: 3, lastCompletedGroup: 'group-a' };
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+    expect(loaded).toEqual(state);
+  });
+
+  it('persists lastSliceImplemented and loads it back', async () => {
+    const state = { lastCompletedSlice: 2, lastSliceImplemented: 3 };
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+    expect(loaded).toEqual(state);
   });
 
   it('overwrites previous state completely on save', async () => {

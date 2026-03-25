@@ -2,6 +2,8 @@ import { readFile, writeFile, rm } from 'fs/promises';
 
 export type OrchestratorState = {
   readonly lastCompletedSlice?: number;
+  readonly lastCompletedGroup?: string;
+  readonly lastSliceImplemented?: number;
 };
 
 const parseState = (text: string): OrchestratorState => {
@@ -11,6 +13,12 @@ const parseState = (text: string): OrchestratorState => {
   return {
     ...(typeof obj.lastCompletedSlice === 'number' && Number.isFinite(obj.lastCompletedSlice) && obj.lastCompletedSlice >= 0
       ? { lastCompletedSlice: obj.lastCompletedSlice }
+      : {}),
+    ...(typeof obj.lastCompletedGroup === 'string' && obj.lastCompletedGroup.length > 0
+      ? { lastCompletedGroup: obj.lastCompletedGroup }
+      : {}),
+    ...(typeof obj.lastSliceImplemented === 'number' && Number.isFinite(obj.lastSliceImplemented) && obj.lastSliceImplemented >= 0
+      ? { lastSliceImplemented: obj.lastSliceImplemented }
       : {}),
   };
 };
