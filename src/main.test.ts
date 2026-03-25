@@ -89,6 +89,106 @@ describe("--reset flag behavior", () => {
   }, 15_000);
 });
 
+// ─── CLI wiring integration tests ────────────────────────────────────────────
+
+describe("CLI flag wiring", () => {
+  const mainPath = join(import.meta.dirname, "main.ts");
+
+  const runMain = (args: string[], cwd: string) =>
+    spawnSync("npx", ["tsx", mainPath, ...args], {
+      cwd,
+      encoding: "utf-8",
+      timeout: 5_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+  const initGitRepo = (dir: string) => {
+    exec("git init", dir);
+    exec('git config user.email "test@test.com"', dir);
+    exec('git config user.name "Test"', dir);
+    execSync(`touch ${join(dir, "file.txt")}`, { cwd: dir });
+    exec("git add .", dir);
+    exec('git commit -m "init"', dir);
+  };
+
+  it("--init and --group are mutually exclusive", async () => {
+    initGitRepo(tempDir);
+    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
+
+    const r = runMain(
+      ["--resume", join(tempDir, "plan.md"), "--init", "--group", "Foo"],
+      tempDir,
+    );
+
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("--init and --group are mutually exclusive");
+    expect(r.status).not.toBe(0);
+  });
+
+  it("--resume with no path and no existing plan files exits with error", async () => {
+    initGitRepo(tempDir);
+
+    const r = runMain(
+      ["--resume", "--skip-fingerprint", "--no-interaction"],
+      tempDir,
+    );
+
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("No plan found");
+  });
+
+  it("--plan with file already in plan format skips generation (treats as resume)", async () => {
+    initGitRepo(tempDir);
+    const planFile = join(tempDir, "already-a-plan.md");
+    await writeFile(planFile, MINIMAL_PLAN);
+
+    // This will try to orchestrate (and fail spawning claude), but it should NOT
+    // attempt plan generation. Check that it doesn't print "generating plan" messages.
+    const r = runMain(
+      ["--plan", planFile, "--skip-fingerprint", "--no-interaction", "--plan-only"],
+      tempDir,
+    );
+
+    const stdout = strip(r.stdout ?? "");
+    // --plan-only with an already-plan file should report it and exit
+    expect(stdout).toContain("Plan written to");
+    expect(stdout).toContain("--resume");
+  });
+
+  it("--plan with plan-format file logs auto-detection message", async () => {
+    initGitRepo(tempDir);
+    const planFile = join(tempDir, "already-a-plan.md");
+    await writeFile(planFile, MINIMAL_PLAN);
+
+    const r = runMain(
+      ["--plan", planFile, "--skip-fingerprint", "--no-interaction", "--plan-only"],
+      tempDir,
+    );
+
+    const stdout = strip(r.stdout ?? "");
+    expect(stdout).toContain("already a plan");
+  });
+
+  it("--plan-only generates plan path and exits without orchestrating", async () => {
+    initGitRepo(tempDir);
+    const planFile = join(tempDir, "plan-format.md");
+    await writeFile(planFile, MINIMAL_PLAN);
+
+    const r = runMain(
+      ["--plan", planFile, "--skip-fingerprint", "--no-interaction", "--plan-only"],
+      tempDir,
+    );
+
+    // Should exit cleanly (or at least print the plan-only message before any agent spawn)
+    const stdout = strip(r.stdout ?? "");
+    expect(stdout).toContain("Plan written to");
+    expect(stdout).toContain("--resume");
+    // Should NOT contain any TDD/review agent output
+    expect(stdout).not.toContain("TDD");
+    expect(stdout).not.toContain("Slice 1");
+  });
+});
+
 describe("exit code 2 on credit exhaustion (component-level)", () => {
   const makeResult = (overrides: Partial<AgentResult> = {}): AgentResult => ({
     exitCode: 0,

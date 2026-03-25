@@ -14,8 +14,7 @@ export type Group = {
 const GROUP_RE = /^## Group:\s*(.+)$/;
 const SLICE_RE = /^### (?:Slice|Phase)\s+(\d+)(?::\s*(.+))?$/;
 
-export const parsePlan = async (filePath: string): Promise<readonly Group[]> => {
-  const text = await readFile(filePath, "utf-8");
+export const parsePlanText = (text: string, source = "<text>"): readonly Group[] => {
   const lines = text.split("\n");
 
   const groups: { name: string; slices: Slice[] }[] = [];
@@ -59,8 +58,13 @@ export const parsePlan = async (filePath: string): Promise<readonly Group[]> => 
   flushSlice();
 
   if (groups.length === 0) {
-    throw new Error(`No groups found in plan: ${filePath}`);
+    throw new Error(`No groups found in plan: ${source}`);
   }
 
   return groups;
+};
+
+export const parsePlan = async (filePath: string): Promise<readonly Group[]> => {
+  const text = await readFile(filePath, "utf-8");
+  return parsePlanText(text, filePath);
 };

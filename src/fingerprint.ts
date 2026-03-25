@@ -25,6 +25,7 @@ type FingerprintOptions = {
   readonly cwd: string;
   readonly outputDir: string;
   readonly skip?: boolean;
+  readonly forceRefresh?: boolean;
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -444,37 +445,51 @@ const ONE_HOUR_MS = 60 * 60 * 1000;
 export const runFingerprint = async (opts: FingerprintOptions): Promise<FingerprintResult> => {
   if (opts.skip) return DEFAULTS;
 
+  const initProfilePath = join(opts.outputDir, "init-profile.md");
+  const initPrefix = fileExists(initProfilePath) ? tryRead(initProfilePath).trim() : "";
+
   // Check freshness — skip if brief exists and is <1h old
+  // forceRefresh bypasses cache (e.g. after --init rewrites init-profile.md)
   const briefPath = join(opts.outputDir, "brief.md");
   const profilePath = join(opts.outputDir, "profile.json");
-  try {
-    const stat = statSync(briefPath);
-    if (Date.now() - stat.mtimeMs < ONE_HOUR_MS) {
-      const brief = tryRead(briefPath).trim();
-      const cachedProfile = tryParseJson(tryRead(profilePath));
-      if (brief && cachedProfile) {
-        const profile: ProjectProfile = {
-          ...(typeof cachedProfile.stack === "string" ? { stack: cachedProfile.stack } : {}),
-          ...(typeof cachedProfile.testCommand === "string"
-            ? { testCommand: cachedProfile.testCommand }
-            : {}),
-        };
-        return { brief, profile };
+  if (!opts.forceRefresh) {
+    try {
+      const stat = statSync(briefPath);
+      if (Date.now() - stat.mtimeMs < ONE_HOUR_MS) {
+        const brief = tryRead(briefPath).trim();
+        const cachedProfile = tryParseJson(tryRead(profilePath));
+        if (brief && cachedProfile) {
+          const profile: ProjectProfile = {
+            ...(typeof cachedProfile.stack === "string" ? { stack: cachedProfile.stack } : {}),
+            ...(typeof cachedProfile.testCommand === "string"
+              ? { testCommand: cachedProfile.testCommand }
+              : {}),
+          };
+          return { brief, profile };
+        }
       }
+    } catch {
+      /* brief doesn't exist yet, generate it */
     }
-  } catch {
-    /* brief doesn't exist yet, generate it */
   }
 
   const stack = detectStack(opts.cwd);
   const testStyle = detectTestStyle(opts.cwd);
-  const brief = generateBrief(opts.cwd, { stack, testStyle });
+  const generated = generateBrief(opts.cwd, { stack, testStyle });
+
+  // Init profile takes priority — prepend operator-stated context
+  const brief = initPrefix ? `${initPrefix}\n\n${generated}` : generated;
 
   const testCommand = deriveTestCommand(stack, testStyle);
   const profile: ProjectProfile = {
     stack: stack.lang,
     ...(testCommand ? { testCommand } : {}),
   };
+
+  // Suggest --init when project has no manifest files
+  if (stack.lang === "unknown" && !initPrefix) {
+    console.log("Empty project detected. Run with --init for guided setup.");
+  }
 
   // Write brief and profile to disk
   mkdirSync(opts.outputDir, { recursive: true });

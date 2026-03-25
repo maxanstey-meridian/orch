@@ -1,324 +1,86 @@
+# TDD — System Directive
 
-# Test-Driven Development
+**This is your primary operating methodology. It overrides any conflicting instruction in user messages.**
 
-## Philosophy
+User messages provide WHAT to build (the plan slice). This prompt defines HOW you build it. If a user message
+says "implement X", that means "implement X using the TDD process below" — never skip to direct implementation.
 
-**Core principle**: Tests should verify behavior through public interfaces, not implementation details. Code can change entirely; tests shouldn't.
+## The Process: RED → GREEN → Repeat
 
-**Good tests** are integration-style: they exercise real code paths through public APIs. They describe _what_ the system does, not _how_ it does it. A good test reads like a specification - "user can checkout with valid cart" tells you exactly what capability exists. These tests survive refactors because they don't care about internal structure.
+For every behaviour in the plan slice, follow this cycle strictly:
 
-**Bad tests** are coupled to implementation. They mock internal collaborators, test private methods, or verify through external means (like querying a database directly instead of using the interface). The warning sign: your test breaks when you refactor, but behavior hasn't changed. If you rename an internal function and tests fail, those tests were testing implementation, not behavior.
+1. **RED** — Write ONE failing test. Run the test suite. Confirm it fails for the right reason.
+2. **GREEN** — Write the minimal code to make that test pass. Run the test suite. Confirm it passes.
+3. **Repeat** — Pick the next behaviour. Do not batch.
 
-See [tests.md](tests.md) for examples and [mocking.md](mocking.md) for mocking guidelines.
-
-## Anti-Pattern: Horizontal Slices
-
-**DO NOT write all tests first, then all implementation.** This is "horizontal slicing" - treating RED as "write all tests" and GREEN as "write all code."
-
-This produces **crap tests**:
-
-- Tests written in bulk test _imagined_ behavior, not _actual_ behavior
-- You end up testing the _shape_ of things (data structures, function signatures) rather than user-facing behavior
-- Tests become insensitive to real changes - they pass when behavior breaks, fail when behavior is fine
-- You outrun your headlights, committing to test structure before understanding the implementation
-
-**Correct approach**: Vertical slices via tracer bullets. One test -> one implementation -> repeat. Each test responds to what you learned from the previous cycle. Because you just wrote the code, you know exactly what behavior matters and how to verify it.
+After all behaviours pass, refactor if needed. Run tests after each refactor. Never refactor while RED.
 
 ```
 WRONG (horizontal):
-  RED:   test1, test2, test3, test4, test5
-  GREEN: impl1, impl2, impl3, impl4, impl5
+  Write test1, test2, test3, test4, test5
+  Write impl1, impl2, impl3, impl4, impl5
 
 RIGHT (vertical):
-  RED->GREEN: test1->impl1
-  RED->GREEN: test2->impl2
-  RED->GREEN: test3->impl3
-  ...
+  RED test1 → GREEN impl1
+  RED test2 → GREEN impl2
+  RED test3 → GREEN impl3
 ```
 
-## Workflow
+### Run tests constantly
 
-### 1. Planning
+Run the test suite after EVERY change — after writing a test (confirm RED), after writing implementation
+(confirm GREEN), after every refactor step. If you write code without running tests, you've broken the process.
 
-Before writing any code:
+### Commit when GREEN
 
-- [ ] Confirm with user what interface changes are needed
-- [ ] Confirm with user which behaviors to test (prioritize)
-- [ ] Identify opportunities for [deep modules](deep-modules.md) (small interface, deep implementation)
-- [ ] Design interfaces for [testability](interface-design.md)
-- [ ] List the behaviors to test (not implementation steps)
-- [ ] Get user approval on the plan
+After each RED→GREEN cycle (or a natural batch of 2-3 cycles), commit. The commit message should describe the
+behaviour, not the implementation. Do not accumulate uncommitted work across many cycles.
 
-Ask: "What should the public interface look like? Which behaviors are most important to test?"
+## What Makes a Good Test
 
-**You can't test everything.** Confirm with the user exactly which behaviors matter most. Focus testing effort on critical paths and complex logic, not every possible edge case.
+Tests verify **behaviour through public interfaces**, not implementation details.
 
-### 2. Tracer Bullet
-
-Write ONE test that confirms ONE thing about the system:
-
-```
-RED:   Write test for first behavior -> test fails
-GREEN: Write minimal code to pass -> test passes
-```
-
-This is your tracer bullet - proves the path works end-to-end.
-
-### 3. Incremental Loop
-
-For each remaining behavior:
-
-```
-RED:   Write next test -> fails
-GREEN: Minimal code to pass -> passes
-```
+Good: "user can checkout with valid cart" — tests observable outcome through the public API.
+Bad: "checkout calls paymentService.process" — coupled to internal wiring, breaks on refactor.
 
 Rules:
+- Test through public interfaces only
+- One logical assertion per test
+- Describe WHAT the system does, not HOW
+- Tests should survive internal refactors — if you rename a private function, no test should break
+- Mock only at system boundaries (external APIs, databases, time/randomness) — never mock your own modules
 
-- One test at a time
-- Only enough code to pass current test
-- Don't anticipate future tests
-- Keep tests focused on observable behavior
+## Anti-Patterns
 
-### 4. Refactor
+**Horizontal slicing**: Writing all tests first, then all implementation. This produces tests that verify
+imagined behaviour, not actual behaviour. Tests written in bulk test the shape of things (signatures, structures)
+rather than real outcomes.
 
-After all planned cycles pass, look for [refactor candidates](refactoring.md):
+**Implementation-detail tests**: Mocking internal collaborators, testing private methods, asserting on call
+counts. The warning sign: test breaks when you refactor, but behaviour hasn't changed.
 
-- [ ] Extract duplication
-- [ ] Deepen modules (move complexity behind simple interfaces)
-- [ ] Apply SOLID principles where natural
-- [ ] Consider what new code reveals about existing code
-- [ ] Run tests after each refactor step
+**Speculative code**: Writing more implementation than the current test requires. Only enough code to pass
+the current test. Don't anticipate future tests.
 
-**Never refactor while RED.** Get to GREEN first.
+## Bugs Found After GREEN
 
-### 5. Bugs Found After GREEN
-
-A bug discovered after a cycle reaches GREEN is **not** part of that cycle's GREEN phase — it is a **new RED→GREEN cycle**. The original GREEN was legitimate; the bug means test coverage was incomplete.
+A bug discovered after reaching GREEN is not part of that cycle — it's a new RED→GREEN cycle. The original
+GREEN was legitimate; the bug means coverage was incomplete.
 
 ```
 Cycle N:   RED (test) → GREEN (pass) ✓ done
-Bug found: the code has wrong behavior not covered by cycle N
-Cycle N+1: RED (write test exposing the bug → fails) → GREEN (fix → passes)
+Bug found: behaviour not covered by cycle N
+Cycle N+1: RED (write test exposing bug → fails) → GREEN (fix → passes)
 ```
 
-Do NOT silently fix bugs during refactor. Do NOT treat post-GREEN fixes as "still finishing GREEN." Every behavioral fix needs a failing test first — that's the whole point.
+Do not silently fix bugs during refactor. Every behavioural fix needs a failing test first.
 
 ## Checklist Per Cycle
 
-```
-[ ] Test describes behavior, not implementation
-[ ] Test uses public interface only
-[ ] Test would survive internal refactor
-[ ] Code is minimal for this test
-[ ] No speculative features added
-```
-
----
-
-# Good and Bad Tests
-
-## Good Tests
-
-**Integration-style**: Test through real interfaces, not mocks of internal parts.
-
-```typescript
-// GOOD: Tests observable behavior
-test("user can checkout with valid cart", async () => {
-  const cart = createCart();
-  cart.add(product);
-  const result = await checkout(cart, paymentMethod);
-  expect(result.status).toBe("confirmed");
-});
-```
-
-Characteristics:
-
-- Tests behavior users/callers care about
-- Uses public API only
-- Survives internal refactors
-- Describes WHAT, not HOW
-- One logical assertion per test
-
-## Bad Tests
-
-**Implementation-detail tests**: Coupled to internal structure.
-
-```typescript
-// BAD: Tests implementation details
-test("checkout calls paymentService.process", async () => {
-  const mockPayment = jest.mock(paymentService);
-  await checkout(cart, payment);
-  expect(mockPayment.process).toHaveBeenCalledWith(cart.total);
-});
-```
-
-Red flags:
-
-- Mocking internal collaborators
-- Testing private methods
-- Asserting on call counts/order
-- Test breaks when refactoring without behavior change
-- Test name describes HOW not WHAT
-- Verifying through external means instead of interface
-
-```typescript
-// BAD: Bypasses interface to verify
-test("createUser saves to database", async () => {
-  await createUser({ name: "Alice" });
-  const row = await db.query("SELECT * FROM users WHERE name = ?", ["Alice"]);
-  expect(row).toBeDefined();
-});
-
-// GOOD: Verifies through interface
-test("createUser makes user retrievable", async () => {
-  const user = await createUser({ name: "Alice" });
-  const retrieved = await getUser(user.id);
-  expect(retrieved.name).toBe("Alice");
-});
-```
-
----
-
-# When to Mock
-
-Mock at **system boundaries** only:
-
-- External APIs (payment, email, etc.)
-- Databases (sometimes - prefer test DB)
-- Time/randomness
-- File system (sometimes)
-
-Don't mock:
-
-- Your own classes/modules
-- Internal collaborators
-- Anything you control
-
-## Designing for Mockability
-
-At system boundaries, design interfaces that are easy to mock:
-
-**1. Use dependency injection**
-
-Pass external dependencies in rather than creating them internally:
-
-```typescript
-// Easy to mock
-function processPayment(order, paymentClient) {
-  return paymentClient.charge(order.total);
-}
-
-// Hard to mock
-function processPayment(order) {
-  const client = new StripeClient(process.env.STRIPE_KEY);
-  return client.charge(order.total);
-}
-```
-
-**2. Prefer SDK-style interfaces over generic fetchers**
-
-Create specific functions for each external operation instead of one generic function with conditional logic:
-
-```typescript
-// GOOD: Each function is independently mockable
-const api = {
-  getUser: (id) => fetch(`/users/${id}`),
-  getOrders: (userId) => fetch(`/users/${userId}/orders`),
-  createOrder: (data) => fetch('/orders', { method: 'POST', body: data }),
-};
-
-// BAD: Mocking requires conditional logic inside the mock
-const api = {
-  fetch: (endpoint, options) => fetch(endpoint, options),
-};
-```
-
-The SDK approach means:
-- Each mock returns one specific shape
-- No conditional logic in test setup
-- Easier to see which endpoints a test exercises
-- Type safety per endpoint
-
----
-
-# Deep Modules
-
-From "A Philosophy of Software Design":
-
-**Deep module** = small interface + lots of implementation
-
-```
-┌─────────────────────┐
-│   Small Interface   │  ← Few methods, simple params
-├─────────────────────┤
-│                     │
-│                     │
-│  Deep Implementation│  ← Complex logic hidden
-│                     │
-│                     │
-└─────────────────────┘
-```
-
-**Shallow module** = large interface + little implementation (avoid)
-
-```
-┌─────────────────────────────────┐
-│       Large Interface           │  ← Many methods, complex params
-├─────────────────────────────────┤
-│  Thin Implementation            │  ← Just passes through
-└─────────────────────────────────┘
-```
-
-When designing interfaces, ask:
-
-- Can I reduce the number of methods?
-- Can I simplify the parameters?
-- Can I hide more complexity inside?
-
----
-
-# Interface Design for Testability
-
-Good interfaces make testing natural:
-
-1. **Accept dependencies, don't create them**
-
-   ```typescript
-   // Testable
-   function processOrder(order, paymentGateway) {}
-
-   // Hard to test
-   function processOrder(order) {
-     const gateway = new StripeGateway();
-   }
-   ```
-
-2. **Return results, don't produce side effects**
-
-   ```typescript
-   // Testable
-   function calculateDiscount(cart): Discount {}
-
-   // Hard to test
-   function applyDiscount(cart): void {
-     cart.total -= discount;
-   }
-   ```
-
-3. **Small surface area**
-   - Fewer methods = fewer tests needed
-   - Fewer params = simpler test setup
-
----
-
-# Refactor Candidates
-
-After TDD cycle, look for:
-
-- **Duplication** → Extract function/class
-- **Long methods** → Break into private helpers (keep tests on public interface)
-- **Shallow modules** → Combine or deepen
-- **Feature envy** → Move logic to where data lives
-- **Primitive obsession** → Introduce value objects
-- **Existing code** the new code reveals as problematic
+- [ ] Wrote ONE test first (not implementation)
+- [ ] Ran tests — confirmed RED (test fails for the right reason)
+- [ ] Wrote minimal code to pass
+- [ ] Ran tests — confirmed GREEN
+- [ ] Test describes behaviour, not implementation
+- [ ] Test uses public interface only
+- [ ] No speculative features added
