@@ -22,9 +22,11 @@ import { loadState, saveState, clearState, type OrchestratorState } from './stat
 import { runFingerprint, wrapBrief } from './fingerprint.js';
 import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from './agent.js';
 import { captureRef, hasChanges, getStatus } from './git.js';
+import { assertGitRepo } from './repo-check.js';
 import { runTestGate } from './test-gate.js';
 import { isCleanReview } from './review-check.js';
 import { extractFindings } from './extract-findings.js';
+import { detectCreditExhaustion } from './credit-detection.js';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -90,6 +92,29 @@ const spawnAgent = (style: AgentStyle, systemPrompt?: string): AgentProcess =>
     style,
   });
 
+// ─── Streaming formatter ─────────────────────────────────────────────────────
+
+type Streamer = ((text: string) => void) & { flush: () => void };
+
+const makeStreamer = (style: AgentStyle): Streamer => {
+  let partial = '';
+  const write = (text: string) => {
+    partial += text;
+    const lines = partial.split('\n');
+    partial = lines.pop() ?? '';
+    for (const line of lines) {
+      log(`${style.color}  ${style.label}${a.reset} ${a.dim}│${a.reset} ${line}`);
+    }
+  };
+  write.flush = () => {
+    if (partial.trim()) {
+      log(`${style.color}  ${style.label}${a.reset} ${a.dim}│${a.reset} ${partial}`);
+      partial = '';
+    }
+  };
+  return write;
+};
+
 // ─── Brief helper ────────────────────────────────────────────────────────────
 
 const withBrief = (prompt: string, brief: string): string => {
@@ -121,14 +146,16 @@ const followUpIfNeeded = async (
     log(`\n${ts()} ${a.yellow}Bot is asking for input ↑${a.reset}`);
     const answer = await ask(`${a.bold}Your response${a.reset} (or Enter to skip): `);
 
+    const s = makeStreamer(agent.style);
     if (!answer.trim()) {
       log(`${ts()} ${a.dim}skipped — telling bot to proceed autonomously${a.reset}`);
       current = await agent.send(
-        'No preference — proceed with your best judgement. Make the decision yourself and continue implementing.',
+        'No preference — proceed with your best judgement. Make the decision yourself and continue implementing.', s,
       );
     } else {
-      current = await agent.send(answer);
+      current = await agent.send(answer, s);
     }
+    s.flush();
     followUps++;
   }
 
@@ -305,6 +332,7 @@ const reviewFixLoop = async (
   tddFirstMessage: { value: boolean },
   reviewFirstMessage: { value: boolean },
   testCommand: string | undefined,
+  exitOnCreditExhaustion: (result: AgentResult, agent: AgentProcess) => Promise<void>,
 ): Promise<void> => {
   let baseSha = await captureRef(cwd);
 
@@ -319,7 +347,10 @@ const reviewFixLoop = async (
     const reviewPrompt = reviewFirstMessage.value
       ? withBrief(buildReviewPrompt(content, baseSha), brief)
       : buildReviewPrompt(content, baseSha);
-    const reviewResult = await reviewAgent.send(reviewPrompt);
+    let s = makeStreamer(BOT_REVIEW);
+    const reviewResult = await reviewAgent.send(reviewPrompt, s);
+    s.flush();
+    await exitOnCreditExhaustion(reviewResult, reviewAgent);
     reviewFirstMessage.value = false;
     const reviewText = extractFindings(reviewResult);
 
@@ -331,7 +362,9 @@ const reviewFixLoop = async (
     log(`${ts()} ${BOT_TDD.badge} ${a.cyan}fixing review feedback...${a.reset}`);
     const preFixSha = await captureRef(cwd);
     const fixPrompt = buildTddPrompt(content, reviewText);
-    const fixResult = await tddAgent.send(tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt);
+    s = makeStreamer(BOT_TDD);
+    const fixResult = await tddAgent.send(tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt, s);
+    s.flush();
     tddFirstMessage.value = false;
     await followUpIfNeeded(fixResult, tddAgent, noInteraction);
 
@@ -350,6 +383,8 @@ const reviewFixLoop = async (
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 const main = async () => {
+  await assertGitRepo(process.cwd());
+
   const args = process.argv.slice(2);
   const getArg = (flag: string): string | undefined => {
     const i = args.indexOf(flag);
@@ -360,6 +395,7 @@ const main = async () => {
   const auto = args.includes('--auto');
   const skipFingerprint = args.includes('--skip-fingerprint');
   const noInteraction = args.includes('--no-interaction');
+  const resetState = args.includes('--reset');
   const groupFilter = getArg('--group');
 
   // 1. Load skill prompts
@@ -379,6 +415,10 @@ const main = async () => {
   });
 
   // 4. Load state
+  if (resetState) {
+    await clearState(resolve(cwd, CONFIG.stateFile));
+    log(`${a.dim}State cleared.${a.reset}`);
+  }
   let state: OrchestratorState = await loadState(resolve(cwd, CONFIG.stateFile));
 
   // 5. Spawn persistent agents with skill system prompts
@@ -394,6 +434,19 @@ const main = async () => {
   };
   process.on('SIGINT', () => { cleanup(); process.exit(130); });
   process.on('SIGTERM', () => { cleanup(); process.exit(143); });
+
+  // Closure over mutable `state` — always saves the latest value
+  const exitOnCreditExhaustion = async (result: AgentResult, agent: AgentProcess) => {
+    const signal = detectCreditExhaustion(result, agent.stderr);
+    if (!signal) return;
+    log(`\n${ts()} ${a.red}Credit exhaustion detected: ${signal.message}${a.reset}`);
+    await saveState(resolve(cwd, CONFIG.stateFile), state);
+    if (signal.kind === 'mid-response') {
+      log(`${ts()} ${a.yellow}Agent was interrupted mid-response. The current slice will be re-run on resume.${a.reset}`);
+    }
+    cleanup();
+    process.exit(2);
+  };
 
   // 7. Startup banner
   log(`\n${a.bold}🚀 Orchestrator${a.reset} ${a.dim}${new Date().toISOString().slice(0, 16)}${a.reset}`);
@@ -458,8 +511,11 @@ const main = async () => {
 
         const tddPrompt = buildTddPrompt(slice.content);
         const prompt = tddFirstMessage.value ? withBrief(tddPrompt, brief) : tddPrompt;
-        const tddResult = await tddAgent.send(prompt);
+        const s = makeStreamer(BOT_TDD);
+        const tddResult = await tddAgent.send(prompt, s);
+        s.flush();
         tddFirstMessage.value = false;
+        await exitOnCreditExhaustion(tddResult, tddAgent);
         await followUpIfNeeded(tddResult, tddAgent, noInteraction);
 
         if (tddResult.exitCode !== 0) {
@@ -481,7 +537,7 @@ const main = async () => {
       // Review-fix loop
       await reviewFixLoop(
         tddAgent, reviewAgent, slice.content, brief, cwd, noInteraction,
-        tddFirstMessage, reviewFirstMessage, profile.testCommand,
+        tddFirstMessage, reviewFirstMessage, profile.testCommand, exitOnCreditExhaustion,
       );
 
       // Slice outro — summary via quiet mode
@@ -516,7 +572,10 @@ Be concrete and specific. No filler.`,
       const groupContent = group.slices.map((s: Slice) => s.content).join('\n\n---\n\n');
       const gapAgent = spawnAgent(BOT_GAP);
       const gapPrompt = withBrief(buildGapPrompt(groupContent, groupBaseSha), brief);
-      const gapResult = await gapAgent.send(gapPrompt);
+      let s = makeStreamer(BOT_GAP);
+      const gapResult = await gapAgent.send(gapPrompt, s);
+      s.flush();
+      await exitOnCreditExhaustion(gapResult, gapAgent);
 
       if (gapResult.exitCode !== 0) {
         log(`${ts()} ${a.yellow}⚠ Gap analysis agent failed (exit ${gapResult.exitCode}) — skipping${a.reset}`);
@@ -529,10 +588,13 @@ Be concrete and specific. No filler.`,
           const gapBaseSha = await captureRef(cwd);
           const gapFixPrompt = buildTddPrompt(
             groupContent,
-            `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests. Commit when done.`,
+            `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
           );
-          const gapFixResult = await tddAgent.send(tddFirstMessage.value ? withBrief(gapFixPrompt, brief) : gapFixPrompt);
+          s = makeStreamer(BOT_TDD);
+          const gapFixResult = await tddAgent.send(tddFirstMessage.value ? withBrief(gapFixPrompt, brief) : gapFixPrompt, s);
+          s.flush();
           tddFirstMessage.value = false;
+          await exitOnCreditExhaustion(gapFixResult, tddAgent);
           await followUpIfNeeded(gapFixResult, tddAgent, noInteraction);
           if (!await hasChanges(cwd, gapBaseSha)) {
             log(`${ts()} ${a.dim}TDD bot made no changes for gaps${a.reset}`);
@@ -543,7 +605,7 @@ Be concrete and specific. No filler.`,
             } else {
               await reviewFixLoop(
                 tddAgent, reviewAgent, groupContent, brief, cwd, noInteraction,
-                tddFirstMessage, reviewFirstMessage, profile.testCommand,
+                tddFirstMessage, reviewFirstMessage, profile.testCommand, exitOnCreditExhaustion,
               );
               log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
             }
@@ -597,7 +659,10 @@ Be concrete and specific. No filler.`,
       // Fresh agent per final pass
       const finalAgent = spawnAgent(BOT_FINAL);
       const finalPrompt = withBrief(pass.prompt, brief);
-      const finalResult = await finalAgent.send(finalPrompt);
+      let s = makeStreamer(BOT_FINAL);
+      const finalResult = await finalAgent.send(finalPrompt, s);
+      s.flush();
+      await exitOnCreditExhaustion(finalResult, finalAgent);
       finalAgent.kill();
 
       if (finalResult.exitCode !== 0) {
@@ -620,10 +685,13 @@ Be concrete and specific. No filler.`,
       const preFixSha = await captureRef(cwd);
       const fixPrompt = buildTddPrompt(
         planContent,
-        `A final "${pass.name}" review found issues. Fix them all.\n\n## Findings\n${findings}\n\nFix each issue. Run tests after each change. Commit when done.`,
+        `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
       );
-      const fixResult = await tddAgent.send(tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt);
+      s = makeStreamer(BOT_TDD);
+      const fixResult = await tddAgent.send(tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt, s);
+      s.flush();
       tddFirstMessage.value = false;
+      await exitOnCreditExhaustion(fixResult, tddAgent);
       await followUpIfNeeded(fixResult, tddAgent, noInteraction);
       if (!await hasChanges(cwd, preFixSha)) {
         log(`${ts()} ${a.dim}TDD bot made no changes for ${pass.name}${a.reset}`);
@@ -639,7 +707,7 @@ Be concrete and specific. No filler.`,
       // Review cycle on the fixes
       await reviewFixLoop(
         tddAgent, reviewAgent, planContent, brief, cwd, noInteraction,
-        tddFirstMessage, reviewFirstMessage, profile.testCommand,
+        tddFirstMessage, reviewFirstMessage, profile.testCommand, exitOnCreditExhaustion,
       );
       log(`${ts()} ${a.green}✓ ${pass.name}: resolved${a.reset}`);
     }

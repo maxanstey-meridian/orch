@@ -5,7 +5,12 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build": "tsc -p tsconfig.build.json",
+    "bundle": "npm run build && rm -rf ~/.claude/orch && mkdir -p ~/.claude/orch/js ~/.claude/orch/skills && cp dist/*.js ~/.claude/orch/js/ && cp -r skills/* ~/.claude/orch/skills/ && ln -s $(pwd)/node_modules ~/.claude/orch/js/node_modules && echo 'Bundled to ~/.claude/orch/'"
+  },
+  "dependencies": {
+    "zod": "^3"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

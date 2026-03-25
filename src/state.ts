@@ -1,35 +1,29 @@
 import { readFile, writeFile, rm } from 'fs/promises';
+import { z } from 'zod';
 
-export type OrchestratorState = {
-  readonly lastCompletedSlice?: number;
-  readonly lastCompletedGroup?: string;
-  readonly lastSliceImplemented?: number;
-};
+const stateSchema = z.object({
+  lastCompletedSlice: z.number().int().nonnegative().optional(),
+  lastCompletedGroup: z.string().min(1).optional(),
+  lastSliceImplemented: z.number().int().nonnegative().optional(),
+}).passthrough();
 
-const parseState = (text: string): OrchestratorState => {
-  const parsed: unknown = JSON.parse(text);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
-  const obj = parsed as Record<string, unknown>;
-  return {
-    ...(typeof obj.lastCompletedSlice === 'number' && Number.isFinite(obj.lastCompletedSlice) && obj.lastCompletedSlice >= 0
-      ? { lastCompletedSlice: obj.lastCompletedSlice }
-      : {}),
-    ...(typeof obj.lastCompletedGroup === 'string' && obj.lastCompletedGroup.length > 0
-      ? { lastCompletedGroup: obj.lastCompletedGroup }
-      : {}),
-    ...(typeof obj.lastSliceImplemented === 'number' && Number.isFinite(obj.lastSliceImplemented) && obj.lastSliceImplemented >= 0
-      ? { lastSliceImplemented: obj.lastSliceImplemented }
-      : {}),
-  };
-};
+export type OrchestratorState = Readonly<z.infer<typeof stateSchema>>;
 
 export const loadState = async (filePath: string): Promise<OrchestratorState> => {
-  try {
-    const text = await readFile(filePath, 'utf-8');
-    return parseState(text);
-  } catch {
-    return {};
+  let raw: string;
+  try { raw = await readFile(filePath, 'utf-8'); }
+  catch { return {}; }
+
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); }
+  catch { return {}; }
+
+  const result = stateSchema.safeParse(parsed);
+  if (!result.success) {
+    const issues = result.error.issues.map(i => `  ${i.path.join('.')}: ${i.message}`).join('\n');
+    throw new Error(`Corrupt state file (${filePath}):\n${issues}\nDelete the file to start fresh, or use --reset.`);
   }
+  return result.data;
 };
 
 export const saveState = async (filePath: string, state: OrchestratorState): Promise<void> => {
