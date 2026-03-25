@@ -14,6 +14,7 @@
  */
 
 import { resolve } from 'path';
+import { readFileSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { createInterface } from 'readline';
 import { parsePlan, type Group, type Slice } from './plan-parser.js';
@@ -75,7 +76,7 @@ const BOT_FINAL: AgentStyle  = { label: 'FINAL',  color: a.green,   badge: `${a.
 
 const BASE_FLAGS = ['--dangerously-skip-permissions'] as const;
 
-const spawnAgent = (style: AgentStyle): AgentProcess =>
+const spawnAgent = (style: AgentStyle, systemPrompt?: string): AgentProcess =>
   createAgent({
     command: 'claude',
     args: [
@@ -84,6 +85,7 @@ const spawnAgent = (style: AgentStyle): AgentProcess =>
       '--input-format', 'stream-json',
       '--output-format', 'stream-json',
       '--verbose',
+      ...(systemPrompt ? ['--append-system-prompt', systemPrompt] : []),
     ],
     style,
   });
@@ -137,9 +139,7 @@ const followUpIfNeeded = async (
 
 const buildTddPrompt = (sliceContent: string, fixInstructions?: string): string => {
   if (fixInstructions) {
-    return `/tdd
-
-You are working on the following plan slice. A code review found issues — fix them.
+    return `You are working on the following plan slice. A code review found issues — fix them.
 
 ## Plan Slice
 ${sliceContent}
@@ -149,20 +149,24 @@ ${fixInstructions}
 
 Fix all issues. Run tests after each change. Commit your changes when done.
 
+## Integration
+Before writing any code for this slice, read the existing codebase to understand how this capability is currently implemented (if at all). Check for existing utilities, scripts, patterns, and external files referenced in the plan or brief that should be reused. Your implementation must integrate with the real system, not exist in isolation.
+
 ## Autonomy
 You are running inside an automated orchestrator. The plan slice is the spec — treat it as pre-approved.
 Do NOT ask for confirmation on interface design, test strategy, or approach. Make your best judgement and proceed.
 Only stop to ask if you are genuinely blocked — e.g. the plan is ambiguous in a way where the wrong choice would waste significant work, or you need information not available in the codebase. "Does this look right?" is not a valid reason to stop.`;
   }
 
-  return `/tdd
-
-Implement the following plan slice using red-green-refactor TDD.
+  return `Implement the following plan slice using red-green-refactor TDD.
 
 ## Plan Slice
 ${sliceContent}
 
 Work through this slice fully. Commit your changes when done.
+
+## Integration
+Before writing any code for this slice, read the existing codebase to understand how this capability is currently implemented (if at all). Check for existing utilities, scripts, patterns, and external files referenced in the plan or brief that should be reused. Your implementation must integrate with the real system, not exist in isolation.
 
 ## Autonomy
 You are running inside an automated orchestrator. The plan slice is the spec — treat it as pre-approved.
@@ -171,9 +175,7 @@ Only stop to ask if you are genuinely blocked — e.g. the plan is ambiguous in 
 };
 
 const buildReviewPrompt = (sliceContent: string, baseSha: string): string =>
-  `/deep-review
-
-Review the changes since commit ${baseSha} against the intended plan slice.
+  `Review the changes since commit ${baseSha} against the intended plan slice.
 
 ## Intended Plan Slice
 ${sliceContent}`;
@@ -364,27 +366,32 @@ const main = async () => {
   const noInteraction = args.includes('--no-interaction');
   const groupFilter = getArg('--group');
 
-  // 1. Parse plan
+  // 1. Load skill prompts
+  const skillsDir = resolve(import.meta.dirname, '..', 'skills');
+  const tddSkill = readFileSync(resolve(skillsDir, 'tdd.md'), 'utf-8');
+  const reviewSkill = readFileSync(resolve(skillsDir, 'deep-review.md'), 'utf-8');
+
+  // 2. Parse plan
   const groups = await parsePlan(planPath);
   const cwd = process.cwd();
 
-  // 2. Fingerprint + brief
+  // 3. Fingerprint + brief
   const { brief, profile } = await runFingerprint({
     cwd,
     outputDir: resolve(cwd, CONFIG.briefDir),
     skip: skipFingerprint,
   });
 
-  // 3. Load state
+  // 4. Load state
   let state: OrchestratorState = await loadState(resolve(cwd, CONFIG.stateFile));
 
-  // 4. Spawn persistent agents
-  let tddAgent = spawnAgent(BOT_TDD);
-  let reviewAgent = spawnAgent(BOT_REVIEW);
+  // 5. Spawn persistent agents with skill system prompts
+  let tddAgent = spawnAgent(BOT_TDD, tddSkill);
+  let reviewAgent = spawnAgent(BOT_REVIEW, reviewSkill);
   const tddFirstMessage = { value: true };
   const reviewFirstMessage = { value: true };
 
-  // 5. Signal handlers
+  // 6. Signal handlers
   const cleanup = () => {
     tddAgent.kill();
     reviewAgent.kill();
@@ -392,7 +399,7 @@ const main = async () => {
   process.on('SIGINT', () => { cleanup(); process.exit(130); });
   process.on('SIGTERM', () => { cleanup(); process.exit(143); });
 
-  // 6. Startup banner
+  // 7. Startup banner
   log(`\n${a.bold}🚀 Orchestrator${a.reset} ${a.dim}${new Date().toISOString().slice(0, 16)}${a.reset}`);
   log(`   ${a.dim}Plan${a.reset}    ${planPath}`);
   log(`   ${a.dim}Brief${a.reset}   ${brief ? `${a.green}✓${a.reset} .orch/brief.md` : `${a.dim}none${a.reset}`}`);
@@ -402,7 +409,7 @@ const main = async () => {
   log(`   ${BOT_REVIEW.badge} ${a.dim}persistent (${reviewAgent.sessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
 
-  // 7. Group list with start marker
+  // 8. Group list with start marker
   const startIdx = groupFilter
     ? groups.findIndex((g) => g.name.toLowerCase() === groupFilter.toLowerCase())
     : 0;
@@ -426,7 +433,7 @@ const main = async () => {
   const runBaseSha = await captureRef(cwd);
   const planContent = await readFile(planPath, 'utf-8');
 
-  // 8. Group loop
+  // 9. Group loop
   for (let i = 0; i < remaining.length; i++) {
     const group = remaining[i];
 
@@ -561,8 +568,8 @@ Be concrete and specific. No filler.`,
       // Kill and respawn agents — clean context slate
       tddAgent.kill();
       reviewAgent.kill();
-      tddAgent = spawnAgent(BOT_TDD);
-      reviewAgent = spawnAgent(BOT_REVIEW);
+      tddAgent = spawnAgent(BOT_TDD, tddSkill);
+      reviewAgent = spawnAgent(BOT_REVIEW, reviewSkill);
       tddFirstMessage.value = true;
       reviewFirstMessage.value = true;
 
@@ -582,7 +589,7 @@ Be concrete and specific. No filler.`,
     }
   }
 
-  // 9. Final review passes
+  // 10. Final review passes
   if (await hasChanges(cwd, runBaseSha)) {
     logSection('Final review — 3 targeted passes');
 
@@ -642,7 +649,7 @@ Be concrete and specific. No filler.`,
     }
   }
 
-  // 10. Cleanup
+  // 11. Cleanup
   logSection(`${a.green}✅ All groups complete + final review done${a.reset}`);
   const status = await getStatus(cwd);
   log(`\n${status}`);
