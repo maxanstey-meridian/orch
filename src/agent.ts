@@ -111,6 +111,16 @@ export const runAgent = async (opts: AgentOptions): Promise<AgentResult> => {
       }
     });
 
+    proc.on('error', () => {
+      resolve({
+        exitCode: 1,
+        assistantText: '',
+        resultText: '',
+        needsInput: false,
+        sessionId,
+      });
+    });
+
     proc.on('close', (code: number | null) => {
       flush();
       const assistantText = assistantChunks.join('');
@@ -131,7 +141,7 @@ export const runAgentQuiet = async (opts: {
   readonly args: readonly string[];
   readonly sessionId: string;
 }): Promise<string> => {
-  return new Promise<string>((resolve) => {
+  return new Promise<string>((resolve, reject) => {
     const proc = spawnAgent(opts.command, opts.args, opts.prompt);
     let resultText = '';
 
@@ -140,6 +150,8 @@ export const runAgentQuiet = async (opts: {
         resultText = typeof event.result === 'string' ? event.result : '';
       }
     });
+
+    proc.on('error', (err) => reject(err));
 
     proc.on('close', () => {
       flush();
