@@ -227,4 +227,87 @@ describe('runOrchestrator', () => {
     const call2 = (deps.runGapAnalysis as ReturnType<typeof vi.fn>).mock.calls[1][0];
     expect(call2.baseline).toBe('group2-baseline');
   });
+
+  it('passes correct slices to processSlices for each group', async () => {
+    const deps = makeDeps();
+    await runOrchestrator(makeArgs({ automatic: true }), deps);
+
+    const call1 = (deps.processSlices as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call1.slices).toHaveLength(1);
+    expect(call1.slices[0].number).toBe(1);
+
+    const call2 = (deps.processSlices as ReturnType<typeof vi.fn>).mock.calls[1][0];
+    expect(call2.slices).toHaveLength(2);
+    expect(call2.slices[0].number).toBe(2);
+    expect(call2.slices[1].number).toBe(3);
+  });
+
+  it('passes runBaseline and aggregated planContent to runFinalReview', async () => {
+    const deps = makeDeps({
+      captureRef: vi.fn()
+        .mockResolvedValueOnce('the-run-baseline')
+        .mockResolvedValueOnce('group1')
+        .mockResolvedValueOnce('group2'),
+    });
+    await runOrchestrator(makeArgs({ automatic: true }), deps);
+
+    const call = (deps.runFinalReview as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.runBaseline).toBe('the-run-baseline');
+    expect(call.planContent).toContain('Content 1');
+    expect(call.planContent).toContain('Content 2');
+    expect(call.planContent).toContain('Content 3');
+  });
+
+  it('handles single-group plan with no compaction or inter-group prompt', async () => {
+    const deps = makeDeps({
+      parsePlan: vi.fn().mockResolvedValue([makeGroup('Solo', [1])]),
+    });
+    await runOrchestrator(makeArgs(), deps);
+
+    expect(deps.processSlices).toHaveBeenCalledTimes(1);
+    expect(deps.promptContinue).not.toHaveBeenCalled();
+    expect(deps.runFinalReview).toHaveBeenCalledTimes(1);
+    expect(deps.clearState).toHaveBeenCalled();
+    // No compaction log for single group
+    const logCalls = (deps.log as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0] as string);
+    expect(logCalls.some(m => m.includes('compaction'))).toBe(false);
+  });
+
+  it('passes empty defaults when skipFingerprint is true', async () => {
+    const deps = makeDeps();
+    await runOrchestrator(makeArgs({ skipFingerprint: true }), deps);
+
+    const call = (deps.processSlices as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.brief).toBe('');
+    expect(call.profile).toEqual({});
+  });
+
+  it('does not run final review when operator declines continuation', async () => {
+    const deps = makeDeps({ promptContinue: vi.fn().mockResolvedValue(false) });
+    await runOrchestrator(makeArgs(), deps);
+
+    expect(deps.runFinalReview).not.toHaveBeenCalled();
+  });
+
+  it('silently ignores clearState failure', async () => {
+    const deps = makeDeps({
+      clearState: vi.fn().mockRejectedValue(new Error('EACCES')),
+    });
+
+    // Should not throw
+    await expect(runOrchestrator(makeArgs({ automatic: true }), deps)).resolves.toBeUndefined();
+  });
+
+  it('passes correct slices to runGapAnalysis for each group', async () => {
+    const deps = makeDeps();
+    await runOrchestrator(makeArgs({ automatic: true }), deps);
+
+    const call1 = (deps.runGapAnalysis as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call1.slices).toHaveLength(1);
+    expect(call1.slices[0].number).toBe(1);
+
+    const call2 = (deps.runGapAnalysis as ReturnType<typeof vi.fn>).mock.calls[1][0];
+    expect(call2.slices).toHaveLength(2);
+    expect(call2.slices[0].number).toBe(2);
+  });
 });

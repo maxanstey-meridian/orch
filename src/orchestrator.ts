@@ -142,7 +142,11 @@ export const runOrchestrator = async (
     }, deps);
   }
 
-  // Cleanup
-  await deps.clearState(STATE_PATH);
+  // Cleanup — silently ignore failures (e.g. EACCES)
+  try {
+    await deps.clearState(STATE_PATH);
+  } catch {
+    // Spec: state file cleanup failure is silently ignored
+  }
   deps.log('Orchestration complete');
 };
