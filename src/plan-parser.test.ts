@@ -179,6 +179,48 @@ describe('parsePlan', () => {
     });
   });
 
+  it('creates a group with no slices when consecutive group headings appear', async () => {
+    const content = [
+      '## Group: Empty',
+      '',
+      '## Group: HasSlice',
+      '',
+      '### Slice 1: Only',
+      '',
+      'Content.',
+    ].join('\n');
+
+    await withTempFile(content, async (path) => {
+      const result = await parsePlan(path);
+      expect(result).toHaveLength(2);
+      expect(result[0].name).toBe('Empty');
+      expect(result[0].slices).toHaveLength(0);
+      expect(result[1].slices).toHaveLength(1);
+    });
+  });
+
+  it('ignores slice headings that appear before any group heading', async () => {
+    const content = [
+      '### Slice 1: Orphan',
+      '',
+      'This slice has no group.',
+      '',
+      '## Group: Real',
+      '',
+      '### Slice 2: Attached',
+      '',
+      'This one has a group.',
+    ].join('\n');
+
+    await withTempFile(content, async (path) => {
+      const result = await parsePlan(path);
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('Real');
+      expect(result[0].slices).toHaveLength(1);
+      expect(result[0].slices[0].number).toBe(2);
+    });
+  });
+
   it('parses a realistic plan with preamble, multiple groups, and mixed content', async () => {
     const content = [
       '# Feature Inventory',

@@ -49,4 +49,9 @@ describe('detectQuestion', () => {
     const output = 'Should I do this?\nI did it. Here is the result. All done.';
     expect(detectQuestion(output)).toBe(false);
   });
+
+  it('does not flag ternary operator question mark inside trailing code block', () => {
+    const output = 'Here is the fix.\n```\nconst x = foo == bar ? a : b\n```';
+    expect(detectQuestion(output)).toBe(false);
+  });
 });

@@ -15,7 +15,9 @@ const parseState = (text: string): OrchestratorState => {
     ...(typeof obj.implSessionId === 'string' ? { implSessionId: obj.implSessionId } : {}),
     ...(typeof obj.reviewSessionId === 'string' ? { reviewSessionId: obj.reviewSessionId } : {}),
     ...(typeof obj.gapSessionId === 'string' ? { gapSessionId: obj.gapSessionId } : {}),
-    ...(typeof obj.lastCompletedSlice === 'number' ? { lastCompletedSlice: obj.lastCompletedSlice } : {}),
+    ...(typeof obj.lastCompletedSlice === 'number' && Number.isFinite(obj.lastCompletedSlice) && obj.lastCompletedSlice >= 0
+      ? { lastCompletedSlice: obj.lastCompletedSlice }
+      : {}),
   };
 };
 

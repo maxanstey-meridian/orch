@@ -58,6 +58,25 @@ describe('state', () => {
     expect(loaded).toEqual({ reviewSessionId: 'valid' });
   });
 
+  it('overwrites previous state completely on save', async () => {
+    await saveState(testPath, { implSessionId: 'a', reviewSessionId: 'b', gapSessionId: 'c', lastCompletedSlice: 5 });
+    await saveState(testPath, { lastCompletedSlice: 6 });
+    const loaded = await loadState(testPath);
+    expect(loaded).toEqual({ lastCompletedSlice: 6 });
+    expect(loaded.implSessionId).toBeUndefined();
+  });
+
+  it('discards NaN, Infinity, and negative lastCompletedSlice values', async () => {
+    await writeFile(testPath, '{"lastCompletedSlice": NaN}');
+    expect(await loadState(testPath)).toEqual({});
+
+    await writeFile(testPath, JSON.stringify({ lastCompletedSlice: Infinity }));
+    expect(await loadState(testPath)).toEqual({});
+
+    await writeFile(testPath, JSON.stringify({ lastCompletedSlice: -1 }));
+    expect(await loadState(testPath)).toEqual({});
+  });
+
   it('returns default state for non-object JSON values', async () => {
     await writeFile(testPath, '[1,2,3]');
     expect(await loadState(testPath)).toEqual({});
