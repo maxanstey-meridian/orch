@@ -81,12 +81,13 @@ const forEachEvent = (
 };
 
 export type AgentProcess = {
-  readonly send: (prompt: string) => Promise<AgentResult>;
+  readonly send: (prompt: string, onText?: (text: string) => void) => Promise<AgentResult>;
   readonly sendQuiet: (prompt: string) => Promise<string>;
   readonly kill: () => void;
   readonly alive: boolean;
   readonly sessionId: string;
   readonly style: AgentStyle;
+  readonly stderr: string;
 };
 
 export type CreateAgentOptions = {
@@ -104,6 +105,9 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
   const proc = spawn(opts.command, [...opts.args], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+
+  let stderrBuf = '';
+  proc.stderr?.on('data', (chunk: Buffer) => { stderrBuf += chunk.toString(); });
 
   let onEvent: ((event: StreamEvent) => void) | null = null;
   let onDeath: (() => void) | null = null;
@@ -133,7 +137,7 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
     proc.stdin!.write(msg + '\n');
   };
 
-  const send = (prompt: string): Promise<AgentResult> => {
+  const send = (prompt: string, onText?: (text: string) => void): Promise<AgentResult> => {
     return new Promise<AgentResult>((resolve) => {
       if (!isAlive) {
         resolve({ exitCode: 1, assistantText: '', resultText: '', needsInput: false, sessionId });
@@ -148,6 +152,7 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
           for (const block of event.message.content) {
             if (block.type === 'text' && block.text) {
               assistantChunks.push(block.text);
+              if (onText) onText(block.text);
             }
           }
         } else if (event.type === 'result') {
@@ -215,6 +220,7 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
     sendQuiet,
     kill: () => proc.kill('SIGTERM'),
     get alive() { return isAlive; },
+    get stderr() { return stderrBuf; },
     sessionId,
     style: opts.style,
   };
