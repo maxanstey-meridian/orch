@@ -1,5 +1,6 @@
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
+import { Readable } from 'stream';
 import { detectQuestion } from './question-detector.js';
 
 export type AgentStyle = {
@@ -43,65 +44,78 @@ const parseEvent = (line: string): StreamEvent | null => {
     const parsed: unknown = JSON.parse(line);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
     const obj = parsed as Record<string, unknown>;
-    if (obj.type === 'assistant' || obj.type === 'result') return parsed as StreamEvent;
+
+    if (obj.type === 'assistant') {
+      const msg = obj.message;
+      if (typeof msg !== 'object' || msg === null || Array.isArray(msg)) return null;
+      const content = (msg as Record<string, unknown>).content;
+      if (!Array.isArray(content)) return null;
+      return parsed as StreamEvent;
+    }
+
+    if (obj.type === 'result') return parsed as StreamEvent;
+
     return null;
   } catch {
     return null;
   }
 };
 
+const forEachEvent = (
+  stdout: Readable,
+  onEvent: (event: StreamEvent) => void,
+): { flush: () => void } => {
+  let buffer = '';
+
+  stdout.on('data', (chunk: Buffer) => {
+    buffer += chunk.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      const event = parseEvent(line);
+      if (event) onEvent(event);
+    }
+  });
+
+  return {
+    flush: () => {
+      if (buffer.trim()) {
+        const event = parseEvent(buffer);
+        if (event) onEvent(event);
+      }
+    },
+  };
+};
+
+const spawnAgent = (command: string, args: readonly string[], prompt: string): ChildProcess =>
+  spawn(command, [...args, prompt], { stdio: ['inherit', 'pipe', 'pipe'] });
+
 export const runAgent = async (opts: AgentOptions): Promise<AgentResult> => {
   const sessionId = opts.sessionId ?? randomUUID();
   const assistantChunks: string[] = [];
   let resultText = '';
-  let exitCode = 0;
 
   return new Promise<AgentResult>((resolve) => {
-    const proc = spawn(opts.command, [...opts.args], { stdio: ['inherit', 'pipe', 'pipe'] });
+    const proc = spawnAgent(opts.command, opts.args, opts.prompt);
 
-    let buffer = '';
-
-    proc.stdout.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const event = parseEvent(line);
-        if (!event) continue;
-
-        if (event.type === 'assistant') {
-          for (const block of event.message.content) {
-            if (block.type === 'text' && block.text) {
-              assistantChunks.push(block.text);
-            }
+    const { flush } = forEachEvent(proc.stdout!, (event) => {
+      if (event.type === 'assistant') {
+        for (const block of event.message.content) {
+          if (block.type === 'text' && block.text) {
+            assistantChunks.push(block.text);
           }
-        } else if (event.type === 'result') {
-          resultText = typeof event.result === 'string' ? event.result : '';
         }
+      } else if (event.type === 'result') {
+        resultText = typeof event.result === 'string' ? event.result : '';
       }
     });
 
     proc.on('close', (code) => {
-      // Process any remaining buffer
-      if (buffer.trim()) {
-        const event = parseEvent(buffer);
-        if (event) {
-          if (event.type === 'assistant') {
-            for (const block of event.message.content) {
-              if (block.type === 'text' && block.text) {
-                assistantChunks.push(block.text);
-              }
-            }
-          } else if (event.type === 'result') {
-            resultText = typeof event.result === 'string' ? event.result : '';
-          }
-        }
-      }
-
+      flush();
       const assistantText = assistantChunks.join('');
       resolve({
-        exitCode: code ?? exitCode,
+        exitCode: code ?? 1,
         assistantText,
         resultText,
         needsInput: detectQuestion(assistantText),
@@ -118,31 +132,17 @@ export const runAgentQuiet = async (opts: {
   readonly sessionId: string;
 }): Promise<string> => {
   return new Promise<string>((resolve) => {
-    const proc = spawn(opts.command, [...opts.args], { stdio: ['inherit', 'pipe', 'pipe'] });
-
-    let buffer = '';
+    const proc = spawnAgent(opts.command, opts.args, opts.prompt);
     let resultText = '';
 
-    proc.stdout.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const event = parseEvent(line);
-        if (event?.type === 'result') {
-          resultText = typeof event.result === 'string' ? event.result : '';
-        }
+    const { flush } = forEachEvent(proc.stdout!, (event) => {
+      if (event.type === 'result') {
+        resultText = typeof event.result === 'string' ? event.result : '';
       }
     });
 
     proc.on('close', () => {
-      if (buffer.trim()) {
-        const event = parseEvent(buffer);
-        if (event?.type === 'result') {
-          resultText = typeof event.result === 'string' ? event.result : '';
-        }
-      }
+      flush();
       resolve(resultText);
     });
   });

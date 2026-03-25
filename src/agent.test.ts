@@ -110,6 +110,42 @@ describe('runAgent', () => {
     expect(result.needsInput).toBe(true);
   });
 
+  it('ignores structurally invalid assistant events', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', [
+      'echo \'{"type":"assistant","message":"not-an-object"}\'',
+      'echo \'{"type":"assistant","message":{"content":"not-an-array"}}\'',
+      'echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"valid"}]}}\'',
+      'echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+    ].join('\n'));
+
+    const result = await runAgent({
+      prompt: 'test',
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    expect(result.assistantText).toBe('valid');
+  });
+
+  it('passes prompt to child process as argument', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', [
+      '# Echo the last argument as assistant text to prove we received it',
+      'PROMPT="$1"',
+      'echo "{\\\"type\\\":\\\"assistant\\\",\\\"message\\\":{\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"got: ${PROMPT}\\\"}]}}"',
+      'echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+    ].join('\n'));
+
+    const result = await runAgent({
+      prompt: 'my test prompt',
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    expect(result.assistantText).toBe('got: my test prompt');
+  });
+
   it('captures non-zero exit code when process fails', async () => {
     const script = await makeScript(tempDir, 'agent.sh', [
       'echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"partial output"}]}}\'',
