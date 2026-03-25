@@ -56,6 +56,23 @@ describe('git', () => {
     expect(await hasChanges(repoDir, ref)).toBe(true);
   });
 
+  it('detects changes when both a new commit and uncommitted modifications exist', async () => {
+    const ref = await captureRef(repoDir);
+    await writeFile(join(repoDir, 'new.txt'), 'committed content');
+    exec('git add .', repoDir);
+    exec('git commit -m "second"', repoDir);
+    await writeFile(join(repoDir, 'new.txt'), 'uncommitted modification');
+    expect(await hasChanges(repoDir, ref)).toBe(true);
+  });
+
+  it('returns non-empty status showing staged files', async () => {
+    await writeFile(join(repoDir, 'staged.txt'), 'staged content');
+    exec('git add staged.txt', repoDir);
+    const status = await getStatus(repoDir);
+    expect(status).toContain('staged.txt');
+    expect(status.length).toBeGreaterThan(0);
+  });
+
   it('returns empty status for a clean working tree', async () => {
     const status = await getStatus(repoDir);
     expect(status).toBe('');

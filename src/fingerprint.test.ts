@@ -117,6 +117,33 @@ describe('runFingerprint', () => {
     expect(result.profile.testCommand).toBeUndefined();
   });
 
+  it('returns empty profile when profile.json contains the literal string null', async () => {
+    const profilePath = join(tempDir, 'profile.json');
+    const script = await makeScript(tempDir, 'null-profile.sh', [
+      `echo 'null' > "${profilePath}"`,
+    ].join('\n'));
+    const result = await runFingerprint({
+      cwd: tempDir,
+      processPath: script,
+      outputDir: tempDir,
+    });
+    expect(result.profile).toEqual({});
+  });
+
+  it('returns empty brief when brief.md contains only whitespace', async () => {
+    const briefPath = join(tempDir, 'brief.md');
+    const script = await makeScript(tempDir, 'ws-brief.sh', [
+      `printf "  \\n  \\n  " > "${briefPath}"`,
+    ].join('\n'));
+    const result = await runFingerprint({
+      cwd: tempDir,
+      processPath: script,
+      outputDir: tempDir,
+    });
+    expect(result.brief).toBe('');
+    expect(wrapBrief(result.brief)).toBe('');
+  });
+
   it('loads profile and brief after successful fingerprint', async () => {
     const briefPath = join(tempDir, 'brief.md');
     const profilePath = join(tempDir, 'profile.json');

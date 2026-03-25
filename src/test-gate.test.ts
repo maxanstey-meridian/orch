@@ -49,6 +49,13 @@ describe('runTestGate', () => {
     expect(result.output).toContain('No test command');
   });
 
+  it('returns passed false with empty output when test script exits non-zero but writes nothing', async () => {
+    const script = await makeScript(tempDir, 'silent-fail.sh', 'exit 1');
+    const result = await runTestGate({ testCommand: script });
+    expect(result.passed).toBe(false);
+    expect(result.output).toBe('');
+  });
+
   it('fails with error output when command is not found', async () => {
     const result = await runTestGate({ testCommand: '/nonexistent/test-runner' });
     expect(result.passed).toBe(false);
