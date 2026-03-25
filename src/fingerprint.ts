@@ -43,6 +43,14 @@ const tryParseJson = (text: string): Record<string, unknown> | null => {
   } catch { return null; }
 };
 
+/** Narrow an unknown value to a string-keyed record, or undefined. */
+const asRecord = (v: unknown): Record<string, string> | undefined =>
+  typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, string> : undefined;
+
+/** Narrow an unknown value to a string array, or undefined. */
+const asStringArray = (v: unknown): string[] | undefined =>
+  Array.isArray(v) && v.every((s) => typeof s === 'string') ? v as string[] : undefined;
+
 const findFiles = (root: string, pattern: string, searchDirs = ['src', 'tests']): string[] => {
   try {
     const paths = searchDirs
@@ -92,14 +100,14 @@ export const detectStack = (root: string): StackInfo => {
   if (fileExists(pkgPath)) {
     const pkg = tryParseJson(tryRead(pkgPath));
     if (!pkg) return { lang: 'unknown', framework: 'unknown', target: 'unknown', deps: [] };
-    const allDeps = { ...(pkg.dependencies as Record<string, string> | undefined), ...(pkg.devDependencies as Record<string, string> | undefined) };
+    const allDeps = { ...asRecord(pkg.dependencies), ...asRecord(pkg.devDependencies) };
     const deps = Object.keys(allDeps);
     const framework = deps.includes('next') ? 'Next.js'
       : deps.includes('nuxt') ? 'Nuxt'
       : deps.includes('@nestjs/core') ? 'NestJS'
       : deps.includes('express') ? 'Express'
       : 'Node.js';
-    const engines = pkg.engines as Record<string, string> | undefined;
+    const engines = asRecord(pkg.engines);
     return { lang: 'TypeScript', framework, target: engines?.node ?? 'unknown', deps };
   }
 
@@ -124,7 +132,12 @@ export const detectProjects = (root: string): string[] => {
     const pkg = tryParseJson(tryRead(pkgPath));
     if (!pkg) return [];
     const ws = pkg.workspaces;
-    if (ws) return Array.isArray(ws) ? ws as string[] : ((ws as Record<string, unknown>).packages as string[] | undefined) ?? [];
+    if (ws) {
+      const arr = asStringArray(ws);
+      if (arr) return arr;
+      const obj = asRecord(ws);
+      if (obj) return asStringArray((ws as Record<string, unknown>).packages) ?? [];
+    }
   }
 
   return [];
