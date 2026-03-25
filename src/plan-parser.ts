@@ -57,5 +57,10 @@ export const parsePlan = async (filePath: string): Promise<readonly Group[]> => 
   }
 
   flushSlice();
+
+  if (groups.length === 0) {
+    throw new Error(`No groups found in plan: ${filePath}`);
+  }
+
   return groups;
 };

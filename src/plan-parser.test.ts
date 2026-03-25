@@ -20,10 +20,9 @@ describe('parsePlan', () => {
     await expect(parsePlan('/nonexistent/plan.md')).rejects.toThrow();
   });
 
-  it('returns empty groups for file with no group headings', async () => {
+  it('throws when file contains no group headings', async () => {
     await withTempFile('# Just a title\n\nSome content.\n', async (path) => {
-      const result = await parsePlan(path);
-      expect(result).toEqual([]);
+      await expect(parsePlan(path)).rejects.toThrow('No groups found');
     });
   });
 
