@@ -1,16 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, chmod } from 'fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { runFingerprint, wrapBrief } from './fingerprint.js';
-import { runTestGate } from './test-gate.js';
-
-const makeScript = async (dir: string, name: string, body: string): Promise<string> => {
-  const path = join(dir, name);
-  await writeFile(path, `#!/bin/sh\n${body}\n`);
-  await chmod(path, 0o755);
-  return path;
-};
+import {
+  detectStack, detectProjects, detectFolderStructure, detectArchPattern,
+  detectTestStyle, detectCodePatterns, detectAntiPatterns, sampleFlow,
+  runFingerprint, wrapBrief, generateBrief,
+} from './fingerprint.js';
 
 let tempDir: string;
 
@@ -22,163 +18,187 @@ afterEach(async () => {
   await rm(tempDir, { recursive: true });
 });
 
-describe('runFingerprint', () => {
-  it('returns defaults when fingerprint process is not found', async () => {
-    const result = await runFingerprint({
-      cwd: tempDir,
-      processPath: '/nonexistent/fingerprint.sh',
-      outputDir: tempDir,
-    });
-    expect(result.brief).toBe('');
-    expect(result.profile).toEqual({});
+describe('detectStack', () => {
+  it('detects TypeScript project from package.json', async () => {
+    await writeFile(join(tempDir, 'package.json'), JSON.stringify({
+      dependencies: { express: '^4.0.0' },
+      devDependencies: { typescript: '^5.0.0', vitest: '^3.0.0' },
+    }));
+
+    const result = detectStack(tempDir);
+    expect(result.lang).toBe('TypeScript');
+    expect(result.framework).toBe('Express');
+    expect(result.deps).toContain('express');
+    expect(result.deps).toContain('typescript');
   });
 
-  it('returns defaults when fingerprint process fails', async () => {
-    const briefPath = join(tempDir, 'brief.md');
-    const script = await makeScript(tempDir, 'fail.sh', [
-      `echo "# Should not load" > "${briefPath}"`,
-      'exit 1',
-    ].join('\n'));
-    const result = await runFingerprint({
-      cwd: tempDir,
-      processPath: script,
-      outputDir: tempDir,
-    });
-    expect(result.brief).toBe('');
-    expect(result.profile).toEqual({});
+  it('detects C# project from .csproj', async () => {
+    await mkdir(join(tempDir, 'src'), { recursive: true });
+    await writeFile(join(tempDir, 'src', 'MyApp.csproj'), `
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.0" />
+  </ItemGroup>
+</Project>`);
+
+    const result = detectStack(tempDir);
+    expect(result.lang).toBe('C#');
+    expect(result.framework).toBe('ASP.NET Core');
+    expect(result.target).toBe('net8.0');
+    expect(result.deps).toContain('Microsoft.AspNetCore.OpenApi');
   });
 
-  it('returns defaults when output files are missing after successful run', async () => {
-    const script = await makeScript(tempDir, 'noop.sh', 'exit 0');
-    const result = await runFingerprint({
-      cwd: tempDir,
-      processPath: script,
-      outputDir: tempDir,
-    });
-    expect(result.brief).toBe('');
-    expect(result.profile).toEqual({});
+  it('returns unknown when no project files exist', () => {
+    const result = detectStack(tempDir);
+    expect(result.lang).toBe('unknown');
+    expect(result.framework).toBe('unknown');
+    expect(result.deps).toEqual([]);
   });
 
-  it('skips fingerprinting when skip flag is set', async () => {
-    const briefPath = join(tempDir, 'brief.md');
-    const profilePath = join(tempDir, 'profile.json');
-    const script = await makeScript(tempDir, 'skip.sh', [
-      `echo "# Brief" > "${briefPath}"`,
-      `echo '{"stack":"ts"}' > "${profilePath}"`,
-    ].join('\n'));
-    const result = await runFingerprint({
-      cwd: tempDir,
-      processPath: script,
-      outputDir: tempDir,
-      skip: true,
-    });
-    expect(result.brief).toBe('');
-    expect(result.profile).toEqual({});
-  });
-
-  it('returns empty profile when profile.json contains non-JSON garbage', async () => {
-    const profilePath = join(tempDir, 'profile.json');
-    const script = await makeScript(tempDir, 'bad-json.sh', [
-      `echo "not json at all!!!" > "${profilePath}"`,
-    ].join('\n'));
-    const result = await runFingerprint({
-      cwd: tempDir,
-      processPath: script,
-      outputDir: tempDir,
-    });
-    expect(result.profile).toEqual({});
-  });
-
-  it('returns empty profile when profile.json is a JSON array', async () => {
-    const profilePath = join(tempDir, 'profile.json');
-    const script = await makeScript(tempDir, 'array.sh', [
-      `echo '[1,2,3]' > "${profilePath}"`,
-    ].join('\n'));
-    const result = await runFingerprint({
-      cwd: tempDir,
-      processPath: script,
-      outputDir: tempDir,
-    });
-    expect(result.profile).toEqual({});
-  });
-
-  it('discards non-string values for stack and testCommand in profile', async () => {
-    const profilePath = join(tempDir, 'profile.json');
-    const script = await makeScript(tempDir, 'wrong-types.sh', [
-      `echo '{"stack": 42, "testCommand": false}' > "${profilePath}"`,
-    ].join('\n'));
-    const result = await runFingerprint({
-      cwd: tempDir,
-      processPath: script,
-      outputDir: tempDir,
-    });
-    expect(result.profile).toEqual({});
-    expect(result.profile.stack).toBeUndefined();
-    expect(result.profile.testCommand).toBeUndefined();
-  });
-
-  it('returns empty profile when profile.json contains the literal string null', async () => {
-    const profilePath = join(tempDir, 'profile.json');
-    const script = await makeScript(tempDir, 'null-profile.sh', [
-      `echo 'null' > "${profilePath}"`,
-    ].join('\n'));
-    const result = await runFingerprint({
-      cwd: tempDir,
-      processPath: script,
-      outputDir: tempDir,
-    });
-    expect(result.profile).toEqual({});
-  });
-
-  it('returns empty brief when brief.md contains only whitespace', async () => {
-    const briefPath = join(tempDir, 'brief.md');
-    const script = await makeScript(tempDir, 'ws-brief.sh', [
-      `printf "  \\n  \\n  " > "${briefPath}"`,
-    ].join('\n'));
-    const result = await runFingerprint({
-      cwd: tempDir,
-      processPath: script,
-      outputDir: tempDir,
-    });
-    expect(result.brief).toBe('');
-    expect(wrapBrief(result.brief)).toBe('');
-  });
-
-  it('loads profile and brief after successful fingerprint', async () => {
-    const briefPath = join(tempDir, 'brief.md');
-    const profilePath = join(tempDir, 'profile.json');
-    const script = await makeScript(tempDir, 'fp.sh', [
-      `echo "# Codebase Brief" > "${briefPath}"`,
-      `echo '{"stack":"typescript","testCommand":"vitest run"}' > "${profilePath}"`,
-    ].join('\n'));
-
-    const result = await runFingerprint({
-      cwd: tempDir,
-      processPath: script,
-      outputDir: tempDir,
-    });
-    expect(result.brief).toBe('# Codebase Brief');
-    expect(result.profile).toEqual({ stack: 'typescript', testCommand: 'vitest run' });
+  it('detects NestJS framework', async () => {
+    await writeFile(join(tempDir, 'package.json'), JSON.stringify({
+      dependencies: { '@nestjs/core': '^10.0.0' },
+      devDependencies: {},
+    }));
+    const result = detectStack(tempDir);
+    expect(result.framework).toBe('NestJS');
   });
 });
 
-describe('fingerprint → test gate integration', () => {
-  it('passes fingerprint profile directly to test gate', async () => {
-    const briefPath = join(tempDir, 'brief.md');
-    const profilePath = join(tempDir, 'profile.json');
-    const testScript = await makeScript(tempDir, 'tests.sh', 'echo "ok"');
-    const fpScript = await makeScript(tempDir, 'fp.sh', [
-      `echo "# Brief" > "${briefPath}"`,
-      `echo '{"stack":"ts","testCommand":"${testScript}"}' > "${profilePath}"`,
-    ].join('\n'));
+describe('detectProjects', () => {
+  it('detects workspaces from package.json', async () => {
+    await writeFile(join(tempDir, 'package.json'), JSON.stringify({
+      workspaces: ['packages/core', 'packages/cli'],
+    }));
+    const result = detectProjects(tempDir);
+    expect(result).toEqual(['packages/core', 'packages/cli']);
+  });
 
-    const fpResult = await runFingerprint({
-      cwd: tempDir,
-      processPath: fpScript,
-      outputDir: tempDir,
-    });
-    const tgResult = await runTestGate(fpResult.profile);
-    expect(tgResult.passed).toBe(true);
+  it('returns empty array when no solution or workspaces', () => {
+    const result = detectProjects(tempDir);
+    expect(result).toEqual([]);
+  });
+});
+
+describe('detectFolderStructure', () => {
+  it('reads src/ and tests/ subdirectories', async () => {
+    await mkdir(join(tempDir, 'src', 'domain'), { recursive: true });
+    await mkdir(join(tempDir, 'src', 'application'), { recursive: true });
+    await mkdir(join(tempDir, 'tests', 'unit'), { recursive: true });
+
+    const result = detectFolderStructure(tempDir);
+    expect(result).toContain('src/domain/');
+    expect(result).toContain('src/application/');
+    expect(result).toContain('tests/unit/');
+  });
+
+  it('returns empty for empty directory', () => {
+    const result = detectFolderStructure(tempDir);
+    expect(result).toEqual([]);
+  });
+});
+
+describe('detectArchPattern', () => {
+  it('detects Clean Architecture from folder names', () => {
+    const folders = ['src/domain/', 'src/application/', 'src/application/ports/'];
+    expect(detectArchPattern(folders)).toBe('Clean Architecture (ports & adapters)');
+  });
+
+  it('detects VSA + CA modular monolith', () => {
+    const folders = ['src/modules/auth/', 'src/modules/auth/ports/'];
+    expect(detectArchPattern(folders)).toBe('VSA + Clean Architecture modular monolith');
+  });
+
+  it('detects Pipeline architecture', () => {
+    const folders = ['src/pipeline/', 'src/config/'];
+    expect(detectArchPattern(folders)).toBe('Pipeline architecture (stateless stages + mutable accumulator)');
+  });
+
+  it('defaults to Flat structure', () => {
+    const folders = ['src/utils/'];
+    expect(detectArchPattern(folders)).toBe('Flat structure');
+  });
+
+  it('detects Layered architecture', () => {
+    const folders = ['src/domain/', 'src/application/'];
+    expect(detectArchPattern(folders)).toBe('Layered architecture');
+  });
+});
+
+describe('detectTestStyle', () => {
+  it('detects Vitest from test file content', async () => {
+    await mkdir(join(tempDir, 'src'), { recursive: true });
+    await writeFile(join(tempDir, 'src', 'foo.test.ts'),
+      "import { describe, it } from 'vitest';\ndescribe('foo', () => {});");
+    const result = detectTestStyle(tempDir);
+    expect(result).toBe('Vitest');
+  });
+
+  it('detects Jest from test file content', async () => {
+    await mkdir(join(tempDir, 'src'), { recursive: true });
+    await writeFile(join(tempDir, 'src', 'foo.test.ts'),
+      "import { jest } from '@jest/globals';\ndescribe('foo', () => {});");
+    const result = detectTestStyle(tempDir);
+    expect(result).toBe('Jest');
+  });
+
+  it('returns No tests found when no test files exist', () => {
+    const result = detectTestStyle(tempDir);
+    expect(result).toBe('No tests found');
+  });
+});
+
+describe('detectAntiPatterns', () => {
+  it('reports absence of interfaces, inheritance, dynamic when none found', () => {
+    const result = detectAntiPatterns(tempDir);
+    expect(result).toContain('No service interfaces — stateless components are static classes called directly');
+    expect(result).toContain('No class inheritance hierarchies — sealed records for polymorphism');
+    expect(result).toContain('No dynamic/object? value carriers — everything strongly typed');
+  });
+});
+
+describe('runFingerprint', () => {
+  it('generates brief, writes to disk, and returns profile for TS project', async () => {
+    await writeFile(join(tempDir, 'package.json'), JSON.stringify({
+      dependencies: {},
+      devDependencies: { typescript: '^5.0.0', vitest: '^3.0.0' },
+    }));
+    await mkdir(join(tempDir, 'src'), { recursive: true });
+    await writeFile(join(tempDir, 'src', 'foo.test.ts'),
+      "import { describe } from 'vitest';\ndescribe('x', () => {});");
+
+    const outputDir = join(tempDir, '.orch');
+    const result = await runFingerprint({ cwd: tempDir, outputDir });
+
+    expect(result.brief).toContain('# Codebase Brief');
+    expect(result.brief).toContain('TypeScript');
+    expect(result.profile.stack).toBe('TypeScript');
+    expect(result.profile.testCommand).toBe('npx vitest run');
+
+    // Verify brief was written to disk
+    const onDisk = await readFile(join(outputDir, 'brief.md'), 'utf-8');
+    expect(onDisk).toBe(result.brief);
+  });
+
+  it('returns defaults when skip is true', async () => {
+    const result = await runFingerprint({ cwd: tempDir, outputDir: join(tempDir, '.orch'), skip: true });
+    expect(result.brief).toBe('');
+    expect(result.profile).toEqual({});
+  });
+
+  it('returns brief with no testCommand when no tests exist', async () => {
+    await writeFile(join(tempDir, 'package.json'), JSON.stringify({
+      dependencies: {},
+      devDependencies: { typescript: '^5.0.0' },
+    }));
+
+    const result = await runFingerprint({ cwd: tempDir, outputDir: join(tempDir, '.orch') });
+    expect(result.brief).toContain('TypeScript');
+    expect(result.profile.stack).toBe('TypeScript');
+    expect(result.profile.testCommand).toBeUndefined();
   });
 });
 
@@ -193,5 +213,19 @@ describe('wrapBrief', () => {
     expect(wrapped).toContain('<codebase-brief>');
     expect(wrapped).toContain('</codebase-brief>');
     expect(wrapped).toContain(brief);
+  });
+});
+
+describe('generateBrief', () => {
+  it('includes stack and architecture sections', async () => {
+    await writeFile(join(tempDir, 'package.json'), JSON.stringify({
+      dependencies: {},
+      devDependencies: { typescript: '^5.0.0' },
+    }));
+
+    const brief = generateBrief(tempDir);
+    expect(brief).toContain('## Stack');
+    expect(brief).toContain('TypeScript');
+    expect(brief).toContain('## Architecture');
   });
 });

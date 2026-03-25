@@ -13,8 +13,7 @@
  *   npx ts-node src/main.ts --plan plan.md --skip-fingerprint
  */
 
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { resolve } from 'path';
 import { readFile } from 'fs/promises';
 import { createInterface } from 'readline';
 import { parsePlan, type Group, type Slice } from './plan-parser.js';
@@ -32,7 +31,6 @@ const CONFIG = {
   maxReviewCycles: 3,
   stateFile: '.orchestrator-state.json',
   briefDir: '.orch',
-  fingerprintScript: resolve(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '.bin', 'fingerprint'),
 };
 
 // ─── ANSI ────────────────────────────────────────────────────────────────────
@@ -373,7 +371,6 @@ const main = async () => {
   // 2. Fingerprint + brief
   const { brief, profile } = await runFingerprint({
     cwd,
-    processPath: CONFIG.fingerprintScript,
     outputDir: resolve(cwd, CONFIG.briefDir),
     skip: skipFingerprint,
   });
