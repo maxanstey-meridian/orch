@@ -44,4 +44,9 @@ describe('detectQuestion', () => {
     expect(detectQuestion('Should We continue')).toBe(true);
     expect(detectQuestion('LET ME KNOW')).toBe(true);
   });
+
+  it('ignores pattern early in tail when followed by substantive work', () => {
+    const output = 'Should I do this?\nI did it. Here is the result. All done.';
+    expect(detectQuestion(output)).toBe(false);
+  });
 });
