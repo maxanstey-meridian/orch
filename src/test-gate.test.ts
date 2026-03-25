@@ -43,6 +43,12 @@ describe('runTestGate', () => {
     expect(result.output).toContain('No test command');
   });
 
+  it('fails with clear error when test command is empty string', async () => {
+    const result = await runTestGate({ testCommand: '' });
+    expect(result.passed).toBe(false);
+    expect(result.output).toContain('No test command');
+  });
+
   it('fails with error output when command is not found', async () => {
     const result = await runTestGate({ testCommand: '/nonexistent/test-runner' });
     expect(result.passed).toBe(false);

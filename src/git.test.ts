@@ -50,6 +50,17 @@ describe('git', () => {
     expect(await hasChanges(repoDir, ref)).toBe(true);
   });
 
+  it('detects untracked files as changes at same commit', async () => {
+    const ref = await captureRef(repoDir);
+    await writeFile(join(repoDir, 'untracked.txt'), 'new file');
+    expect(await hasChanges(repoDir, ref)).toBe(true);
+  });
+
+  it('returns empty status for a clean working tree', async () => {
+    const status = await getStatus(repoDir);
+    expect(status).toBe('');
+  });
+
   it('returns human-readable working tree status', async () => {
     await writeFile(join(repoDir, 'file.txt'), 'modified');
     await writeFile(join(repoDir, 'untracked.txt'), 'new');
