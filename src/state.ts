@@ -1,9 +1,6 @@
 import { readFile, writeFile, rm } from 'fs/promises';
 
 export type OrchestratorState = {
-  readonly implSessionId?: string;
-  readonly reviewSessionId?: string;
-  readonly gapSessionId?: string;
   readonly lastCompletedSlice?: number;
 };
 
@@ -12,9 +9,6 @@ const parseState = (text: string): OrchestratorState => {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
   const obj = parsed as Record<string, unknown>;
   return {
-    ...(typeof obj.implSessionId === 'string' ? { implSessionId: obj.implSessionId } : {}),
-    ...(typeof obj.reviewSessionId === 'string' ? { reviewSessionId: obj.reviewSessionId } : {}),
-    ...(typeof obj.gapSessionId === 'string' ? { gapSessionId: obj.gapSessionId } : {}),
     ...(typeof obj.lastCompletedSlice === 'number' && Number.isFinite(obj.lastCompletedSlice) && obj.lastCompletedSlice >= 0
       ? { lastCompletedSlice: obj.lastCompletedSlice }
       : {}),

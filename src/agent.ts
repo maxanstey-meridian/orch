@@ -17,14 +17,6 @@ export type AgentResult = {
   readonly sessionId: string;
 };
 
-export type AgentOptions = {
-  readonly prompt: string;
-  readonly command: string;
-  readonly args: readonly string[];
-  readonly sessionId?: string;
-  readonly style: AgentStyle;
-};
-
 type AssistantEvent = {
   readonly type: 'assistant';
   readonly message: { readonly content: readonly { readonly type: string; readonly text?: string }[] };
@@ -88,74 +80,140 @@ const forEachEvent = (
   };
 };
 
-const spawnAgent = (command: string, args: readonly string[], prompt: string) =>
-  spawn(command, [...args, prompt], { stdio: ['inherit', 'pipe', 'pipe'] });
-
-export const runAgent = async (opts: AgentOptions): Promise<AgentResult> => {
-  const sessionId = opts.sessionId ?? randomUUID();
-  const assistantChunks: string[] = [];
-  let resultText = '';
-
-  return new Promise<AgentResult>((resolve) => {
-    const proc = spawnAgent(opts.command, opts.args, opts.prompt);
-
-    const { flush } = forEachEvent(proc.stdout!, (event) => {
-      if (event.type === 'assistant') {
-        for (const block of event.message.content) {
-          if (block.type === 'text' && block.text) {
-            assistantChunks.push(block.text);
-          }
-        }
-      } else if (event.type === 'result') {
-        resultText = typeof event.result === 'string' ? event.result : '';
-      }
-    });
-
-    proc.on('error', () => {
-      resolve({
-        exitCode: 1,
-        assistantText: '',
-        resultText: '',
-        needsInput: false,
-        sessionId,
-      });
-    });
-
-    proc.on('close', (code: number | null) => {
-      flush();
-      const assistantText = assistantChunks.join('');
-      resolve({
-        exitCode: code ?? 1,
-        assistantText,
-        resultText,
-        needsInput: detectQuestion(assistantText),
-        sessionId,
-      });
-    });
-  });
+export type AgentProcess = {
+  readonly send: (prompt: string) => Promise<AgentResult>;
+  readonly sendQuiet: (prompt: string) => Promise<string>;
+  readonly kill: () => void;
+  readonly alive: boolean;
+  readonly sessionId: string;
 };
 
-export const runAgentQuiet = async (opts: {
-  readonly prompt: string;
+export type CreateAgentOptions = {
   readonly command: string;
   readonly args: readonly string[];
-  readonly sessionId: string;
-}): Promise<string> => {
-  return new Promise<string>((resolve, reject) => {
-    const proc = spawnAgent(opts.command, opts.args, opts.prompt);
-    let resultText = '';
+  readonly style: AgentStyle;
+  readonly sessionId?: string;
+};
 
-    const { flush } = forEachEvent(proc.stdout!, (event) => {
-      if (event.type === 'result') {
-        resultText = typeof event.result === 'string' ? event.result : '';
-      }
-    });
+export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
+  const sessionId = opts.sessionId ?? randomUUID();
+  let isAlive = true;
+  let lastCloseCode = 1;
 
-    proc.on('error', (err) => reject(err));
-
-    proc.on('close', () => {
-      flush();
-      resolve(resultText);
-    });
+  const proc = spawn(opts.command, [...opts.args], {
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
+
+  let onEvent: ((event: StreamEvent) => void) | null = null;
+  let onDeath: (() => void) | null = null;
+
+  const { flush } = forEachEvent(proc.stdout!, (event) => {
+    if (onEvent) onEvent(event);
+  });
+
+  proc.on('close', (code: number | null) => {
+    isAlive = false;
+    lastCloseCode = code ?? 1;
+    flush();
+    if (onDeath) onDeath();
+  });
+
+  proc.on('error', () => {
+    isAlive = false;
+    if (onDeath) onDeath();
+  });
+
+  const writeMessage = (prompt: string) => {
+    const msg = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: prompt },
+      session_id: sessionId,
+    });
+    proc.stdin!.write(msg + '\n');
+  };
+
+  const send = (prompt: string): Promise<AgentResult> => {
+    return new Promise<AgentResult>((resolve) => {
+      if (!isAlive) {
+        resolve({ exitCode: 1, assistantText: '', resultText: '', needsInput: false, sessionId });
+        return;
+      }
+
+      const assistantChunks: string[] = [];
+      let resultText = '';
+
+      onEvent = (event) => {
+        if (event.type === 'assistant') {
+          for (const block of event.message.content) {
+            if (block.type === 'text' && block.text) {
+              assistantChunks.push(block.text);
+            }
+          }
+        } else if (event.type === 'result') {
+          resultText = typeof event.result === 'string' ? event.result : '';
+          onEvent = null;
+          onDeath = null;
+          const assistantText = assistantChunks.join('');
+          resolve({
+            exitCode: 0,
+            assistantText,
+            resultText,
+            needsInput: detectQuestion(assistantText),
+            sessionId,
+          });
+        }
+      };
+
+      onDeath = () => {
+        onEvent = null;
+        onDeath = null;
+        const assistantText = assistantChunks.join('');
+        resolve({
+          exitCode: lastCloseCode,
+          assistantText,
+          resultText,
+          needsInput: false,
+          sessionId,
+        });
+      };
+
+      writeMessage(prompt);
+    });
+  };
+
+  const sendQuiet = (prompt: string): Promise<string> => {
+    return new Promise<string>((resolve) => {
+      if (!isAlive) {
+        resolve('');
+        return;
+      }
+
+      let resultText = '';
+
+      onEvent = (event) => {
+        if (event.type === 'result') {
+          resultText = typeof event.result === 'string' ? event.result : '';
+          onEvent = null;
+          onDeath = null;
+          resolve(resultText);
+        }
+      };
+
+      onDeath = () => {
+        onEvent = null;
+        onDeath = null;
+        resolve(resultText);
+      };
+
+      writeMessage(prompt);
+    });
+  };
+
+  return {
+    send,
+    sendQuiet,
+    kill: () => proc.kill('SIGTERM'),
+    get alive() { return isAlive; },
+    sessionId,
+  };
 };

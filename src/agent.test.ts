@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile, chmod } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { runAgent, runAgentQuiet } from './agent.js';
+import { createAgent } from './agent.js';
 
 const makeScript = async (dir: string, name: string, body: string): Promise<string> => {
   const path = join(dir, name);
@@ -21,163 +21,281 @@ afterEach(async () => {
   await rm(tempDir, { recursive: true });
 });
 
-describe('runAgent', () => {
+describe('createAgent + send', () => {
   it('parses assistant and result events into structured result', async () => {
     const script = await makeScript(tempDir, 'agent.sh', [
-      'echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"Hello world."}]}}\'',
-      'echo \'{"type":"result","result":"Done.","duration_ms":1500,"num_turns":2}\'',
+      'while IFS= read -r line; do',
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"Hello world."}]}}\'',
+      '  echo \'{"type":"result","result":"Done.","duration_ms":1500,"num_turns":2}\'',
+      'done',
     ].join('\n'));
 
-    const result = await runAgent({
-      prompt: 'test prompt',
+    const agent = createAgent({
       command: script,
       args: [],
       style: { label: 'impl', color: 'cyan', badge: 'I' },
     });
+
+    const result = await agent.send('test prompt');
 
     expect(result.exitCode).toBe(0);
     expect(result.assistantText).toBe('Hello world.');
     expect(result.resultText).toBe('Done.');
     expect(result.needsInput).toBe(false);
     expect(result.sessionId).toMatch(/^[0-9a-f-]{36}$/);
+
+    agent.kill();
   });
 
-  it('uses provided session ID when resuming', async () => {
+  it('uses provided session ID', async () => {
     const script = await makeScript(tempDir, 'agent.sh', [
-      'echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'while IFS= read -r line; do',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'done',
     ].join('\n'));
 
-    const result = await runAgent({
-      prompt: 'test',
+    const agent = createAgent({
       command: script,
       args: [],
       sessionId: 'existing-session-123',
       style: { label: 'impl', color: 'cyan', badge: 'I' },
     });
 
+    const result = await agent.send('test');
     expect(result.sessionId).toBe('existing-session-123');
+
+    agent.kill();
   });
 
   it('accumulates text from multiple assistant events', async () => {
     const script = await makeScript(tempDir, 'agent.sh', [
-      'echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"First block. "}]}}\'',
-      'echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"Second block."}]}}\'',
-      'echo \'{"type":"result","result":"done","duration_ms":100,"num_turns":1}\'',
+      'while IFS= read -r line; do',
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"First block. "}]}}\'',
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"Second block."}]}}\'',
+      '  echo \'{"type":"result","result":"done","duration_ms":100,"num_turns":1}\'',
+      'done',
     ].join('\n'));
 
-    const result = await runAgent({
-      prompt: 'test',
+    const agent = createAgent({
       command: script,
       args: [],
       style: { label: 'impl', color: 'cyan', badge: 'I' },
     });
 
+    const result = await agent.send('test');
     expect(result.assistantText).toBe('First block. Second block.');
+
+    agent.kill();
   });
 
   it('silently ignores malformed JSON lines', async () => {
     const script = await makeScript(tempDir, 'agent.sh', [
-      'echo "not json at all"',
-      'echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"good line"}]}}\'',
-      'echo "{broken json"',
-      'echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'while IFS= read -r line; do',
+      '  echo "not json at all"',
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"good line"}]}}\'',
+      '  echo "{broken json"',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'done',
     ].join('\n'));
 
-    const result = await runAgent({
-      prompt: 'test',
+    const agent = createAgent({
       command: script,
       args: [],
       style: { label: 'impl', color: 'cyan', badge: 'I' },
     });
 
+    const result = await agent.send('test');
     expect(result.assistantText).toBe('good line');
     expect(result.resultText).toBe('ok');
+
+    agent.kill();
   });
 
   it('sets needsInput when assistant text ends with a question', async () => {
     const script = await makeScript(tempDir, 'agent.sh', [
-      'echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"Should I proceed with this?"}]}}\'',
-      'echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'while IFS= read -r line; do',
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"Should I proceed with this?"}]}}\'',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'done',
     ].join('\n'));
 
-    const result = await runAgent({
-      prompt: 'test',
+    const agent = createAgent({
       command: script,
       args: [],
       style: { label: 'impl', color: 'cyan', badge: 'I' },
     });
 
+    const result = await agent.send('test');
     expect(result.needsInput).toBe(true);
+
+    agent.kill();
   });
 
   it('ignores structurally invalid assistant events', async () => {
     const script = await makeScript(tempDir, 'agent.sh', [
-      'echo \'{"type":"assistant","message":"not-an-object"}\'',
-      'echo \'{"type":"assistant","message":{"content":"not-an-array"}}\'',
-      'echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"valid"}]}}\'',
-      'echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'while IFS= read -r line; do',
+      '  echo \'{"type":"assistant","message":"not-an-object"}\'',
+      '  echo \'{"type":"assistant","message":{"content":"not-an-array"}}\'',
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"valid"}]}}\'',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'done',
     ].join('\n'));
 
-    const result = await runAgent({
-      prompt: 'test',
+    const agent = createAgent({
       command: script,
       args: [],
       style: { label: 'impl', color: 'cyan', badge: 'I' },
     });
 
+    const result = await agent.send('test');
     expect(result.assistantText).toBe('valid');
+
+    agent.kill();
   });
 
-  it('passes prompt to child process as argument', async () => {
+  it('sends a second message to the same persistent process', async () => {
     const script = await makeScript(tempDir, 'agent.sh', [
-      '# Echo the last argument as assistant text to prove we received it',
-      'PROMPT="$1"',
-      'echo "{\\\"type\\\":\\\"assistant\\\",\\\"message\\\":{\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"got: ${PROMPT}\\\"}]}}"',
-      'echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'COUNT=0',
+      'while IFS= read -r line; do',
+      '  COUNT=$((COUNT + 1))',
+      '  echo "{\\\"type\\\":\\\"assistant\\\",\\\"message\\\":{\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"reply $COUNT\\\"}]}}"',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'done',
     ].join('\n'));
 
-    const result = await runAgent({
-      prompt: 'my test prompt',
+    const agent = createAgent({
       command: script,
       args: [],
       style: { label: 'impl', color: 'cyan', badge: 'I' },
     });
 
-    expect(result.assistantText).toBe('got: my test prompt');
+    const r1 = await agent.send('first');
+    expect(r1.assistantText).toBe('reply 1');
+
+    const r2 = await agent.send('second');
+    expect(r2.assistantText).toBe('reply 2');
+
+    agent.kill();
   });
 
-  it('captures non-zero exit code when process fails', async () => {
+  it('reports alive true while running and false after kill', async () => {
     const script = await makeScript(tempDir, 'agent.sh', [
-      'echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"partial output"}]}}\'',
-      'exit 2',
+      'while IFS= read -r line; do',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      'done',
     ].join('\n'));
 
-    const result = await runAgent({
-      prompt: 'test',
+    const agent = createAgent({
       command: script,
       args: [],
       style: { label: 'impl', color: 'cyan', badge: 'I' },
     });
 
-    expect(result.exitCode).toBe(2);
-    expect(result.assistantText).toBe('partial output');
-    expect(result.resultText).toBe('');
+    expect(agent.alive).toBe(true);
+
+    agent.kill();
+    // Wait a tick for the close event to fire
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    expect(agent.alive).toBe(false);
+  });
+
+  it('resolves with exitCode 1 if process dies mid-message', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', [
+      'IFS= read -r line',
+      'echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}}\'',
+      'exit 1',
+    ].join('\n'));
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    const result = await agent.send('test');
+    expect(result.exitCode).toBe(1);
+    expect(result.assistantText).toBe('partial');
+    expect(result.needsInput).toBe(false);
+  });
+
+  it('resolves with exitCode 1 when send called on dead process', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', 'exit 0');
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    // Wait for process to exit
+    const waitForDeath = async () => {
+      for (let i = 0; i < 50; i++) {
+        if (!agent.alive) return;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    };
+    await waitForDeath();
+
+    expect(agent.alive).toBe(false);
+    const result = await agent.send('test');
+    expect(result.exitCode).toBe(1);
   });
 });
 
-describe('runAgentQuiet', () => {
+describe('createAgent + sendQuiet', () => {
   it('extracts result text from JSON output', async () => {
-    const script = await makeScript(tempDir, 'quiet.sh', [
-      'echo \'{"type":"result","result":"summary text here","duration_ms":50,"num_turns":1}\'',
+    const script = await makeScript(tempDir, 'agent.sh', [
+      'while IFS= read -r line; do',
+      '  echo \'{"type":"result","result":"summary text here","duration_ms":50,"num_turns":1}\'',
+      'done',
     ].join('\n'));
 
-    const result = await runAgentQuiet({
-      prompt: 'summarize',
+    const agent = createAgent({
       command: script,
       args: [],
-      sessionId: 'session-1',
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
     });
 
+    const result = await agent.sendQuiet('summarize');
     expect(result).toBe('summary text here');
+
+    agent.kill();
+  });
+
+  it('ignores assistant events and only captures result', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', [
+      'while IFS= read -r line; do',
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"ignored"}]}}\'',
+      '  echo \'{"type":"result","result":"only this","duration_ms":50,"num_turns":1}\'',
+      'done',
+    ].join('\n'));
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    const result = await agent.sendQuiet('test');
+    expect(result).toBe('only this');
+
+    agent.kill();
+  });
+
+  it('returns empty string when process dies during sendQuiet', async () => {
+    const script = await makeScript(tempDir, 'agent.sh', [
+      'IFS= read -r line',
+      'exit 1',
+    ].join('\n'));
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: 'impl', color: 'cyan', badge: 'I' },
+    });
+
+    const result = await agent.sendQuiet('test');
+    expect(result).toBe('');
   });
 });
