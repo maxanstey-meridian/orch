@@ -21,7 +21,7 @@ export type FingerprintResult = {
   readonly profile: ProjectProfile;
 };
 
-export type FingerprintOptions = {
+type FingerprintOptions = {
   readonly cwd: string;
   readonly outputDir: string;
   readonly skip?: boolean;
@@ -108,7 +108,10 @@ export const detectStack = (root: string): StackInfo => {
 
 export const detectProjects = (root: string): string[] => {
   // .NET solution files
-  const rootFiles = readdirSync(root).filter((f) => f.endsWith('.sln') || f.endsWith('.slnx'));
+  let rootFiles: string[];
+  try {
+    rootFiles = readdirSync(root).filter((f) => f.endsWith('.sln') || f.endsWith('.slnx'));
+  } catch { return []; }
   for (const sln of rootFiles) {
     const content = tryRead(join(root, sln));
     const projects = [...content.matchAll(/Path="(.*?)"/g)].map((m) => m[1]);
@@ -204,9 +207,10 @@ export const detectCodePatterns = (root: string, files: string[]): string[] => {
 };
 
 export const detectAntiPatterns = (root: string): string[] => {
-  const anti: string[] = [];
   const csFiles = findFiles(root, '*.cs').filter((f) => !f.includes('obj/') && !f.includes('Tests'));
+  if (csFiles.length === 0) return [];
 
+  const anti: string[] = [];
   let hasInterface = false;
   let hasInheritance = false;
   let hasDynamic = false;

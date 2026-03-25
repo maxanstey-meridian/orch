@@ -90,6 +90,11 @@ describe('detectProjects', () => {
     expect(result).toEqual([]);
   });
 
+  it('returns empty array when root does not exist', () => {
+    const result = detectProjects('/tmp/nonexistent-orch-path-xyz');
+    expect(result).toEqual([]);
+  });
+
   it('returns empty array when package.json is malformed', async () => {
     await writeFile(join(tempDir, 'package.json'), '{broken json');
     const result = detectProjects(tempDir);
@@ -166,11 +171,9 @@ describe('detectTestStyle', () => {
 });
 
 describe('detectAntiPatterns', () => {
-  it('reports absence of interfaces, inheritance, dynamic when none found', () => {
+  it('returns empty array when no C# files exist (non-C# codebase)', () => {
     const result = detectAntiPatterns(tempDir);
-    expect(result).toContain('No service interfaces — stateless components are static classes called directly');
-    expect(result).toContain('No class inheritance hierarchies — sealed records for polymorphism');
-    expect(result).toContain('No dynamic/object? value carriers — everything strongly typed');
+    expect(result).toEqual([]);
   });
 });
 
