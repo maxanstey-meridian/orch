@@ -1008,8 +1008,7 @@ const main = async () => {
         sliceSkipFlag = !sliceSkipFlag;
         hud.setSkipping(sliceSkipFlag);
       } else if (key === "q" || key === "\x03") {
-        cleanup();
-        process.exit(130);
+        void cleanup().finally(() => process.exit(130));
       }
     });
     hud.onInterruptSubmit((text, mode) => {
@@ -1037,6 +1036,7 @@ const main = async () => {
   };
 
   // 7. Signal handlers + cleanup
+  let didStash = false;
   const cleanup = async () => {
     hud.teardown();
     tddAgent.kill();
@@ -1062,7 +1062,7 @@ const main = async () => {
         `${ts()} ${a.yellow}Agent was interrupted mid-response. The current slice will be re-run on resume.${a.reset}`,
       );
     }
-    cleanup();
+    await cleanup();
     process.exit(2);
   };
 
@@ -1096,7 +1096,7 @@ const main = async () => {
 
   if (groupFilter && startIdx === -1) {
     console.error(`No group "${groupFilter}". Available: ${groups.map((g) => g.name).join(", ")}`);
-    cleanup();
+    await cleanup();
     process.exit(1);
   }
 
@@ -1113,7 +1113,7 @@ const main = async () => {
   log("");
 
   // Stash any unrelated working tree changes to protect them from the TDD bot
-  const didStash = await stashSave(cwd);
+  didStash = await stashSave(cwd);
   if (didStash) log(`${ts()} ${a.dim}Stashed working tree changes for safekeeping${a.reset}`);
 
   const runBaseSha = await captureRef(cwd);
