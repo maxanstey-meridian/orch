@@ -317,6 +317,42 @@ describe("CLI flag wiring", () => {
     expect(existsSync(join(orchDir, "state"))).toBe(true);
   }, 15_000);
 
+  it("--work plan.md ignores stale globalState.currentPlanId", async () => {
+    initGitRepo(tempDir);
+    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
+
+    // Pre-seed global state with a stale currentPlanId from a different plan
+    const globalStateFile = join(tempDir, ".orchestrator-state.json");
+    await saveState(globalStateFile, { currentPlanId: "999aaa" });
+
+    // Also create the stale plan file so we can verify it's NOT overwritten
+    const { mkdirSync } = await import("fs");
+    mkdirSync(join(tempDir, ".orch"), { recursive: true });
+    await writeFile(join(tempDir, ".orch", "plan-999aaa.md"), "# stale plan — do not overwrite");
+
+    spawnSync("npx", [
+      "tsx", mainPath,
+      "--work", join(tempDir, "plan.md"),
+      "--skip-fingerprint", "--no-interaction",
+    ], {
+      cwd: tempDir,
+      encoding: "utf-8",
+      timeout: 8_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    // The stale plan file should NOT have been overwritten
+    const staleContent = await readFile(join(tempDir, ".orch", "plan-999aaa.md"), "utf-8");
+    expect(staleContent).toContain("stale plan — do not overwrite");
+
+    // A NEW plan-<hash>.md should have been created (not using the stale ID)
+    const { readdirSync } = await import("fs");
+    const orchFiles = readdirSync(join(tempDir, ".orch"));
+    const planFiles = orchFiles.filter((f: string) => /^plan-[0-9a-f]{6}\.md$/.test(f));
+    // Should have 2: the stale one AND the new hash-based one
+    expect(planFiles.length).toBeGreaterThanOrEqual(2);
+  }, 15_000);
+
   it("--work + --group Auth skips to that group", async () => {
     initGitRepo(tempDir);
     const multiGroupPlan = `## Group: Setup\n### Slice 1: Init\nDo setup.\n\n## Group: Auth\n### Slice 2: Login\nDo login.\n`;
