@@ -1,4 +1,5 @@
 import { readFile, writeFile, rm } from "fs/promises";
+import { join } from "path";
 import { z } from "zod";
 
 const stateSchema = z
@@ -6,6 +7,7 @@ const stateSchema = z
     lastCompletedSlice: z.number().int().nonnegative().optional(),
     lastCompletedGroup: z.string().min(1).optional(),
     lastSliceImplemented: z.number().int().nonnegative().optional(),
+    currentPlanId: z.string().regex(/^[0-9a-f]{6}$/).optional(),
   })
   .passthrough();
 
@@ -43,3 +45,6 @@ export const saveState = async (filePath: string, state: OrchestratorState): Pro
 export const clearState = async (filePath: string): Promise<void> => {
   await rm(filePath, { force: true });
 };
+
+export const statePathForPlan = (orchDir: string, planId: string): string =>
+  join(orchDir, "state", `plan-${planId}.json`);

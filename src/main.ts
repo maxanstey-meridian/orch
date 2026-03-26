@@ -18,12 +18,13 @@
  *   npx ts-node src/main.ts --init --plan inventory.md        # interactive project init
  */
 
+import { createHash } from "crypto";
 import { resolve } from "path";
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { readFile } from "fs/promises";
 import { parsePlan, type Slice } from "./plan-parser.js";
-import { generatePlan, isPlanFormat, GENERATED_PLAN_FILE } from "./plan-generator.js";
-import { loadState, saveState, clearState, type OrchestratorState } from "./state.js";
+import { generatePlan, isPlanFormat, planFileName, planIdFromPath } from "./plan-generator.js";
+import { loadState, saveState, clearState, statePathForPlan, type OrchestratorState } from "./state.js";
 import { runFingerprint, wrapBrief } from "./fingerprint.js";
 import { runInit, profileToMarkdown, createAsk } from "./init.js";
 import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
@@ -356,16 +357,67 @@ export const commitSweep = async (deps: CommitSweepDeps): Promise<void> => {
   }
 };
 
+const buildReviewPreamble = (baseSha: string): string =>
+  `## How to review
+
+1. Run \`git diff --name-only ${baseSha}..HEAD\` to identify changed files.
+2. **Read the full contents of every changed file** — do not just read diffs. Diffs hide context: you miss dead code outside the hunk, broken invariants in unchanged branches, and type mismatches at boundaries the diff doesn't show.
+3. For each changed file, identify files that import from or call into it. Read those too if a boundary changed.
+4. **Verify every finding against the current file state before reporting.** If you see something in the diff that looks wrong, open the file and confirm it's still wrong. Do not report stale findings from a previous cycle.
+
+## Review discipline
+
+- **Two-pass priority.** Data safety, race conditions, and bugs first. Structural and naming issues second. Do not interleave severities.
+- **No hedging.** Not "you might want to", not "it could be worth considering". State what's wrong and what the fix is.
+- **No praise sandwiches.** Code that works correctly is baseline — not noteworthy. Do not pad findings with compliments.
+- **Severity is not negotiable.** A bug is a bug. A type lie is a type lie. Do not downgrade to be diplomatic.
+
+## Output format
+
+For each finding:
+- **File and line**
+- **What's wrong** (one sentence)
+- **Evidence** (the code or trace that proves it)
+- **Fix** (concrete, actionable)
+
+## Deliverable check
+
+Before concluding, answer this: if a project manager read the plan slice and then looked at what was built, would they consider it actually done? Specifically:
+- If new infrastructure replaces old, are ALL old consumers migrated? Search for remaining references to the old code/path/function.
+- Is the new code actually reachable? Trace from the entry point to confirm it runs.
+- Are there orphaned setup steps (directories created, config added, types defined) that nothing actually uses?
+A feature that exists but isn't wired in is not delivered.`;
+
 const buildReviewPrompt = (sliceContent: string, baseSha: string): string =>
   `Review the changes since commit ${baseSha} against the intended plan slice.
 
+${buildReviewPreamble(baseSha)}
+
+## What to look for
+- Bugs: incorrect runtime behavior, off-by-one, swallowed errors, race conditions
+- Type fidelity: runtime values disagreeing with declared types, \`any\`/\`unknown\` as value carriers
+- Dead code: new exports with zero consumers introduced by the change
+- Structural: duplicated logic, parallel state, mixed concerns introduced by the change
+- Names: identifiers that no longer match their scope or purpose after the change
+- Enum/value completeness: new variants not handled in all consumers
+
+## What NOT to flag
+- Style, formatting, cosmetic preferences
+- Test coverage gaps (separate pass handles this)
+- Harmless redundancy that aids readability
+- Threshold values tuned empirically
+
 ## Intended Plan Slice
-${sliceContent}`;
+${sliceContent}
+
+If all changes are correct, respond with exactly: REVIEW_CLEAN`;
 
 const buildGapPrompt = (groupContent: string, baseSha: string): string =>
   `You are a gap-finder for a TDD pipeline. A group of slices has just been implemented and reviewed.
 
 Your job is to find **missing test coverage and unhandled edge cases** — NOT code style, naming, or architecture.
+
+${buildReviewPreamble(baseSha)}
 
 ## What to look for
 - Untested edge cases and boundary conditions
@@ -383,9 +435,6 @@ Your job is to find **missing test coverage and unhandled edge cases** — NOT c
 ## Group plan
 ${groupContent}
 
-## Changes to review
-All commits since ${baseSha}. Use \`git log ${baseSha}..HEAD --oneline\` and \`git diff ${baseSha}..HEAD\` to see what was built, then read the test files to find gaps.
-
 If you find gaps, list each one as:
 - **Gap:** <what's missing>
 - **Suggested test:** <one-line description of the test to add>
@@ -400,7 +449,9 @@ const buildFinalPasses = (
     name: "Type fidelity",
     prompt: `You are auditing type safety across all changes since commit ${baseSha}.
 
-Search for and report ANY of these violations:
+${buildReviewPreamble(baseSha)}
+
+## What to look for
 - \`object\` or \`object?\` used as a value carrier (not as a constraint)
 - \`dynamic\` anywhere
 - \`as any\`, \`as unknown\`, or unchecked casts that bypass the type system
@@ -409,22 +460,16 @@ Search for and report ANY of these violations:
 - Missing nullability — value types that should be nullable but aren't (or vice versa)
 - \`var\` hiding a type that should be explicit for clarity
 
-For each finding report:
-- **File:** path and line
-- **Issue:** what's wrong
-- **Fix:** what the type should be
-
 If everything is clean, respond with exactly: NO_ISSUES_FOUND`,
   },
   {
     name: "Plan completeness",
     prompt: `You are verifying that the implementation matches the plan.
 
+${buildReviewPreamble(baseSha)}
+
 ## Plan
 ${planContent}
-
-## Changes
-All commits since ${baseSha}. Use \`git log ${baseSha}..HEAD --oneline\` to see what was built.
 
 For each item in the plan, verify:
 1. Was it implemented?
@@ -442,18 +487,15 @@ If everything matches, respond with exactly: NO_ISSUES_FOUND`,
     name: "Cross-cutting integration",
     prompt: `You are reviewing cross-component integration across all changes since commit ${baseSha}.
 
-Check:
+${buildReviewPreamble(baseSha)}
+
+## What to look for
 - Do output types from one component match input types expected by the next?
 - Are discriminated union variants handled exhaustively in every switch/pattern match?
 - Are there any type variants added in one file but not handled in consumers?
 - Do error paths propagate correctly (warnings emitted, not swallowed)?
 - Are there any unused registrations (types registered but never referenced)?
 - Do shared function signatures stay consistent across files? (e.g. parameter ordering)
-
-For each finding report:
-- **File(s):** paths involved
-- **Issue:** what's inconsistent or missing
-- **Impact:** what breaks or degrades
 
 If everything integrates cleanly, respond with exactly: NO_ISSUES_FOUND`,
   },
@@ -500,10 +542,14 @@ const reviewFixLoop = async (
   withInterrupt: <T>(agent: AgentProcess, fn: () => Promise<T>) => Promise<T>,
   createStreamer: (style: AgentStyle) => Streamer,
   baseSha?: string,
+  onStatusChange?: (agent: string, activity: string) => void,
+  shouldSkip?: () => boolean,
 ): Promise<void> => {
   let reviewSha = baseSha ?? (await captureRef(cwd));
 
   for (let cycle = 1; cycle <= CONFIG.maxReviewCycles; cycle++) {
+    if (shouldSkip?.()) break;
+
     log(
       `\n${ts()} ${BOT_REVIEW.badge} ${a.magenta}review cycle ${cycle}/${CONFIG.maxReviewCycles}${a.reset}`,
     );
@@ -513,6 +559,7 @@ const reviewFixLoop = async (
       break;
     }
 
+    onStatusChange?.("REV", `reviewing (cycle ${cycle})...`);
     const reviewPrompt = reviewFirstMessage.value
       ? withBrief(buildReviewPrompt(content, reviewSha), brief)
       : buildReviewPrompt(content, reviewSha);
@@ -528,6 +575,7 @@ const reviewFixLoop = async (
       break;
     }
 
+    onStatusChange?.("TDD", "fixing review feedback...");
     log(`${ts()} ${BOT_TDD.badge} ${a.cyan}fixing review feedback...${a.reset}`);
     const preFixSha = await captureRef(cwd);
     const fixPrompt = buildTddPrompt(content, reviewText);
@@ -550,6 +598,9 @@ const reviewFixLoop = async (
         `${ts()} ${a.yellow}⚠ Tests failed after review fix cycle ${cycle}. Continuing...${a.reset}`,
       );
     }
+
+    // Advance review base so next cycle only reviews the fix delta, not the entire original diff
+    reviewSha = await captureRef(cwd);
   }
 };
 
@@ -559,13 +610,17 @@ const doGeneratePlan = async (
   inventoryPath: string,
   briefContent: string,
   outputDir: string,
+  globalStatePath: string,
+  currentGlobalState: OrchestratorState,
 ): Promise<string> => {
   log(`${a.bold}Generating plan from inventory...${a.reset}`);
   const planAgent = spawnAgent(BOT_PLAN);
   try {
-    const outPath = await generatePlan(inventoryPath, briefContent, planAgent, outputDir);
-    log(`${a.green}Plan written to ${outPath}${a.reset}`);
-    return outPath;
+    const { planPath, planId } = await generatePlan(inventoryPath, briefContent, planAgent, outputDir, inventoryPath);
+    log(`${a.green}Plan written to ${planPath}${a.reset}`);
+    // Persist planId to global state so --resume can find it
+    await saveState(globalStatePath, { ...currentGlobalState, currentPlanId: planId });
+    return planPath;
   } finally {
     planAgent.kill();
   }
@@ -643,16 +698,25 @@ const main = async () => {
     forceRefresh: !skipFingerprint,
   });
 
-  // 3. Resolve plan path — generate from inventory or resume existing
+  // 3. Load global state — needed for plan resolution (currentPlanId)
+  const globalStateFile = resolve(cwd, CONFIG.stateFile);
+  const globalState = await loadState(globalStateFile);
+
+  // Helper: resolve plan path from currentPlanId in global state
+  const statePlanPath = globalState.currentPlanId
+    ? resolve(orchDir, planFileName(globalState.currentPlanId))
+    : undefined;
+
+  // 4. Resolve plan path — generate from inventory or resume existing
+  //    (uses currentPlanId from state loaded in step 3)
   let planPath: string;
-  const generatedPath = resolve(orchDir, GENERATED_PLAN_FILE);
 
   if (resumeMode) {
     // --resume [path]: use explicit path, or find existing plan
     if (resumeRaw) {
       planPath = resolve(resumeRaw);
-    } else if (existsSync(generatedPath)) {
-      planPath = generatedPath;
+    } else if (statePlanPath && existsSync(statePlanPath)) {
+      planPath = statePlanPath;
     } else if (existsSync(resolve(cwd, "plan.md"))) {
       planPath = resolve(cwd, "plan.md");
     } else {
@@ -669,24 +733,42 @@ const main = async () => {
       log(`${a.dim}Input is already a plan — treating as resume.${a.reset}`);
       planPath = inputPath;
     } else {
-      // Check if a generated plan already exists
-      if (existsSync(generatedPath)) {
+      // Check if a generated plan already exists (via state or legacy path)
+      if (statePlanPath && existsSync(statePlanPath)) {
         if (noInteraction) {
           log(`${a.dim}Using existing plan (--no-interaction).${a.reset}`);
-          planPath = generatedPath;
+          planPath = statePlanPath;
         } else {
           const answer = await ask("A generated plan already exists. Regenerate? (y/N) ");
           if (answer.trim().toLowerCase() !== "y") {
             log(`${a.dim}Using existing plan.${a.reset}`);
-            planPath = generatedPath;
+            planPath = statePlanPath;
           } else {
-            planPath = await doGeneratePlan(inputPath, brief, orchDir);
+            planPath = await doGeneratePlan(inputPath, brief, orchDir, globalStateFile, globalState);
           }
         }
       } else {
-        planPath = await doGeneratePlan(inputPath, brief, orchDir);
+        planPath = await doGeneratePlan(inputPath, brief, orchDir, globalStateFile, globalState);
       }
     }
+  }
+
+  // 4b. Derive per-plan state path from resolved planPath
+  let activePlanId: string;
+  try {
+    activePlanId = planIdFromPath(planPath);
+  } catch {
+    // External plan file (e.g. plan.md) — derive stable ID from path hash or global state
+    activePlanId = globalState.currentPlanId
+      ?? createHash("sha256").update(planPath).digest("hex").slice(0, 6);
+  }
+  const stateFile = statePathForPlan(orchDir, activePlanId);
+  mkdirSync(resolve(orchDir, "state"), { recursive: true });
+
+  // 4c. --reset clears the per-plan state file (not the global pointer)
+  if (resetState) {
+    await clearState(stateFile);
+    log(`${a.dim}State cleared.${a.reset}`);
   }
 
   if (planOnly) {
@@ -712,12 +794,8 @@ const main = async () => {
   const hudWriter = hud.createWriter();
   const boundMakeStreamer = (style: AgentStyle): Streamer => makeStreamer(style, hudWriter);
 
-  // 5. Load state
-  if (resetState) {
-    await clearState(resolve(cwd, CONFIG.stateFile));
-    log(`${a.dim}State cleared.${a.reset}`);
-  }
-  let state: OrchestratorState = await loadState(resolve(cwd, CONFIG.stateFile));
+  // 5. Load per-plan state
+  let state: OrchestratorState = await loadState(stateFile);
 
   // 6. Spawn persistent agents with skill system prompts
   let tddAgent = spawnAgent(BOT_TDD, tddSkill);
@@ -792,7 +870,7 @@ const main = async () => {
     const signal = detectCreditExhaustion(result, agent.stderr);
     if (!signal) return;
     log(`\n${ts()} ${a.red}Credit exhaustion detected: ${signal.message}${a.reset}`);
-    await saveState(resolve(cwd, CONFIG.stateFile), state);
+    await saveState(stateFile, state);
     if (signal.kind === "mid-response") {
       log(
         `${ts()} ${a.yellow}Agent was interrupted mid-response. The current slice will be re-run on resume.${a.reset}`,
@@ -902,7 +980,7 @@ const main = async () => {
         tddFirstMessage.value = true;
         reviewFirstMessage.value = true;
         state = { ...state, lastCompletedSlice: slice.number };
-        await saveState(resolve(cwd, CONFIG.stateFile), state);
+        await saveState(stateFile, state);
         groupSlicesCompleted++;
         globalSlicesCompleted++;
         hud.update({
@@ -955,6 +1033,8 @@ const main = async () => {
         await exitOnCreditExhaustion(tddResult, tddAgent);
         await followUpIfNeeded(tddResult, tddAgent, noInteraction, boundMakeStreamer);
 
+        if (sliceSkipFlag) { await doSkip(); continue; }
+
         if (tddResult.exitCode !== 0) {
           log(
             `\n${ts()} ${a.red}✗ TDD agent failed (exit ${tddResult.exitCode}) on Slice ${slice.number}. Continuing...${a.reset}`,
@@ -971,8 +1051,10 @@ const main = async () => {
           continue;
         }
 
+        if (sliceSkipFlag) { await doSkip(); continue; }
+
         state = { ...state, lastSliceImplemented: slice.number };
-        await saveState(resolve(cwd, CONFIG.stateFile), state);
+        await saveState(stateFile, state);
       }
 
       // Review-fix loop — gated on minimum diff threshold
@@ -983,7 +1065,7 @@ const main = async () => {
         );
         // Don't advance reviewBase — let changes accumulate
         state = { ...state, lastCompletedSlice: slice.number };
-        await saveState(resolve(cwd, CONFIG.stateFile), state);
+        await saveState(stateFile, state);
         groupSlicesCompleted++;
         globalSlicesCompleted++;
         hud.update({
@@ -1013,6 +1095,8 @@ const main = async () => {
         withInterrupt,
         boundMakeStreamer,
         reviewBase,
+        (agent, activity) => hud.update({ activeAgent: agent, activeAgentActivity: activity }),
+        () => sliceSkipFlag,
       );
       reviewBase = await captureRef(cwd);
       if (sliceSkipFlag) {
@@ -1042,7 +1126,7 @@ Be concrete and specific. No filler.`,
       printSliceSummary(slice.number, summary);
 
       state = { ...state, lastCompletedSlice: slice.number };
-      await saveState(resolve(cwd, CONFIG.stateFile), state);
+      await saveState(stateFile, state);
       groupSlicesCompleted++;
       globalSlicesCompleted++;
       hud.update({
@@ -1112,6 +1196,8 @@ Be concrete and specific. No filler.`,
                 withInterrupt,
                 boundMakeStreamer,
                 gapBaseSha,
+                (agent, activity) => hud.update({ activeAgent: agent, activeAgentActivity: activity }),
+                () => sliceSkipFlag,
               );
               log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
             }
@@ -1139,7 +1225,7 @@ Be concrete and specific. No filler.`,
     });
 
     state = { ...state, lastCompletedGroup: group.name };
-    await saveState(resolve(cwd, CONFIG.stateFile), state);
+    await saveState(stateFile, state);
 
     // ── Inter-group transition ──
     if (i < remaining.length - 1) {
@@ -1245,6 +1331,7 @@ Be concrete and specific. No filler.`,
         withInterrupt,
         boundMakeStreamer,
         preFixSha,
+        (agent, activity) => hud.update({ activeAgent: agent, activeAgentActivity: activity }),
       );
       log(`${ts()} ${a.green}✓ ${pass.name}: resolved${a.reset}`);
     }
@@ -1255,7 +1342,7 @@ Be concrete and specific. No filler.`,
   const status = await getStatus(cwd);
   log(`\n${status}`);
   cleanup();
-  await clearState(resolve(cwd, CONFIG.stateFile));
+  await clearState(stateFile);
 };
 
 const isEntrypoint =

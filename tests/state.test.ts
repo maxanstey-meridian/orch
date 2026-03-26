@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { rm, writeFile } from "fs/promises";
+import { rm, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { loadState, saveState, clearState } from "../src/state.js";
+import { loadState, saveState, clearState, statePathForPlan } from "../src/state.js";
 
 const testPath = join(tmpdir(), `orch-state-test-${process.pid}.json`);
 
@@ -167,6 +167,18 @@ describe("state", () => {
     await expect(loadState(testPath)).rejects.toThrow("lastCompletedSlice");
   });
 
+  it("persists currentPlanId and loads it back", async () => {
+    const state = { currentPlanId: "a1b2c3" };
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+    expect(loaded.currentPlanId).toBe("a1b2c3");
+  });
+
+  it("throws when currentPlanId is not a valid 6-char hex string", async () => {
+    await writeFile(testPath, JSON.stringify({ currentPlanId: "nope" }));
+    await expect(loadState(testPath)).rejects.toThrow("currentPlanId");
+  });
+
   it("NaN in raw JSON is unparseable and returns fresh state", async () => {
     await writeFile(testPath, '{"lastCompletedSlice": NaN}');
     // NaN is invalid JSON — JSON.parse throws
@@ -177,5 +189,33 @@ describe("state", () => {
   it("throws Corrupt state file when top-level JSON value is null", async () => {
     await writeFile(testPath, "null");
     await expect(loadState(testPath)).rejects.toThrow("Corrupt state file");
+  });
+});
+
+describe("statePathForPlan", () => {
+  it("returns .orch/state/plan-<id>.json for a given orchDir and planId", () => {
+    expect(statePathForPlan("/repo/.orch", "a1b2c3")).toBe("/repo/.orch/state/plan-a1b2c3.json");
+  });
+
+  it("handles trailing slash in orchDir without doubling", () => {
+    expect(statePathForPlan("/repo/.orch/", "a1b2c3")).toBe("/repo/.orch/state/plan-a1b2c3.json");
+  });
+
+  it("state saved for plan A does not affect state loaded for plan B", async () => {
+    const orchDir = join(tmpdir(), `orch-state-isolation-${process.pid}`);
+    const stateDir = join(orchDir, "state");
+    const { mkdirSync } = await import("fs");
+    mkdirSync(stateDir, { recursive: true });
+
+    const pathA = statePathForPlan(orchDir, "aaa111");
+    const pathB = statePathForPlan(orchDir, "bbb222");
+
+    await saveState(pathA, { lastCompletedSlice: 5 });
+    const stateB = await loadState(pathB);
+
+    expect(stateB).toEqual({});
+
+    // Cleanup
+    await rm(orchDir, { recursive: true, force: true });
   });
 });
