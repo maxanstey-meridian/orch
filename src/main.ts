@@ -605,7 +605,14 @@ const reviewFixLoop = async (
     );
     s.flush();
     tddFirstMessage.value = false;
-    await followUpIfNeeded(fixResult, tddAgent, noInteraction, createStreamer, toolUseHandler, askUser);
+    await followUpIfNeeded(
+      fixResult,
+      tddAgent,
+      noInteraction,
+      createStreamer,
+      toolUseHandler,
+      askUser,
+    );
 
     if (!(await hasChanges(cwd, preFixSha))) {
       log(`${ts()} ${a.dim}TDD bot made no changes — review cycle complete${a.reset}`);
@@ -658,7 +665,9 @@ const main = async () => {
     process.exit(1);
   }
   if (args.includes("--plan-only")) {
-    console.error("--plan-only is no longer supported. Use --plan instead (it generates and exits by default).");
+    console.error(
+      "--plan-only is no longer supported. Use --plan instead (it generates and exits by default).",
+    );
     process.exit(1);
   }
   const workMode = args.includes("--work");
@@ -681,7 +690,9 @@ const main = async () => {
     process.exit(1);
   }
   if (inventoryPath && workMode) {
-    console.error("--plan and --work are mutually exclusive. Use --plan to generate, then --work to execute.");
+    console.error(
+      "--plan and --work are mutually exclusive. Use --plan to generate, then --work to execute.",
+    );
     process.exit(1);
   }
   if (workMode && !workPath) {
@@ -720,7 +731,7 @@ const main = async () => {
     earlyLog.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
   };
 
-  const { brief, profile } = await runFingerprint({
+  const { brief } = await runFingerprint({
     cwd,
     outputDir: orchDir,
     skip: skipFingerprint,
@@ -765,7 +776,7 @@ const main = async () => {
   const stateFile = statePathForPlan(orchDir, activePlanId);
   mkdirSync(resolve(orchDir, "state"), { recursive: true });
 
-  // 4c. --reset clears the per-plan state file (not the global pointer)
+  // 4c. --reset clears the per-plan state file
   if (resetState) {
     await clearState(stateFile);
     log(`${a.dim}State cleared.${a.reset}`);
@@ -804,7 +815,10 @@ const main = async () => {
     const base = makeStreamer(style, hudWriter);
     // Clear activity spinner once on first text chunk, not on every chunk
     const wrapped = (text: string) => {
-      if (_activityShowing) { _activityShowing = false; hud.setActivity(""); }
+      if (_activityShowing) {
+        _activityShowing = false;
+        hud.setActivity("");
+      }
       base(text);
     };
     wrapped.flush = base.flush;
@@ -945,7 +959,8 @@ const main = async () => {
     const group = remaining[i];
 
     // Skip entire group if all its slices are already completed
-    const allSlicesDone = state.lastCompletedSlice !== undefined &&
+    const allSlicesDone =
+      state.lastCompletedSlice !== undefined &&
       group.slices.every((s) => s.number <= state.lastCompletedSlice!);
     if (allSlicesDone) {
       log(`\n${ts()} ${a.dim}⏩ Group "${group.name}" already completed — skipping${a.reset}`);
@@ -1053,7 +1068,14 @@ const main = async () => {
 
         tddFirstMessage.value = false;
         await exitOnCreditExhaustion(tddResult, tddAgent);
-        await followUpIfNeeded(tddResult, tddAgent, noInteraction, boundMakeStreamer, onToolUse, hud.askUser);
+        await followUpIfNeeded(
+          tddResult,
+          tddAgent,
+          noInteraction,
+          boundMakeStreamer,
+          onToolUse,
+          hud.askUser,
+        );
 
         if (sliceSkipFlag) {
           await doSkip();
@@ -1075,12 +1097,21 @@ const main = async () => {
           /nothing (?:left )?to (?:do|implement|change)/i.test(tddText);
 
         if (alreadyDone && !(await hasChanges(cwd, reviewBase))) {
-          log(`${ts()} ${a.dim}⏩ Slice ${slice.number} already implemented — skipping verify/review${a.reset}`);
-          state = { ...state, lastSliceImplemented: slice.number, lastCompletedSlice: slice.number };
+          log(
+            `${ts()} ${a.dim}⏩ Slice ${slice.number} already implemented — skipping verify/review${a.reset}`,
+          );
+          state = {
+            ...state,
+            lastSliceImplemented: slice.number,
+            lastCompletedSlice: slice.number,
+          };
           await saveState(stateFile, state);
           groupSlicesCompleted++;
           globalSlicesCompleted++;
-          hud.update({ completedSlices: globalSlicesCompleted, groupCompleted: groupSlicesCompleted });
+          hud.update({
+            completedSlices: globalSlicesCompleted,
+            groupCompleted: groupSlicesCompleted,
+          });
           continue;
         }
 
@@ -1104,14 +1135,13 @@ const main = async () => {
         if (!parsed.passed) {
           // One retry: send failures to TDD bot, verify again
           log(`${ts()} ${a.yellow}⚠ Verification failed — sending failures to TDD bot${a.reset}`);
-          const failureContext = parsed.newFailures.length > 0
-            ? parsed.newFailures.join("\n")
-            : "Verification checks failed. Run the test/lint/typecheck pipeline and fix any failures.";
+          const failureContext =
+            parsed.newFailures.length > 0
+              ? parsed.newFailures.join("\n")
+              : "Verification checks failed. Run the test/lint/typecheck pipeline and fix any failures.";
           const retryPrompt = `Verification found new failures after your implementation. Fix them:\n\n${failureContext}`;
           const rs = boundMakeStreamer(BOT_TDD);
-          await withInterrupt(tddAgent, () =>
-            tddAgent.send(retryPrompt, rs, onToolUse),
-          );
+          await withInterrupt(tddAgent, () => tddAgent.send(retryPrompt, rs, onToolUse));
           rs.flush();
 
           // Re-verify
@@ -1131,8 +1161,11 @@ const main = async () => {
           if (!parsed.passed) {
             // Hard stop — ask operator
             verifyAgent.kill();
-            const failSummary = parsed.newFailures.join("\n") || "Checks still failing after retry.";
-            log(`${ts()} ${a.red}✗ Verification still failing after retry on Slice ${slice.number}${a.reset}`);
+            const failSummary =
+              parsed.newFailures.join("\n") || "Checks still failing after retry.";
+            log(
+              `${ts()} ${a.red}✗ Verification still failing after retry on Slice ${slice.number}${a.reset}`,
+            );
             const answer = await hud.askUser(
               `Slice ${slice.number} verification failed:\n${failSummary}\n\n(r)etry / (s)kip / s(t)op? `,
             );
@@ -1385,9 +1418,7 @@ Be concrete and specific. No filler.`,
         log(`\n${ts()} ${a.dim}→ next: ${nextLabel}${a.reset}`);
       } else {
         log(`\n${ts()} ${a.green}✓ Group "${group.name}" complete${a.reset}`);
-        const answer = await hud.askUser(
-          `Group done. Run ${nextLabel} next? (Y/n) `,
-        );
+        const answer = await hud.askUser(`Group done. Run ${nextLabel} next? (Y/n) `);
         if (answer.toLowerCase() === "n") {
           log(`Stopped. Resume with --group "${next.name}"`);
           cleanup();
@@ -1450,7 +1481,14 @@ Be concrete and specific. No filler.`,
       s.flush();
       tddFirstMessage.value = false;
       await exitOnCreditExhaustion(fixResult, tddAgent);
-      await followUpIfNeeded(fixResult, tddAgent, noInteraction, boundMakeStreamer, onToolUse, hud.askUser);
+      await followUpIfNeeded(
+        fixResult,
+        tddAgent,
+        noInteraction,
+        boundMakeStreamer,
+        onToolUse,
+        hud.askUser,
+      );
       if (!(await hasChanges(cwd, preFixSha))) {
         log(`${ts()} ${a.dim}TDD bot made no changes for ${pass.name}${a.reset}`);
         continue;
