@@ -852,9 +852,9 @@ const main = async () => {
   // 5. Load per-plan state
   let state: OrchestratorState = await loadState(stateFile);
 
-  // 6. Spawn persistent agents with skill system prompts
-  let tddAgent = await spawnTddAgent(tddSkill);
-  let reviewAgent = await spawnReviewAgent(reviewSkill);
+  // 6. Spawn persistent agents with skill system prompts (spawned here, rules reminder awaited after banner)
+  let tddAgent = spawnAgent(BOT_TDD, tddSkill);
+  let reviewAgent = spawnAgent(BOT_REVIEW, reviewSkill);
   const tddFirstMessage = { value: true };
   const reviewFirstMessage = { value: true };
 
@@ -951,6 +951,12 @@ const main = async () => {
   log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
   if (interactive)
     log(`   ${a.dim}Press${a.reset} ${a.bold}S${a.reset} ${a.dim}to skip current slice${a.reset}`);
+
+  // Send rules reminders (awaited after banner so UI isn't blocked)
+  await Promise.all([
+    tddAgent.sendQuiet(TDD_RULES_REMINDER),
+    reviewAgent.sendQuiet(REVIEW_RULES_REMINDER),
+  ]);
 
   // 9. Group list with start marker
   const startIdx = groupFilter
