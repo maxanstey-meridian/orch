@@ -9,7 +9,8 @@ import { createHash } from "crypto";
 import { execSync, spawnSync } from "child_process";
 import { loadState, saveState, clearState, statePathForPlan } from "../src/state.js";
 import { detectCreditExhaustion } from "../src/credit-detection.js";
-import { buildCommitSweepPrompt, commitSweep } from "../src/main.js";
+import { commitSweep } from "../src/main.js";
+import { buildCommitSweepPrompt } from "../src/prompts.js";
 import type { AgentResult, AgentProcess } from "../src/agent.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
