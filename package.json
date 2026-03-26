@@ -15,10 +15,14 @@
     "bundle": "npm run build && rm -rf ~/.claude/orch && mkdir -p ~/.claude/orch/js ~/.claude/orch/skills && cp dist/*.js ~/.claude/orch/js/ && cp -r skills/* ~/.claude/orch/skills/ && ln -s $(pwd)/node_modules ~/.claude/orch/js/node_modules && echo 'Bundled to ~/.claude/orch/'"
   },
   "dependencies": {
+    "ink": "^6.8.0",
+    "react": "^19.2.4",
     "zod": "^3"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "ink-testing-library": "^4.0.0",
     "oxfmt": "^0.42.0",
     "oxlint": "^1.57.0",
     "typescript": "^5.7.0",

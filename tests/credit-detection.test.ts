@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { detectCreditExhaustion } from "./credit-detection.js";
-import type { AgentResult } from "./agent.js";
+import { detectCreditExhaustion } from "../src/credit-detection.js";
+import type { AgentResult } from "../src/agent.js";
 
 const makeResult = (overrides: Partial<AgentResult> = {}): AgentResult => ({
   exitCode: 0,

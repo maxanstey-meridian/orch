@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile, chmod } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { createAgent } from "./agent.js";
+import { createAgent } from "../src/agent.js";
 
 const makeScript = async (dir: string, name: string, body: string): Promise<string> => {
   const path = join(dir, name);

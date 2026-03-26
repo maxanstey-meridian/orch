@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectQuestion } from "./question-detector.js";
+import { detectQuestion } from "../src/question-detector.js";
 
 describe("detectQuestion", () => {
   it("returns false for empty input", () => {

@@ -3,11 +3,10 @@ import { mkdtemp, rm, writeFile, readFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync, spawnSync } from "child_process";
-import { loadState, saveState, clearState } from "./state.js";
-import { detectCreditExhaustion } from "./credit-detection.js";
-import { createInterruptHandler } from "./interrupt.js";
-import { buildCommitSweepPrompt, commitSweep } from "./main.js";
-import type { AgentResult, AgentProcess } from "./agent.js";
+import { loadState, saveState, clearState } from "../src/state.js";
+import { detectCreditExhaustion } from "../src/credit-detection.js";
+import { buildCommitSweepPrompt, commitSweep } from "../src/main.js";
+import type { AgentResult, AgentProcess } from "../src/agent.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
@@ -63,7 +62,7 @@ describe("--reset flag behavior", () => {
 
     // Run main.ts — it will spawn claude (which may not exist), but --reset
     // runs before agent spawning. Kill after 3s to avoid hanging.
-    const mainPath = join(import.meta.dirname, "main.ts");
+    const mainPath = join(import.meta.dirname, "../src/main.ts");
     const r = spawnSync("npx", [
       "tsx", mainPath, "--plan", join(tempDir, "plan.md"),
       "--skip-fingerprint", "--no-interaction", "--reset",
@@ -94,7 +93,7 @@ describe("--reset flag behavior", () => {
 // ─── CLI wiring integration tests ────────────────────────────────────────────
 
 describe("CLI flag wiring", () => {
-  const mainPath = join(import.meta.dirname, "main.ts");
+  const mainPath = join(import.meta.dirname, "../src/main.ts");
 
   const runMain = (args: string[], cwd: string) =>
     spawnSync("npx", ["tsx", mainPath, ...args], {
@@ -289,7 +288,7 @@ describe("skip-slice state persistence (component-level)", () => {
 });
 
 describe("fingerprint force wiring (integration)", () => {
-  const mainPath = join(import.meta.dirname, "main.ts");
+  const mainPath = join(import.meta.dirname, "../src/main.ts");
 
   const initGitRepo = (dir: string) => {
     exec("git init", dir);
@@ -329,102 +328,6 @@ describe("fingerprint force wiring (integration)", () => {
   });
 });
 
-describe("interrupt wiring pattern (component-level)", () => {
-  it("withInterrupt enables before async work and disables after", async () => {
-    // Simulates the pattern main.ts uses: enable interrupt, run send, disable after.
-    // Uses the real createInterruptHandler to verify the enable/disable lifecycle.
-    const handler = createInterruptHandler(true); // no-op mode for this structural test
-    const sequence: string[] = [];
-
-    const originalEnable = handler.enable;
-    const originalDisable = handler.disable;
-
-    // Monkey-patch to track call order
-    (handler as { enable: () => void }).enable = () => {
-      sequence.push("enable");
-      originalEnable();
-    };
-    (handler as { disable: () => void }).disable = () => {
-      sequence.push("disable");
-      originalDisable();
-    };
-
-    // This is the pattern used in main.ts: withInterrupt wraps async work
-    const withInterrupt = async <T>(fn: () => Promise<T>): Promise<T> => {
-      handler.enable();
-      try {
-        return await fn();
-      } finally {
-        handler.disable();
-      }
-    };
-
-    const result = await withInterrupt(async () => {
-      sequence.push("work");
-      return 42;
-    });
-
-    expect(result).toBe(42);
-    expect(sequence).toEqual(["enable", "work", "disable"]);
-  });
-
-  it("withInterrupt disables even if async work throws", async () => {
-    const handler = createInterruptHandler(true);
-    const sequence: string[] = [];
-
-    (handler as { enable: () => void }).enable = () => sequence.push("enable");
-    (handler as { disable: () => void }).disable = () => sequence.push("disable");
-
-    const withInterrupt = async <T>(fn: () => Promise<T>): Promise<T> => {
-      handler.enable();
-      try {
-        return await fn();
-      } finally {
-        handler.disable();
-      }
-    };
-
-    await expect(
-      withInterrupt(async () => {
-        sequence.push("work");
-        throw new Error("boom");
-      }),
-    ).rejects.toThrow("boom");
-
-    expect(sequence).toEqual(["enable", "work", "disable"]);
-  });
-
-  it("non-interactive mode creates no-op handler that does not interfere", () => {
-    // main.ts creates handler with noInteraction flag — verify it's inert
-    const handler = createInterruptHandler(true);
-    expect(() => {
-      handler.enable();
-      handler.onInterrupt(() => {});
-      handler.disable();
-    }).not.toThrow();
-  });
-
-  it("callback set once via mutable ref routes to current agent after reassignment", () => {
-    // main.ts sets onInterrupt once using a mutable currentAgent ref.
-    // When agents are respawned, the ref is updated. The callback must route
-    // to whichever agent the ref currently points to, not the original.
-    const handler = createInterruptHandler(true);
-    const injected: string[] = [];
-
-    // Simulate the mutable ref pattern from main.ts
-    let currentAgent = { inject: (msg: string) => injected.push(`agent1:${msg}`) };
-    handler.onInterrupt((msg) => currentAgent.inject(msg));
-
-    // Reassign the ref (simulates agent respawn at group boundary)
-    currentAgent = { inject: (msg: string) => injected.push(`agent2:${msg}`) };
-
-    // The closure captures currentAgent by reference, so it follows reassignment.
-    // Verify the pattern works at the JS level:
-    const callback = (msg: string) => currentAgent.inject(msg);
-    callback("test");
-    expect(injected).toEqual(["agent2:test"]);
-  });
-});
 
 describe("buildCommitSweepPrompt", () => {
   it("includes the group name and key instruction text", () => {
