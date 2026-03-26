@@ -29,17 +29,10 @@ export const hasDirtyTree = async (cwd: string): Promise<boolean> => {
   return status.length > 0;
 };
 
-export const stashSave = async (cwd: string): Promise<boolean> => {
+export const stashBackup = async (cwd: string): Promise<boolean> => {
   const dirty = await hasDirtyTree(cwd);
   if (!dirty) return false;
   await git(["stash", "push", "-u", "-m", "orch: protect working tree"], cwd);
+  await git(["stash", "apply"], cwd);
   return true;
-};
-
-export const stashPop = async (cwd: string, log: (...args: unknown[]) => void = console.error): Promise<void> => {
-  try {
-    await git(["stash", "pop"], cwd);
-  } catch (e) {
-    log("Warning: failed to pop stash — your changes are still in `git stash list`", e);
-  }
 };

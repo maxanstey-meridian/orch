@@ -31,7 +31,7 @@ import {
 import { runFingerprint, wrapBrief } from "./fingerprint.js";
 import { runInit, profileToMarkdown, createAsk } from "./init.js";
 import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
-import { captureRef, hasChanges, getStatus, hasDirtyTree, stashSave } from "./git.js";
+import { captureRef, hasChanges, getStatus, hasDirtyTree, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
 import { parseVerifyResult } from "./verify.js";
 import { isCleanReview } from "./review-check.js";
@@ -1114,8 +1114,8 @@ const main = async () => {
   log("");
 
   // Stash any unrelated working tree changes to protect them from the TDD bot
-  const didStash = await stashSave(cwd);
-  if (didStash) log(`${ts()} ${a.dim}Stashed working tree changes for safekeeping${a.reset}`);
+  const didStash = await stashBackup(cwd);
+  if (didStash) log(`${ts()} ${a.dim}Backed up working tree to git stash${a.reset}`);
 
   const runBaseSha = await captureRef(cwd);
   const planContent = await readFile(planPath, "utf-8");
