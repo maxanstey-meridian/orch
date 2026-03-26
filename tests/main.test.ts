@@ -143,9 +143,9 @@ describe("CLI flag wiring", () => {
     const planStateFile = join(stateDir, "plan-abc123.json");
     await saveState(planStateFile, { lastCompletedSlice: 5 });
 
-    // --reset --resume should clear per-plan state
+    // --reset --resume --plan-only: clears state then exits before executing slices
     const r = runMain(
-      ["--resume", "--skip-fingerprint", "--no-interaction", "--reset"],
+      ["--resume", "--skip-fingerprint", "--no-interaction", "--reset", "--plan-only"],
       tempDir,
     );
 

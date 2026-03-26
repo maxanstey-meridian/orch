@@ -1,5 +1,10 @@
 # Plan Generation UI — Plan
 
+**TODO** **Claude I might forget I put this here**
+This probably affects the --init option too.
+Also, we should tell the TDD bot to not write everything TDD. Outrageous abstractions for the sake of unit testability 
+is ridiculous. It tried abstracting the inputs of a CLI ffs. A CLI. By the end of it it hadn't even wired in a real fucking CLI, it was all abstractions.
+
 ## Problem
 
 The `--plan` path (plan generation from inventory) is a black box:

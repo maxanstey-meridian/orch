@@ -17,10 +17,18 @@ export type AgentResult = {
   readonly sessionId: string;
 };
 
+type ToolUseBlock = {
+  readonly type: "tool_use";
+  readonly name: string;
+  readonly input: Record<string, unknown>;
+};
+
+type ContentBlock = { readonly type: string; readonly text?: string } | ToolUseBlock;
+
 type AssistantEvent = {
   readonly type: "assistant";
   readonly message: {
-    readonly content: readonly { readonly type: string; readonly text?: string }[];
+    readonly content: readonly ContentBlock[];
   };
 };
 
@@ -82,8 +90,37 @@ const forEachEvent = (
   };
 };
 
+const basename = (p: string): string => p.split("/").pop() ?? p;
+
+const summarizeToolUse = (block: ToolUseBlock): string => {
+  const name = block.name;
+  const input = block.input;
+  switch (name) {
+    case "Read":
+      return `Reading ${basename(String(input.file_path ?? ""))}`;
+    case "Write":
+      return `Writing ${basename(String(input.file_path ?? ""))}`;
+    case "Edit":
+      return `Editing ${basename(String(input.file_path ?? ""))}`;
+    case "Bash":
+      return `Running: ${String(input.command ?? "").slice(0, 40)}`;
+    case "Grep":
+      return `Searching: ${String(input.pattern ?? "").slice(0, 30)}`;
+    case "Glob":
+      return `Finding: ${String(input.pattern ?? "").slice(0, 30)}`;
+    case "LSP":
+      return `LSP: ${String(input.method ?? "")}`;
+    default:
+      return name;
+  }
+};
+
 export type AgentProcess = {
-  readonly send: (prompt: string, onText?: (text: string) => void) => Promise<AgentResult>;
+  readonly send: (
+    prompt: string,
+    onText?: (text: string) => void,
+    onToolUse?: (summary: string) => void,
+  ) => Promise<AgentResult>;
   readonly sendQuiet: (prompt: string) => Promise<string>;
   readonly inject: (message: string) => void;
   readonly kill: () => void;
@@ -158,7 +195,11 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
     proc.stdin!.write(msg + "\n");
   };
 
-  const send = (prompt: string, onText?: (text: string) => void): Promise<AgentResult> => {
+  const send = (
+    prompt: string,
+    onText?: (text: string) => void,
+    onToolUse?: (summary: string) => void,
+  ): Promise<AgentResult> => {
     return new Promise<AgentResult>((resolve) => {
       if (!isAlive) {
         resolve({ exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId });
@@ -174,6 +215,8 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
             if (block.type === "text" && block.text) {
               assistantChunks.push(block.text);
               if (onText) onText(block.text);
+            } else if (block.type === "tool_use" && onToolUse) {
+              onToolUse(summarizeToolUse(block as ToolUseBlock));
             }
           }
         } else if (event.type === "result") {
