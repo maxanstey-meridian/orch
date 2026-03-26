@@ -1086,6 +1086,8 @@ const main = async () => {
         (state.lastCompletedSlice === undefined || slice.number > state.lastCompletedSlice);
 
       if (alreadyImplemented) {
+        // Restore the pre-TDD baseline so review can diff the actual work
+        if (state.reviewBaseSha) reviewBase = state.reviewBaseSha;
         log(
           `${ts()} ${a.dim}⏩ TDD already ran for Slice ${slice.number} — resuming review${a.reset}`,
         );
@@ -1262,7 +1264,7 @@ const main = async () => {
           continue;
         }
 
-        state = { ...state, lastSliceImplemented: slice.number };
+        state = { ...state, lastSliceImplemented: slice.number, reviewBaseSha: verifyBaseSha };
         await saveState(stateFile, state);
       }
 
