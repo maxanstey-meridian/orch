@@ -411,6 +411,53 @@ describe("runFingerprint", () => {
     expect(second.profile.stack).toBe(first.profile.stack);
   });
 
+  it("forceRefresh regenerates a fresh brief instead of returning cache", async () => {
+    await writeFile(
+      join(tempDir, "package.json"),
+      JSON.stringify({
+        dependencies: {},
+        devDependencies: { typescript: "^5.0.0" },
+      }),
+    );
+
+    const outputDir = join(tempDir, ".orch");
+
+    // First call generates the brief
+    const first = await runFingerprint({ cwd: tempDir, outputDir });
+    expect(first.brief).toContain("TypeScript");
+
+    // Tamper with the cached brief to detect if it's re-read vs regenerated
+    await writeFile(join(outputDir, "brief.md"), "STALE CACHE");
+
+    // Without forceRefresh — returns cached (stale) content
+    const cached = await runFingerprint({ cwd: tempDir, outputDir });
+    expect(cached.brief).toBe("STALE CACHE");
+
+    // With forceRefresh — regenerates, overwrites stale cache
+    const forced = await runFingerprint({ cwd: tempDir, outputDir, forceRefresh: true });
+    expect(forced.brief).toContain("TypeScript");
+    expect(forced.brief).not.toContain("STALE CACHE");
+  });
+
+  it("skip takes priority over forceRefresh — returns defaults", async () => {
+    await writeFile(
+      join(tempDir, "package.json"),
+      JSON.stringify({
+        dependencies: {},
+        devDependencies: { typescript: "^5.0.0" },
+      }),
+    );
+
+    const result = await runFingerprint({
+      cwd: tempDir,
+      outputDir: join(tempDir, ".orch"),
+      skip: true,
+      forceRefresh: true,
+    });
+    expect(result.brief).toBe("");
+    expect(result.profile).toEqual({});
+  });
+
   it("returns dotnet test for C# project with xUnit tests", async () => {
     await mkdir(join(tempDir, "src"), { recursive: true });
     await mkdir(join(tempDir, "tests"), { recursive: true });

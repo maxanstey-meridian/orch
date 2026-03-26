@@ -53,6 +53,7 @@ const mockAgent = (responseText: string): AgentProcess => ({
       sessionId: "mock",
     }) as AgentResult,
   sendQuiet: async (_prompt: string) => responseText,
+  inject: () => {},
   kill: () => {},
   get alive() { return true; },
   sessionId: "mock",

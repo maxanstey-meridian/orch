@@ -34,6 +34,10 @@ import { isCleanReview } from "./review-check.js";
 
 import { detectCreditExhaustion } from "./credit-detection.js";
 import { measureDiff, shouldReview } from "./review-threshold.js";
+import { createInterruptHandler } from "./interrupt.js";
+import { createHud } from "./hud.js";
+import { createSkipHandler } from "./skip-handler.js";
+import { createStdinDispatcher } from "./stdin-dispatcher.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -65,7 +69,7 @@ const ts = (): string => {
   return `${a.dim}${d.toLocaleTimeString("en-GB", { hour12: false })}${a.reset}`;
 };
 
-const log = (msg: string) => console.log(msg);
+let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
 
 const logSection = (title: string) => {
   const line = "━".repeat(64);
@@ -433,6 +437,7 @@ const reviewFixLoop = async (
   reviewFirstMessage: { value: boolean },
   testCommand: string | undefined,
   exitOnCreditExhaustion: (result: AgentResult, agent: AgentProcess) => Promise<void>,
+  withInterrupt: <T>(agent: AgentProcess, fn: () => Promise<T>) => Promise<T>,
   baseSha?: string,
 ): Promise<void> => {
   let reviewSha = baseSha ?? (await captureRef(cwd));
@@ -451,7 +456,7 @@ const reviewFixLoop = async (
       ? withBrief(buildReviewPrompt(content, reviewSha), brief)
       : buildReviewPrompt(content, reviewSha);
     let s = makeStreamer(BOT_REVIEW);
-    const reviewResult = await reviewAgent.send(reviewPrompt, s);
+    const reviewResult = await withInterrupt(reviewAgent, () => reviewAgent.send(reviewPrompt, s));
     s.flush();
     await exitOnCreditExhaustion(reviewResult, reviewAgent);
     reviewFirstMessage.value = false;
@@ -466,9 +471,8 @@ const reviewFixLoop = async (
     const preFixSha = await captureRef(cwd);
     const fixPrompt = buildTddPrompt(content, reviewText);
     s = makeStreamer(BOT_TDD);
-    const fixResult = await tddAgent.send(
-      tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt,
-      s,
+    const fixResult = await withInterrupt(tddAgent, () =>
+      tddAgent.send(tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt, s),
     );
     s.flush();
     tddFirstMessage.value = false;
@@ -555,13 +559,11 @@ const main = async () => {
   const orchDir = resolve(cwd, CONFIG.briefDir);
 
   // 2. Init (if requested) → fingerprint + brief
-  let initProfileChanged = false;
   if (initMode) {
     const initProfile = await runInit(cwd);
     if (initProfile) {
       mkdirSync(orchDir, { recursive: true });
       writeFileSync(resolve(orchDir, "init-profile.md"), profileToMarkdown(initProfile));
-      initProfileChanged = true;
     }
   }
 
@@ -569,7 +571,7 @@ const main = async () => {
     cwd,
     outputDir: orchDir,
     skip: skipFingerprint,
-    forceRefresh: initProfileChanged,
+    forceRefresh: !skipFingerprint,
   });
 
   // 3. Resolve plan path — generate from inventory or resume existing
@@ -627,6 +629,14 @@ const main = async () => {
   // 4. Parse plan
   const groups = await parsePlan(planPath);
 
+  // 4b. HUD — persistent status bar at bottom of terminal
+  const totalSlices = groups.reduce((n, g) => n + g.slices.length, 0);
+  const isTTY = process.stdout.isTTY === true;
+  const hud = createHud(isTTY);
+  let globalSlicesCompleted = 0;
+  hud.update({ totalSlices, completedSlices: 0, startTime: Date.now() });
+  log = hud.wrapLog(log);
+
   // 5. Load state
   if (resetState) {
     await clearState(resolve(cwd, CONFIG.stateFile));
@@ -640,8 +650,34 @@ const main = async () => {
   const tddFirstMessage = { value: true };
   const reviewFirstMessage = { value: true };
 
+  // 6b. Shared stdin dispatcher — single raw mode owner for interrupt + skip.
+  const interactive = !noInteraction && isTTY;
+  const stdinDispatcher = interactive ? createStdinDispatcher() : null;
+
+  // 6c. Interrupt handler — lets operator inject guidance mid-agent-run.
+  // Callback is set once via a mutable ref; when agents are respawned at group
+  // boundaries the ref is updated and the callback follows automatically.
+  const interrupt = stdinDispatcher
+    ? createInterruptHandler(false, { dispatcher: stdinDispatcher, stdout: process.stdout })
+    : createInterruptHandler(true);
+  let interruptTarget: AgentProcess | null = null;
+  interrupt.onInterrupt((msg) => { if (interruptTarget) interruptTarget.inject(msg); });
+
+  const withInterrupt = async <T>(agent: AgentProcess, fn: () => Promise<T>): Promise<T> => {
+    interruptTarget = agent;
+    interrupt.enable();
+    try {
+      return await fn();
+    } finally {
+      interrupt.disable();
+    }
+  };
+
   // 7. Signal handlers
   const cleanup = () => {
+    hud.teardown();
+    interrupt.disable();
+    stdinDispatcher?.dispose();
     tddAgent.kill();
     reviewAgent.kill();
     rl.close();
@@ -687,6 +723,7 @@ const main = async () => {
   log(`   ${BOT_TDD.badge} ${a.dim}persistent (${tddAgent.sessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_REVIEW.badge} ${a.dim}persistent (${reviewAgent.sessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
+  if (interactive) log(`   ${a.dim}Press${a.reset} ${a.bold}Ctrl+S${a.reset} ${a.dim}to skip current slice${a.reset}`);
 
   // 9. Group list with start marker
   const startIdx = groupFilter
@@ -721,20 +758,34 @@ const main = async () => {
     logSection(
       `Group: ${group.name} — ${group.slices.map((s: Slice) => `Slice ${s.number}`).join(", ")}`,
     );
+    hud.update({
+      groupName: group.name,
+      groupSliceCount: group.slices.length,
+      groupCompleted: 0,
+    });
 
     const groupBaseSha = await captureRef(cwd);
 
     // ── Slice loop ──
     let reviewBase = groupBaseSha;
+    let groupSlicesCompleted = 0;
     for (const slice of group.slices) {
       if (state.lastCompletedSlice !== undefined && slice.number <= state.lastCompletedSlice) {
         log(
           `\n${ts()} ${a.dim}⏭ Slice ${slice.number}: ${slice.title} — already completed${a.reset}`,
         );
+        groupSlicesCompleted++;
+        globalSlicesCompleted++;
+        hud.update({ completedSlices: globalSlicesCompleted, groupCompleted: groupSlicesCompleted });
         continue;
       }
 
       printSliceIntro(slice);
+      hud.update({
+        currentSlice: { number: slice.number },
+        activeAgent: "TDD",
+        activeAgentActivity: "implementing...",
+      });
 
       // Resume support: TDD done but review was interrupted
       const alreadyImplemented =
@@ -752,7 +803,39 @@ const main = async () => {
         const tddPrompt = buildTddPrompt(slice.content);
         const prompt = tddFirstMessage.value ? withBrief(tddPrompt, brief) : tddPrompt;
         const s = makeStreamer(BOT_TDD);
-        const tddResult = await tddAgent.send(prompt, s);
+
+        // Race TDD agent against skip handler — Ctrl+S skips current slice.
+        // skip.cancel() must fire synchronously when TDD wins to prevent a
+        // late Ctrl+S from triggering after the agent already finished.
+        const skip = stdinDispatcher
+          ? createSkipHandler(true, { dispatcher: stdinDispatcher, suppress: interrupt })
+          : createSkipHandler(false);
+        const tddPromise = withInterrupt(tddAgent, () => tddAgent.send(prompt, s));
+
+        const raceResult = await Promise.race([
+          tddPromise.then((r) => { skip.cancel(); return { kind: "done" as const, result: r }; }),
+          skip.waitForSkip().then((skipped) => ({ kind: "skip" as const, skipped })),
+        ]);
+
+        if (raceResult.kind === "skip" && raceResult.skipped) {
+          s.flush();
+          log(`\n${ts()} ${a.yellow}⏭ Slice ${slice.number} skipped by operator${a.reset}`);
+          tddAgent.kill();
+          tddAgent = spawnAgent(BOT_TDD, tddSkill);
+          tddFirstMessage.value = true;
+          reviewFirstMessage.value = true;
+          state = { ...state, lastCompletedSlice: slice.number };
+          await saveState(resolve(cwd, CONFIG.stateFile), state);
+          groupSlicesCompleted++;
+          globalSlicesCompleted++;
+          hud.update({ completedSlices: globalSlicesCompleted, groupCompleted: groupSlicesCompleted });
+          continue;
+        }
+
+        // After the skip branch (which continues), only "done" is reachable.
+        // TS can't narrow through `continue`, so we check explicitly.
+        if (raceResult.kind !== "done") continue;
+        const tddResult = raceResult.result;
         s.flush();
         tddFirstMessage.value = false;
         await exitOnCreditExhaustion(tddResult, tddAgent);
@@ -787,9 +870,13 @@ const main = async () => {
         // Don't advance reviewBase — let changes accumulate
         state = { ...state, lastCompletedSlice: slice.number };
         await saveState(resolve(cwd, CONFIG.stateFile), state);
+        groupSlicesCompleted++;
+        globalSlicesCompleted++;
+        hud.update({ completedSlices: globalSlicesCompleted, groupCompleted: groupSlicesCompleted });
         continue; // skip to next slice
       }
 
+      hud.update({ activeAgent: "REV", activeAgentActivity: "reviewing..." });
       await reviewFixLoop(
         tddAgent,
         reviewAgent,
@@ -801,6 +888,7 @@ const main = async () => {
         reviewFirstMessage,
         profile.testCommand,
         exitOnCreditExhaustion,
+        withInterrupt,
         reviewBase,
       );
       reviewBase = await captureRef(cwd);
@@ -828,6 +916,14 @@ Be concrete and specific. No filler.`,
 
       state = { ...state, lastCompletedSlice: slice.number };
       await saveState(resolve(cwd, CONFIG.stateFile), state);
+      groupSlicesCompleted++;
+      globalSlicesCompleted++;
+      hud.update({
+        completedSlices: globalSlicesCompleted,
+        groupCompleted: groupSlicesCompleted,
+        activeAgent: undefined,
+        activeAgentActivity: undefined,
+      });
     }
 
     // ── Gap analysis ──
@@ -840,7 +936,7 @@ Be concrete and specific. No filler.`,
       const gapAgent = spawnAgent(BOT_GAP);
       const gapPrompt = withBrief(buildGapPrompt(groupContent, groupBaseSha), brief);
       let s = makeStreamer(BOT_GAP);
-      const gapResult = await gapAgent.send(gapPrompt, s);
+      const gapResult = await withInterrupt(gapAgent, () => gapAgent.send(gapPrompt, s));
       s.flush();
       await exitOnCreditExhaustion(gapResult, gapAgent);
 
@@ -860,9 +956,8 @@ Be concrete and specific. No filler.`,
             `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
           );
           s = makeStreamer(BOT_TDD);
-          const gapFixResult = await tddAgent.send(
-            tddFirstMessage.value ? withBrief(gapFixPrompt, brief) : gapFixPrompt,
-            s,
+          const gapFixResult = await withInterrupt(tddAgent, () =>
+            tddAgent.send(tddFirstMessage.value ? withBrief(gapFixPrompt, brief) : gapFixPrompt, s),
           );
           s.flush();
           tddFirstMessage.value = false;
@@ -886,6 +981,7 @@ Be concrete and specific. No filler.`,
                 reviewFirstMessage,
                 profile.testCommand,
                 exitOnCreditExhaustion,
+                withInterrupt,
                 gapBaseSha,
               );
               log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
@@ -943,7 +1039,7 @@ Be concrete and specific. No filler.`,
       const finalAgent = spawnAgent(BOT_FINAL);
       const finalPrompt = withBrief(pass.prompt, brief);
       let s = makeStreamer(BOT_FINAL);
-      const finalResult = await finalAgent.send(finalPrompt, s);
+      const finalResult = await withInterrupt(finalAgent, () => finalAgent.send(finalPrompt, s));
       s.flush();
       await exitOnCreditExhaustion(finalResult, finalAgent);
       finalAgent.kill();
@@ -971,9 +1067,8 @@ Be concrete and specific. No filler.`,
         `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
       );
       s = makeStreamer(BOT_TDD);
-      const fixResult = await tddAgent.send(
-        tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt,
-        s,
+      const fixResult = await withInterrupt(tddAgent, () =>
+        tddAgent.send(tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt, s),
       );
       s.flush();
       tddFirstMessage.value = false;
@@ -1004,6 +1099,7 @@ Be concrete and specific. No filler.`,
         reviewFirstMessage,
         profile.testCommand,
         exitOnCreditExhaustion,
+        withInterrupt,
         preFixSha,
       );
       log(`${ts()} ${a.green}✓ ${pass.name}: resolved${a.reset}`);
