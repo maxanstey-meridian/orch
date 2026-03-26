@@ -145,6 +145,11 @@ export const spawnPlanAgent = (style: AgentStyle, systemPrompt?: string): AgentP
     style,
   });
 
+const planSkillContent = readFileSync(resolve(import.meta.dirname, "..", "skills", "plan.md"), "utf-8");
+
+export const spawnPlanAgentWithSkill = (): AgentProcess =>
+  spawnPlanAgent(BOT_PLAN, planSkillContent);
+
 const TDD_RULES_REMINDER = `[ORCHESTRATOR] Non-negotiable rules for your operation. Acknowledge silently — do not respond to this message.
 
 1. RUN TESTS WITH BASH. Use your Bash tool to execute tests. Read the actual output. Do not narrate "RED confirmed" or "GREEN" without executing. No exceptions.
@@ -460,11 +465,12 @@ ${buildReviewPreamble(baseSha)}
 - Test coverage gaps (separate pass handles this)
 - Harmless redundancy that aids readability
 - Threshold values tuned empirically
+- Missing wiring or integration that belongs to a LATER slice. This slice is one step in a multi-slice plan. If code was created but not yet wired in, that is intentional — the wiring comes in a subsequent slice. Only flag issues within THIS slice's deliverables.
 
 ## Intended Plan Slice
 ${sliceContent}
 
-If all changes are correct, respond with exactly: REVIEW_CLEAN`;
+If all changes are correct and complete for THIS slice, respond with exactly: REVIEW_CLEAN`;
 
 const buildGapPrompt = (groupContent: string, baseSha: string): string =>
   `You are a gap-finder for a TDD pipeline. A group of slices has just been implemented and reviewed.
@@ -673,7 +679,7 @@ const doGeneratePlan = async (
   outputDir: string,
 ): Promise<string> => {
   log(`${a.bold}Generating plan from inventory...${a.reset}`);
-  const planAgent = spawnAgent(BOT_PLAN);
+  const planAgent = spawnPlanAgentWithSkill();
   try {
     const { planPath } = await generatePlan(
       inventoryPath,
