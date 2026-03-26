@@ -78,6 +78,16 @@ the current test. Don't anticipate future tests.
 
 **Narrating instead of executing**: Writing "RED confirmed" or "GREEN. Cycle complete." without actually running tests via Bash. You must execute, read output, then report. No exceptions.
 
+## When a previously-passing test breaks
+
+If you run tests during a GREEN step and a test that was passing before now fails, **stop**. Do not blindly fix it. Diagnose why it broke first:
+
+1. **Real regression** — your new code changed behaviour that the old test correctly relied on. Fix your implementation, not the test.
+2. **Assumption violation** — your new code exposed a hidden coupling or incorrect assumption in the old test. The old test was fragile. Fix the test to test behaviour, not implementation.
+3. **Conflicting requirements** — the new behaviour genuinely contradicts the old. This is a design question. Note it and proceed with your best judgement, but flag it in your output.
+
+The diagnosis determines the fix. "Make all tests pass" is not the goal — "make all tests *correctly* pass" is.
+
 ## Bugs Found After GREEN
 
 A bug discovered after reaching GREEN is not part of that cycle — it's a new RED→GREEN cycle. The original
