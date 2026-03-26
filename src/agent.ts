@@ -85,6 +85,7 @@ const forEachEvent = (
 export type AgentProcess = {
   readonly send: (prompt: string, onText?: (text: string) => void) => Promise<AgentResult>;
   readonly sendQuiet: (prompt: string) => Promise<string>;
+  readonly inject: (message: string) => void;
   readonly kill: () => void;
   readonly alive: boolean;
   readonly sessionId: string;
@@ -116,7 +117,21 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
   let onEvent: ((event: StreamEvent) => void) | null = null;
   let onDeath: (() => void) | null = null;
 
+  // Message queue tracks the FIFO order of send/inject writes to stdin.
+  // The child processes messages sequentially, so events arrive in the same order.
+  // The queue head tells us whose turn it is: "send" events pass to onEvent,
+  // "inject" events are silently discarded. A result event ends each turn.
+  const messageQueue: Array<"send" | "inject"> = [];
+
   const { flush } = forEachEvent(proc.stdout!, (event) => {
+    const source = messageQueue[0];
+
+    if (source === "inject") {
+      if (event.type === "result") messageQueue.shift();
+      return;
+    }
+
+    if (event.type === "result") messageQueue.shift();
     if (onEvent) onEvent(event);
   });
 
@@ -124,11 +139,13 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
     isAlive = false;
     lastCloseCode = code ?? 1;
     flush();
+    messageQueue.length = 0;
     if (onDeath) onDeath();
   });
 
   proc.on("error", () => {
     isAlive = false;
+    messageQueue.length = 0;
     if (onDeath) onDeath();
   });
 
@@ -187,6 +204,7 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
         });
       };
 
+      messageQueue.push("send");
       writeMessage(prompt);
     });
   };
@@ -215,13 +233,25 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
         resolve(resultText);
       };
 
+      messageQueue.push("send");
       writeMessage(prompt);
     });
+  };
+
+  const inject = (message: string): void => {
+    if (!isAlive) return;
+    messageQueue.push("inject");
+    const framed =
+      `[ORCHESTRATOR GUIDANCE] The operator has provided the following guidance. ` +
+      `You are still operating within an orchestrated TDD workflow — incorporate this guidance ` +
+      `into your current task, do not switch to freeform mode.\n\n${message}`;
+    writeMessage(framed);
   };
 
   return {
     send,
     sendQuiet,
+    inject,
     kill: () => proc.kill("SIGTERM"),
     get alive() {
       return isAlive;

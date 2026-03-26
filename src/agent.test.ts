@@ -608,3 +608,188 @@ describe("createAgent + sendQuiet", () => {
     expect(result).toBe("");
   });
 });
+
+describe("createAgent + inject", () => {
+  it("writes NDJSON with ORCHESTRATOR GUIDANCE framing to agent stdin", async () => {
+    const script = await makeScript(
+      tempDir,
+      "agent.sh",
+      [
+        "COUNT=0",
+        "while IFS= read -r line; do",
+        "  COUNT=$((COUNT + 1))",
+        '  printf \'%s\\n\' "$line" >> "$0.stdin.log"',
+        '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+        "done",
+      ].join("\n"),
+    );
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      sessionId: "inject-test-session",
+      style: { label: "impl", color: "cyan", badge: "I" },
+    });
+
+    // First send to confirm process is alive
+    await agent.send("hello");
+
+    // Now inject guidance
+    agent.inject("focus on tests");
+
+    // Wait for the agent to receive and log the injected message
+    await agent.send("continue");
+
+    const { readFile } = await import("fs/promises");
+    const logged = await readFile(`${script}.stdin.log`, "utf-8");
+    const lines = logged.trim().split("\n");
+
+    // The second line should be the injected message (first was "hello", third was "continue")
+    const injected = JSON.parse(lines[1]);
+    expect(injected.type).toBe("user");
+    expect(injected.message.content).toContain("[ORCHESTRATOR GUIDANCE]");
+    expect(injected.message.content).toContain("focus on tests");
+    expect(injected.session_id).toBe("inject-test-session");
+
+    agent.kill();
+  });
+
+  it("inject during send does not let next send resolve with stale inject result", async () => {
+    // Race scenario: send("A") → inject("guidance") during flight → send("A") resolves →
+    // send("B") called immediately → child reads inject, emits result_inject → send("B")
+    // must NOT resolve with inject's result.
+    //
+    // The child tags each result with a counter so we can verify which result each send gets.
+    const script = await makeScript(
+      tempDir,
+      "agent.sh",
+      [
+        "COUNT=0",
+        "while IFS= read -r line; do",
+        "  COUNT=$((COUNT + 1))",
+        '  echo "{\\\"type\\\":\\\"assistant\\\",\\\"message\\\":{\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"reply $COUNT\\\"}]}}"',
+        '  echo "{\\\"type\\\":\\\"result\\\",\\\"result\\\":\\\"result-$COUNT\\\",\\\"duration_ms\\\":100,\\\"num_turns\\\":1}"',
+        "done",
+      ].join("\n"),
+    );
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: "impl", color: "cyan", badge: "I" },
+    });
+
+    // send("A") → result-1
+    const r1 = await agent.send("A");
+    expect(r1.resultText).toBe("result-1");
+
+    // inject between sends — child will process this next, producing result-2
+    agent.inject("mid-flight guidance");
+
+    // send("B") must get result-3 (its own), not result-2 (inject's)
+    const r2 = await agent.send("B");
+    expect(r2.resultText).toBe("result-3");
+    expect(r2.assistantText).toBe("reply 3");
+
+    agent.kill();
+  });
+
+  it("inject during in-flight send resolves send with its own result, not inject's", async () => {
+    // Core use case: operator injects while send() promise is still pending.
+    // Child responds to each stdin line with a tagged result.
+    const script = await makeScript(
+      tempDir,
+      "agent.sh",
+      [
+        "COUNT=0",
+        "while IFS= read -r line; do",
+        "  COUNT=$((COUNT + 1))",
+        "  sleep 0.05",
+        '  echo "{\\\"type\\\":\\\"assistant\\\",\\\"message\\\":{\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"reply $COUNT\\\"}]}}"',
+        '  echo "{\\\"type\\\":\\\"result\\\",\\\"result\\\":\\\"result-$COUNT\\\",\\\"duration_ms\\\":100,\\\"num_turns\\\":1}"',
+        "done",
+      ].join("\n"),
+    );
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: "impl", color: "cyan", badge: "I" },
+    });
+
+    // Start send without awaiting — inject while it's in-flight
+    const sendPromise = agent.send("A");
+
+    // Wait for child to start processing, then inject mid-flight
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    agent.inject("mid-flight guidance");
+
+    const result = await sendPromise;
+
+    // send must resolve with its own result (result-1), not inject's (result-2)
+    expect(result.exitCode).toBe(0);
+    expect(result.resultText).toBe("result-1");
+    expect(result.assistantText).toBe("reply 1");
+
+    // Let the inject result drain before cleanup
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    agent.kill();
+  });
+
+  it("multiple injects between sends are all drained correctly", async () => {
+    const script = await makeScript(
+      tempDir,
+      "agent.sh",
+      [
+        "COUNT=0",
+        "while IFS= read -r line; do",
+        "  COUNT=$((COUNT + 1))",
+        '  echo "{\\\"type\\\":\\\"assistant\\\",\\\"message\\\":{\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"reply $COUNT\\\"}]}}"',
+        '  echo "{\\\"type\\\":\\\"result\\\",\\\"result\\\":\\\"result-$COUNT\\\",\\\"duration_ms\\\":100,\\\"num_turns\\\":1}"',
+        "done",
+      ].join("\n"),
+    );
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: "impl", color: "cyan", badge: "I" },
+    });
+
+    // send("A") → result-1
+    const r1 = await agent.send("A");
+    expect(r1.resultText).toBe("result-1");
+
+    // Two injects between sends — child produces result-2 and result-3
+    agent.inject("guidance 1");
+    agent.inject("guidance 2");
+
+    // send("B") must get result-4 (its own), skipping both inject results
+    const r2 = await agent.send("B");
+    expect(r2.resultText).toBe("result-4");
+    expect(r2.assistantText).toBe("reply 4");
+
+    agent.kill();
+  });
+
+  it("does not throw when inject is called on a dead process", async () => {
+    const script = await makeScript(tempDir, "agent.sh", "exit 0");
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: "impl", color: "cyan", badge: "I" },
+    });
+
+    const waitForDeath = async () => {
+      for (let i = 0; i < 50; i++) {
+        if (!agent.alive) return;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    };
+    await waitForDeath();
+
+    expect(agent.alive).toBe(false);
+    expect(() => agent.inject("should be no-op")).not.toThrow();
+  });
+});
