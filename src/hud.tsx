@@ -93,12 +93,14 @@ let _askResolve: ((answer: string) => void) | null = null;
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 
-const RAINBOW = ["#ff0000", "#ff8800", "#ffff00", "#00ff00", "#0088ff", "#8800ff"] as const;
+const SHIMMER = ["#ffffff", "#cccccc", "#999999", "#cccccc"] as const;
 
-const RainbowText = ({ text, offset }: { text: string; offset: number }) => (
+const ShimmerText = ({ text, offset }: { text: string; offset: number }) => (
   <>
     {[...text].map((ch, i) => (
-      <Text key={i} color={RAINBOW[(i + offset) % RAINBOW.length]}>{ch}</Text>
+      <Text key={i} color={SHIMMER[(i + offset) % SHIMMER.length]}>
+        {ch}
+      </Text>
     ))}
   </>
 );
@@ -143,7 +145,7 @@ const App = () => {
   // Spinner only runs while activity is showing — avoids constant re-renders
   useEffect(() => {
     if (!activity) return;
-    const iv = setInterval(() => setSpinIdx((i) => (i + 1) % SPINNER.length), 120);
+    const iv = setInterval(() => setSpinIdx((i) => (i + 1) % SPINNER.length), 250);
     return () => clearInterval(iv);
   }, [activity]);
 
@@ -160,18 +162,27 @@ const App = () => {
         if (mode === "ask") {
           setMode("status");
           setInputText("");
-          if (_askResolve) { const r = _askResolve; _askResolve = null; r(text); }
+          if (_askResolve) {
+            const r = _askResolve;
+            _askResolve = null;
+            r(text);
+          }
         } else {
           const m = mode;
           setMode("status");
           setInputText("");
-          if (text && _interruptSubmitHandler) _interruptSubmitHandler(text, m as "guide" | "interrupt");
+          if (text && _interruptSubmitHandler)
+            _interruptSubmitHandler(text, m as "guide" | "interrupt");
         }
       } else if (key.escape) {
         if (mode === "ask") {
           setMode("status");
           setInputText("");
-          if (_askResolve) { const r = _askResolve; _askResolve = null; r(""); }
+          if (_askResolve) {
+            const r = _askResolve;
+            _askResolve = null;
+            r("");
+          }
         } else {
           setMode("status");
           setInputText("");
@@ -198,8 +209,10 @@ const App = () => {
     return (
       <>
         <Static items={items}>{(line, index) => <Text key={index}>{line}</Text>}</Static>
-        <Text>{" "}</Text>
-        <Text bold color="green">{padded}</Text>
+        <Text> </Text>
+        <Text bold color="green">
+          {padded}
+        </Text>
       </>
     );
   }
@@ -237,7 +250,12 @@ const App = () => {
           <Text dimColor>{"S: skip"}</Text>
         )}
         <Text dimColor>{" | Q: quit"}</Text>
-        {activity ? <Text>{`  ${SPINNER[spinIdx]} `}<RainbowText text={activity} offset={spinIdx} /></Text> : null}
+        {activity ? (
+          <Text>
+            {`  ${SPINNER[spinIdx]} `}
+            <ShimmerText text={activity} offset={spinIdx} />
+          </Text>
+        ) : null}
       </Text>
     </>
   );
@@ -262,10 +280,14 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
       startPrompt: () => {},
       setSkipping: () => {},
       setActivity: () => {},
-      askUser: (prompt) => new Promise((resolve) => {
-        const rl = require("readline").createInterface({ input: process.stdin, output: stdout });
-        rl.question(prompt, (answer: string) => { rl.close(); resolve(answer); });
-      }),
+      askUser: (prompt) =>
+        new Promise((resolve) => {
+          const rl = require("readline").createInterface({ input: process.stdin, output: stdout });
+          rl.question(prompt, (answer: string) => {
+            rl.close();
+            resolve(answer);
+          });
+        }),
     };
   }
 
@@ -333,9 +355,10 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
     setActivity: (text) => {
       if (_setActivity) _setActivity(text);
     },
-    askUser: (prompt) => new Promise((resolve) => {
-      _askResolve = resolve;
-      if (_askPrompt) _askPrompt(prompt);
-    }),
+    askUser: (prompt) =>
+      new Promise((resolve) => {
+        _askResolve = resolve;
+        if (_askPrompt) _askPrompt(prompt);
+      }),
   };
 };
