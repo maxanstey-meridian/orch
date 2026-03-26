@@ -458,9 +458,8 @@ export const runFingerprint = async (opts: FingerprintOptions): Promise<Fingerpr
         const brief = tryRead(briefPath).trim();
         const cachedProfile = tryParseJson(tryRead(profilePath));
         if (brief && cachedProfile) {
-          const profile: ProjectProfile = {
-            ...(typeof cachedProfile.stack === "string" ? { stack: cachedProfile.stack } : {}),
-          };
+          const profile: ProjectProfile =
+            typeof cachedProfile.stack === "string" ? { stack: cachedProfile.stack } : {};
           return { brief, profile };
         }
       }

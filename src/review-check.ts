@@ -17,6 +17,6 @@ const CLEAN_PATTERNS = [
 export const isCleanReview = (text: string): boolean => {
   const trimmed = text.trim();
   if (!trimmed) return true;
-  if (trimmed === "NO_ISSUES_FOUND") return true;
+  if (trimmed.includes("REVIEW_CLEAN") || trimmed.includes("NO_ISSUES_FOUND")) return true;
   return CLEAN_PATTERNS.some((p) => p.test(trimmed));
 };

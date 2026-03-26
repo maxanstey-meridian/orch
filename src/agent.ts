@@ -15,6 +15,7 @@ export type AgentResult = {
   readonly resultText: string;
   readonly needsInput: boolean;
   readonly sessionId: string;
+  readonly planText?: string;
 };
 
 type ToolUseBlock = {
@@ -208,6 +209,7 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
 
       const assistantChunks: string[] = [];
       let resultText = "";
+      let planText: string | undefined;
 
       onEvent = (event) => {
         if (event.type === "assistant") {
@@ -215,8 +217,12 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
             if (block.type === "text" && block.text) {
               assistantChunks.push(block.text);
               if (onText) onText(block.text);
-            } else if (block.type === "tool_use" && onToolUse) {
-              onToolUse(summarizeToolUse(block as ToolUseBlock));
+            } else if (block.type === "tool_use") {
+              const tb = block as ToolUseBlock;
+              if (tb.name === "ExitPlanMode" && typeof tb.input.plan === "string") {
+                planText = tb.input.plan;
+              }
+              if (onToolUse) onToolUse(summarizeToolUse(tb));
             }
           }
         } else if (event.type === "result") {
@@ -230,6 +236,7 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
             resultText,
             needsInput: detectQuestion(assistantText),
             sessionId,
+            planText,
           });
         }
       };
@@ -244,6 +251,7 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
           resultText,
           needsInput: false,
           sessionId,
+          planText,
         });
       };
 
