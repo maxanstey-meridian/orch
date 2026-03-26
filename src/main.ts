@@ -31,7 +31,7 @@ import {
 import { runFingerprint, wrapBrief } from "./fingerprint.js";
 import { runInit, profileToMarkdown, createAsk } from "./init.js";
 import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
-import { captureRef, hasChanges, getStatus, hasDirtyTree } from "./git.js";
+import { captureRef, hasChanges, getStatus, hasDirtyTree, stashSave, stashPop } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
 import { parseVerifyResult } from "./verify.js";
 import { isCleanReview } from "./review-check.js";
@@ -1009,11 +1009,12 @@ const main = async () => {
   };
 
   // 7. Signal handlers + cleanup
-  const cleanup = () => {
+  const cleanup = async () => {
     hud.teardown();
     tddAgent.kill();
     reviewAgent.kill();
     if (_rl) _rl.close();
+    if (didStash) await stashPop(cwd);
   };
   process.on("SIGINT", () => {
     cleanup();
@@ -1084,6 +1085,10 @@ const main = async () => {
     );
   }
   log("");
+
+  // Stash any unrelated working tree changes to protect them from the TDD bot
+  const didStash = await stashSave(cwd);
+  if (didStash) log(`${ts()} ${a.dim}Stashed working tree changes for safekeeping${a.reset}`);
 
   const runBaseSha = await captureRef(cwd);
   const planContent = await readFile(planPath, "utf-8");
@@ -1687,7 +1692,7 @@ Be concrete and specific. No filler.`,
   logSection(`${a.green}✅ All groups complete + final review done${a.reset}`);
   const status = await getStatus(cwd);
   log(`\n${status}`);
-  cleanup();
+  await cleanup();
   await clearState(stateFile);
 };
 

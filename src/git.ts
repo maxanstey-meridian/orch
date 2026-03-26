@@ -28,3 +28,18 @@ export const hasDirtyTree = async (cwd: string): Promise<boolean> => {
   const status = await git(["status", "--porcelain"], cwd);
   return status.length > 0;
 };
+
+export const stashSave = async (cwd: string): Promise<boolean> => {
+  const dirty = await hasDirtyTree(cwd);
+  if (!dirty) return false;
+  await git(["stash", "push", "-u", "-m", "orch: protect working tree"], cwd);
+  return true;
+};
+
+export const stashPop = async (cwd: string): Promise<void> => {
+  try {
+    await git(["stash", "pop"], cwd);
+  } catch {
+    // stash pop can fail if the stash conflicts — leave it in the stash list
+  }
+};
