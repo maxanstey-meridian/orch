@@ -397,6 +397,67 @@ describe("planThenExecute", () => {
     expect(tddAgent.send).not.toHaveBeenCalled();
   });
 
+  it("auto-accepts after max replans (caller loop simulation)", async () => {
+    const { planThenExecute } = await import("../src/main.js");
+
+    const MAX_REPLANS = 2;
+    const askUser = vi.fn().mockResolvedValue("r");
+    let replanAttempts = 0;
+    let lastResult: Awaited<ReturnType<typeof planThenExecute>>;
+
+    do {
+      const planAgent = makeAgent({
+        send: vi.fn().mockResolvedValue(makeResult({ planText: "the plan" })),
+      });
+      const tddAgent = makeAgent();
+
+      lastResult = await planThenExecute({
+        sliceContent: "slice",
+        planAgent,
+        tddAgent,
+        brief: "",
+        makePlanStreamer: () => noopStreamer,
+        makeExecuteStreamer: () => noopStreamer,
+        withInterrupt: (_agent, fn) => fn(),
+        isSkipped: () => false,
+        isHardInterrupted: () => null,
+        onToolUse: () => {},
+        log: () => {},
+        noInteraction: false,
+        askUser,
+      });
+      replanAttempts++;
+    } while (lastResult.replan && replanAttempts < MAX_REPLANS);
+
+    // After 2 replan attempts, caller should auto-accept by calling without askUser
+    expect(lastResult.replan).toBe(true);
+    expect(replanAttempts).toBe(2);
+
+    // Auto-accept: call with noInteraction to bypass confirmation
+    const finalPlanAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText: "final plan" })),
+    });
+    const finalTddAgent = makeAgent();
+    const finalResult = await planThenExecute({
+      sliceContent: "slice",
+      planAgent: finalPlanAgent,
+      tddAgent: finalTddAgent,
+      brief: "",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => false,
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log: () => {},
+      noInteraction: true,
+    });
+
+    expect(finalResult.replan).toBeUndefined();
+    expect(finalResult.skipped).toBe(false);
+    expect(finalTddAgent.send).toHaveBeenCalledOnce();
+  });
+
   it("returns hardInterrupt guidance when execute phase is interrupted", async () => {
     const { planThenExecute } = await import("../src/main.js");
 

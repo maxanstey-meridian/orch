@@ -443,6 +443,7 @@ type PlanThenExecuteDeps = {
   log: (...args: unknown[]) => void;
   noInteraction?: boolean;
   askUser?: (prompt: string) => Promise<string>;
+  onPlanReady?: () => void;
 };
 
 type PlanThenExecuteResult = {
@@ -486,6 +487,7 @@ export const planThenExecute = async (
     const MAX_PREVIEW = 30;
     const preview = planLines.slice(0, MAX_PREVIEW).join("\n");
     deps.log(`${BOT_PLAN.badge} plan ready`);
+    deps.onPlanReady?.();
     deps.log(preview);
     if (planLines.length > MAX_PREVIEW) {
       deps.log(`... (truncated, ${planLines.length} lines)`);
@@ -502,7 +504,7 @@ export const planThenExecute = async (
 
   // ── Execute phase ──
   deps.log(`${BOT_TDD.badge} executing plan...`);
-  let executePrompt = operatorGuidance
+  const executePrompt = operatorGuidance
     ? `Operator guidance: ${operatorGuidance}\n\nExecute this plan:\n\n${plan}`
     : `Execute this plan:\n\n${plan}`;
   const es = deps.makeExecuteStreamer();
@@ -1040,15 +1042,13 @@ const main = async () => {
     tddAgent.kill();
     reviewAgent.kill();
     if (_rl) _rl.close();
-    if (didStash) await stashPop(cwd);
+    if (didStash) await stashPop(cwd, log);
   };
   process.on("SIGINT", () => {
-    cleanup();
-    process.exit(130);
+    void cleanup().finally(() => process.exit(130));
   });
   process.on("SIGTERM", () => {
-    cleanup();
-    process.exit(143);
+    void cleanup().finally(() => process.exit(143));
   });
 
   // Closure over mutable `state` — always saves the latest value
@@ -1169,8 +1169,6 @@ const main = async () => {
       printSliceIntro(slice);
       hud.update({
         currentSlice: { number: slice.number },
-        activeAgent: "TDD",
-        activeAgentActivity: "implementing...",
       });
 
       const doSkip = async () => {
@@ -1228,9 +1226,30 @@ const main = async () => {
             log,
             noInteraction,
             askUser: noInteraction ? undefined : hud.askUser,
+            onPlanReady: () => hud.update({ activeAgent: "PLN", activeAgentActivity: "plan ready" }),
           });
           replanAttempts++;
-        } while (pteResult.replan && replanAttempts <= MAX_REPLANS);
+        } while (pteResult.replan && replanAttempts < MAX_REPLANS);
+
+        // After max replans, auto-accept: re-run planThenExecute without askUser
+        if (pteResult.replan) {
+          log(`${ts()} ${a.yellow}Max replans reached — auto-accepting plan${a.reset}`);
+          const planAgent = spawnPlanAgentWithSkill();
+          pteResult = await planThenExecute({
+            sliceContent: slice.content,
+            planAgent,
+            tddAgent,
+            brief: tddFirstMessage.value ? brief : "",
+            makePlanStreamer: () => boundMakeStreamer(BOT_PLAN),
+            makeExecuteStreamer: () => boundMakeStreamer(BOT_TDD),
+            withInterrupt,
+            isSkipped: () => sliceSkipFlag,
+            isHardInterrupted: () => hardInterruptPending,
+            onToolUse,
+            log,
+            noInteraction: true,
+          });
+        }
 
         if (pteResult.skipped) {
           await doSkip();
