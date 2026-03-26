@@ -180,6 +180,70 @@ describe("CLI flag wiring", () => {
     expect(r.status).not.toBe(0);
   });
 
+  it("--plan + --work errors with clear message", async () => {
+    initGitRepo(tempDir);
+    await writeFile(join(tempDir, "inventory.md"), "# Feature Inventory\n- Auth\n");
+
+    const r = runMain(
+      ["--plan", join(tempDir, "inventory.md"), "--work"],
+      tempDir,
+    );
+
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("--plan");
+    expect(stderr).toContain("--work");
+    expect(r.status).not.toBe(0);
+  });
+
+  it("--plan without --plan-only also takes the generate-and-exit path", async () => {
+    initGitRepo(tempDir);
+    // Provide a file that IS already a plan — skips plan generation entirely
+    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
+
+    // With --plan-only: exits with "Plan written to" (existing behavior)
+    const withFlag = runMain(
+      ["--plan", join(tempDir, "plan.md"), "--skip-fingerprint", "--no-interaction", "--plan-only"],
+      tempDir,
+    );
+    const withFlagOut = strip((withFlag.stdout ?? "") + (withFlag.stderr ?? ""));
+    expect(withFlagOut).toContain("Plan written to");
+
+    // Without --plan-only: should now also exit with "Plan written to"
+    const withoutFlag = runMain(
+      ["--plan", join(tempDir, "plan.md"), "--skip-fingerprint", "--no-interaction"],
+      tempDir,
+    );
+    const withoutFlagOut = strip((withoutFlag.stdout ?? "") + (withoutFlag.stderr ?? ""));
+    expect(withoutFlagOut).toContain("Plan written to");
+    expect(withoutFlag.status).toBe(0);
+  });
+
+  it("--plan-only prints deprecation warning but still works", async () => {
+    initGitRepo(tempDir);
+    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
+
+    const r = runMain(
+      ["--plan", join(tempDir, "plan.md"), "--skip-fingerprint", "--no-interaction", "--plan-only"],
+      tempDir,
+    );
+
+    const combined = strip((r.stdout ?? "") + (r.stderr ?? ""));
+    expect(combined).toContain("deprecated");
+    expect(combined).toContain("Plan written to");
+    expect(r.status).toBe(0);
+  });
+
+  it("no-flags error mentions --plan and --work", async () => {
+    initGitRepo(tempDir);
+
+    const r = runMain([], tempDir);
+
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("--plan");
+    expect(stderr).toContain("--work");
+    expect(r.status).not.toBe(0);
+  });
+
   it("--resume with no path and no existing plan files exits with error", async () => {
     initGitRepo(tempDir);
 

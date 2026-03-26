@@ -6,8 +6,8 @@
  * No dep injection, no framework — reads top-to-bottom.
  *
  * Usage:
- *   npx ts-node src/main.ts --plan inventory.md              # generate plan from inventory
- *   npx ts-node src/main.ts --plan inventory.md --plan-only  # generate plan only, don't orchestrate
+ *   npx ts-node src/main.ts --plan inventory.md              # generate plan and exit
+ *   npx ts-node src/main.ts --work                            # execute last generated plan
  *   npx ts-node src/main.ts --resume                          # resume last generated plan
  *   npx ts-node src/main.ts --resume plan.md                  # resume specific plan
  *   npx ts-node src/main.ts --resume --auto                   # no inter-group prompts
@@ -667,6 +667,10 @@ const main = async () => {
   const resumeNext = resumeIdx !== -1 ? args[resumeIdx + 1] : undefined;
   const resumeRaw = resumeNext && !resumeNext.startsWith("-") ? resumeNext : undefined;
   const planOnly = args.includes("--plan-only");
+  if (planOnly) {
+    console.error(`${a.yellow}Warning: --plan-only is deprecated. --plan now generates and exits by default.${a.reset}`);
+  }
+  const workMode = args.includes("--work");
   const auto = args.includes("--auto");
   const skipFingerprint = args.includes("--skip-fingerprint");
   const noInteraction = args.includes("--no-interaction");
@@ -683,9 +687,13 @@ const main = async () => {
     console.error("--init and --group are mutually exclusive.");
     process.exit(1);
   }
-  if (!inventoryPath && !resumeMode) {
+  if (inventoryPath && workMode) {
+    console.error("--plan and --work are mutually exclusive. Use --plan to generate, then --work to execute.");
+    process.exit(1);
+  }
+  if (!inventoryPath && !resumeMode && !workMode) {
     console.error(
-      "Provide --plan <inventory> to generate a plan, or --resume to continue an existing one.",
+      "Provide --plan <inventory> to generate a plan, or --work to execute an existing one, or --resume to continue.",
     );
     process.exit(1);
   }
@@ -801,11 +809,11 @@ const main = async () => {
     log(`${a.dim}State cleared.${a.reset}`);
   }
 
-  if (planOnly) {
+  if (inventoryPath && !resumeMode) {
     if (_rl) _rl.close();
     // Flush buffered output + final message directly (no HUD in this path)
     for (const line of earlyLog) origLog(line);
-    origLog(`Plan written to ${planPath} — review and run with --resume`);
+    origLog(`Plan written to ${planPath} — review and run with --work`);
     process.exit(0);
   }
 
