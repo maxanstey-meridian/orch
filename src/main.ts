@@ -666,8 +666,7 @@ const main = async () => {
   const resumeIdx = args.indexOf("--resume");
   const resumeNext = resumeIdx !== -1 ? args[resumeIdx + 1] : undefined;
   const resumeRaw = resumeNext && !resumeNext.startsWith("-") ? resumeNext : undefined;
-  const planOnly = args.includes("--plan-only");
-  if (planOnly) {
+  if (args.includes("--plan-only")) {
     console.error(`${a.yellow}Warning: --plan-only is deprecated. --plan now generates and exits by default.${a.reset}`);
   }
   const workMode = args.includes("--work");
@@ -743,8 +742,8 @@ const main = async () => {
   //    (uses currentPlanId from state loaded in step 3)
   let planPath: string;
 
-  if (resumeMode) {
-    // --resume [path]: use explicit path, or find existing plan
+  if (resumeMode || workMode) {
+    // --resume [path] or --work: use explicit path, or find existing plan
     if (resumeRaw) {
       planPath = resolve(resumeRaw);
     } else if (statePlanPath && existsSync(statePlanPath)) {
@@ -809,7 +808,9 @@ const main = async () => {
     log(`${a.dim}State cleared.${a.reset}`);
   }
 
-  if (inventoryPath && !resumeMode) {
+  // Generate-only mode: --plan without --work or --resume
+  const generateOnly = !!inventoryPath && !workMode && !resumeMode;
+  if (generateOnly) {
     if (_rl) _rl.close();
     // Flush buffered output + final message directly (no HUD in this path)
     for (const line of earlyLog) origLog(line);
