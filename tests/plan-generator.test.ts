@@ -3,9 +3,9 @@ import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { generatePlan, isPlanFormat } from "./plan-generator.js";
-import { parsePlanText } from "./plan-parser.js";
-import type { AgentProcess, AgentResult } from "./agent.js";
+import { generatePlan, isPlanFormat } from "../src/plan-generator.js";
+import { parsePlanText } from "../src/plan-parser.js";
+import type { AgentProcess, AgentResult } from "../src/agent.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

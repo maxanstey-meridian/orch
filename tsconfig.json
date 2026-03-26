@@ -9,6 +9,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "declaration": true,
+    "jsx": "react-jsx",
     "sourceMap": true,
     "paths": {
       "@/*": ["./src/*"]

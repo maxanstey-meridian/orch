@@ -46,15 +46,22 @@ export const runInit = async (
     if (!language) return null;
 
     const framework = await ask("Framework? (e.g. NestJS, Express, ASP.NET — or blank for none) ");
-    const style = await ask("Coding style preferences? (naming, architecture, patterns — free text) ");
+    const style = await ask(
+      "Coding style preferences? (naming, architecture, patterns — free text) ",
+    );
     const linting = await ask("Linting/formatting tools? (e.g. oxlint + oxfmt, eslint, none) ");
-    const refsRaw = await ask("Paths to reference files? (comma-separated, e.g. ../CLAUDE.md, ./styleguide.md) ");
+    const refsRaw = await ask(
+      "Paths to reference files? (comma-separated, e.g. ../CLAUDE.md, ./styleguide.md) ",
+    );
     const extraContext = await ask("Any other context for agents? (free text) ");
 
     // Filter reference paths — resolve against cwd, store absolute paths
     let references: string[] | undefined;
     if (refsRaw) {
-      const candidates = refsRaw.split(",").map((p) => p.trim()).filter(Boolean);
+      const candidates = refsRaw
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean);
       const valid: string[] = [];
       for (const p of candidates) {
         const resolved = resolve(cwd, p);

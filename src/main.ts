@@ -21,7 +21,7 @@
 import { resolve } from "path";
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { readFile } from "fs/promises";
-import { parsePlan, type Group, type Slice } from "./plan-parser.js";
+import { parsePlan, type Slice } from "./plan-parser.js";
 import { generatePlan, isPlanFormat, GENERATED_PLAN_FILE } from "./plan-generator.js";
 import { loadState, saveState, clearState, type OrchestratorState } from "./state.js";
 import { runFingerprint, wrapBrief } from "./fingerprint.js";
@@ -34,10 +34,8 @@ import { isCleanReview } from "./review-check.js";
 
 import { detectCreditExhaustion } from "./credit-detection.js";
 import { measureDiff, shouldReview } from "./review-threshold.js";
-import { createInterruptHandler } from "./interrupt.js";
-import { createHud } from "./hud.js";
-import { createSkipHandler } from "./skip-handler.js";
-import { createStdinDispatcher } from "./stdin-dispatcher.js";
+// interrupt + skip + stdin-dispatcher replaced by HUD keyboard handling (ink useInput)
+import { createHud, type WriteFn } from "./hud.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -126,7 +124,12 @@ const spawnAgent = (style: AgentStyle, systemPrompt?: string): AgentProcess =>
 
 type Streamer = ((text: string) => void) & { flush: () => void };
 
-const makeStreamer = (style: AgentStyle): Streamer => {
+const makeStreamer = (
+  style: AgentStyle,
+  writeFn: WriteFn = (t) => {
+    process.stdout.write(t);
+  },
+): Streamer => {
   const gutter = `${style.color}│${a.reset} `;
   const wrapIndent = `${style.color}│${a.reset}   `;
   const maxWidth = (process.stdout.columns || 120) - 4;
@@ -146,12 +149,12 @@ const makeStreamer = (style: AgentStyle): Streamer => {
   const write = (text: string) => {
     // Each assistant event is a full block — add separator if needed
     if (!atLineStart) {
-      process.stdout.write("\n");
+      writeFn("\n");
       atLineStart = true;
       blankLines = 1;
     }
     if (blankLines < 2) {
-      process.stdout.write(`${gutter}\n`);
+      writeFn(`${gutter}\n`);
       blankLines++;
     }
 
@@ -160,23 +163,23 @@ const makeStreamer = (style: AgentStyle): Streamer => {
 
     for (const word of words) {
       if (atLineStart) {
-        process.stdout.write(gutter);
+        writeFn(gutter);
         atLineStart = false;
         col = 0;
       }
       if (word === "\n") {
-        process.stdout.write("\n");
+        writeFn("\n");
         atLineStart = true;
         blankLines++;
         col = 0;
       } else if (word.includes("\n")) {
         for (const ch of word) {
           if (atLineStart) {
-            process.stdout.write(gutter);
+            writeFn(gutter);
             atLineStart = false;
             col = 0;
           }
-          process.stdout.write(ch);
+          writeFn(ch);
           if (ch === "\n") {
             atLineStart = true;
             blankLines++;
@@ -187,13 +190,13 @@ const makeStreamer = (style: AgentStyle): Streamer => {
           }
         }
       } else if (col + word.length > maxWidth && col > 0 && word.trim()) {
-        process.stdout.write("\n");
-        process.stdout.write(wrapIndent);
-        process.stdout.write(word);
+        writeFn("\n");
+        writeFn(wrapIndent);
+        writeFn(word);
         col = 2 + word.length;
         blankLines = 0;
       } else {
-        process.stdout.write(word);
+        writeFn(word);
         col += word.length;
         blankLines = 0;
       }
@@ -202,7 +205,7 @@ const makeStreamer = (style: AgentStyle): Streamer => {
 
   write.flush = () => {
     if (!atLineStart) {
-      process.stdout.write("\n");
+      writeFn("\n");
       atLineStart = true;
     }
   };
@@ -219,8 +222,13 @@ const withBrief = (prompt: string, brief: string): string => {
 
 // ─── Prompt helper ───────────────────────────────────────────────────────────
 
-const rl = createAsk();
-const ask = rl.ask;
+// Lazy init — readline on stdout interferes with ink's cursor tracking
+let _rl: ReturnType<typeof createAsk> | null = null;
+const getRl = () => {
+  if (!_rl) _rl = createAsk();
+  return _rl;
+};
+const ask = (prompt: string) => getRl().ask(prompt);
 
 // ─── Interactive follow-up ───────────────────────────────────────────────────
 
@@ -228,6 +236,7 @@ const followUpIfNeeded = async (
   result: AgentResult,
   agent: AgentProcess,
   noInteraction: boolean,
+  createStreamer: (style: AgentStyle) => Streamer = (style) => makeStreamer(style),
   maxFollowUps = 3,
 ): Promise<AgentResult> => {
   let current = result;
@@ -237,7 +246,7 @@ const followUpIfNeeded = async (
     log(`\n${ts()} ${a.yellow}Bot is asking for input ↑${a.reset}`);
     const answer = await ask(`${a.bold}Your response${a.reset} (or Enter to skip): `);
 
-    const s = makeStreamer(agent.style);
+    const s = createStreamer(agent.style);
     if (!answer.trim()) {
       log(`${ts()} ${a.dim}skipped — telling bot to proceed autonomously${a.reset}`);
       current = await agent.send(
@@ -341,7 +350,9 @@ export const commitSweep = async (deps: CommitSweepDeps): Promise<void> => {
   if (result.exitCode === 0) {
     deps.log(`${ts()} ${a.green}✓ commit sweep complete${a.reset}`);
   } else {
-    deps.log(`${ts()} ${a.yellow}⚠ commit sweep agent failed (exit ${result.exitCode}) — uncommitted changes may remain${a.reset}`);
+    deps.log(
+      `${ts()} ${a.yellow}⚠ commit sweep agent failed (exit ${result.exitCode}) — uncommitted changes may remain${a.reset}`,
+    );
   }
 };
 
@@ -487,6 +498,7 @@ const reviewFixLoop = async (
   testCommand: string | undefined,
   exitOnCreditExhaustion: (result: AgentResult, agent: AgentProcess) => Promise<void>,
   withInterrupt: <T>(agent: AgentProcess, fn: () => Promise<T>) => Promise<T>,
+  createStreamer: (style: AgentStyle) => Streamer,
   baseSha?: string,
 ): Promise<void> => {
   let reviewSha = baseSha ?? (await captureRef(cwd));
@@ -504,7 +516,7 @@ const reviewFixLoop = async (
     const reviewPrompt = reviewFirstMessage.value
       ? withBrief(buildReviewPrompt(content, reviewSha), brief)
       : buildReviewPrompt(content, reviewSha);
-    let s = makeStreamer(BOT_REVIEW);
+    let s = createStreamer(BOT_REVIEW);
     const reviewResult = await withInterrupt(reviewAgent, () => reviewAgent.send(reviewPrompt, s));
     s.flush();
     await exitOnCreditExhaustion(reviewResult, reviewAgent);
@@ -519,13 +531,13 @@ const reviewFixLoop = async (
     log(`${ts()} ${BOT_TDD.badge} ${a.cyan}fixing review feedback...${a.reset}`);
     const preFixSha = await captureRef(cwd);
     const fixPrompt = buildTddPrompt(content, reviewText);
-    s = makeStreamer(BOT_TDD);
+    s = createStreamer(BOT_TDD);
     const fixResult = await withInterrupt(tddAgent, () =>
       tddAgent.send(tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt, s),
     );
     s.flush();
     tddFirstMessage.value = false;
-    await followUpIfNeeded(fixResult, tddAgent, noInteraction);
+    await followUpIfNeeded(fixResult, tddAgent, noInteraction, createStreamer);
 
     if (!(await hasChanges(cwd, preFixSha))) {
       log(`${ts()} ${a.dim}TDD bot made no changes — review cycle complete${a.reset}`);
@@ -538,7 +550,6 @@ const reviewFixLoop = async (
         `${ts()} ${a.yellow}⚠ Tests failed after review fix cycle ${cycle}. Continuing...${a.reset}`,
       );
     }
-
   }
 };
 
@@ -595,7 +606,9 @@ const main = async () => {
     process.exit(1);
   }
   if (!inventoryPath && !resumeMode) {
-    console.error("Provide --plan <inventory> to generate a plan, or --resume to continue an existing one.");
+    console.error(
+      "Provide --plan <inventory> to generate a plan, or --resume to continue an existing one.",
+    );
     process.exit(1);
   }
 
@@ -615,6 +628,13 @@ const main = async () => {
       writeFileSync(resolve(orchDir, "init-profile.md"), profileToMarkdown(initProfile));
     }
   }
+
+  // Buffer log output until ink mounts — any pre-ink console.log breaks cursor tracking
+  const earlyLog: string[] = [];
+  const origLog = log;
+  log = (...args: unknown[]) => {
+    earlyLog.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
+  };
 
   const { brief, profile } = await runFingerprint({
     cwd,
@@ -670,8 +690,10 @@ const main = async () => {
   }
 
   if (planOnly) {
-    rl.close();
-    log(`Plan written to ${planPath} — review and run with --resume`);
+    if (_rl) _rl.close();
+    // Flush buffered output + final message directly (no HUD in this path)
+    for (const line of earlyLog) origLog(line);
+    origLog(`Plan written to ${planPath} — review and run with --resume`);
     process.exit(0);
   }
 
@@ -684,7 +706,11 @@ const main = async () => {
   const hud = createHud(isTTY);
   let globalSlicesCompleted = 0;
   hud.update({ totalSlices, completedSlices: 0, startTime: Date.now() });
-  log = hud.wrapLog(log);
+  log = hud.wrapLog(origLog);
+  // Replay buffered pre-ink output through ink so it knows about those lines
+  for (const line of earlyLog) log(line);
+  const hudWriter = hud.createWriter();
+  const boundMakeStreamer = (style: AgentStyle): Streamer => makeStreamer(style, hudWriter);
 
   // 5. Load state
   if (resetState) {
@@ -699,37 +725,58 @@ const main = async () => {
   const tddFirstMessage = { value: true };
   const reviewFirstMessage = { value: true };
 
-  // 6b. Shared stdin dispatcher — single raw mode owner for interrupt + skip.
+  // 6b. Keyboard handling — all via ink's useInput in the HUD
   const interactive = !noInteraction && isTTY;
-  const stdinDispatcher = interactive ? createStdinDispatcher() : null;
-
-  // 6c. Interrupt handler — lets operator inject guidance mid-agent-run.
-  // Callback is set once via a mutable ref; when agents are respawned at group
-  // boundaries the ref is updated and the callback follows automatically.
-  const interrupt = stdinDispatcher
-    ? createInterruptHandler(false, { dispatcher: stdinDispatcher, stdout: process.stdout })
-    : createInterruptHandler(true);
   let interruptTarget: AgentProcess | null = null;
-  interrupt.onInterrupt((msg) => { if (interruptTarget) interruptTarget.inject(msg); });
+  let sliceSkippable = false;
+  let sliceSkipFlag = false;
+
+  let hardInterruptPending: string | null = null;
+
+  if (interactive) {
+    hud.onKey((key) => {
+      if (key === "g" && interruptTarget) {
+        hud.startPrompt("guide");
+      } else if (key === "i" && interruptTarget) {
+        hud.startPrompt("interrupt");
+      } else if (key === "s" && sliceSkippable) {
+        sliceSkipFlag = !sliceSkipFlag;
+        hud.setSkipping(sliceSkipFlag);
+      } else if (key === "q" || key === "\x03") {
+        cleanup();
+        process.exit(130);
+      }
+    });
+    hud.onInterruptSubmit((text, mode) => {
+      if (!interruptTarget) return;
+      if (mode === "guide") {
+        // Soft: inject guidance, agent sees it on next turn
+        interruptTarget.inject(text);
+        log(`${ts()} ${a.cyan}💬 Guidance sent (will apply on next turn)${a.reset}`);
+      } else {
+        // Hard: store message, kill agent — respawn logic picks it up
+        hardInterruptPending = text;
+        interruptTarget.kill();
+        log(`${ts()} ${a.yellow}⚡ Interrupting agent...${a.reset}`);
+      }
+    });
+  }
 
   const withInterrupt = async <T>(agent: AgentProcess, fn: () => Promise<T>): Promise<T> => {
     interruptTarget = agent;
-    interrupt.enable();
     try {
       return await fn();
     } finally {
-      interrupt.disable();
+      interruptTarget = null;
     }
   };
 
-  // 7. Signal handlers
+  // 7. Signal handlers + cleanup
   const cleanup = () => {
     hud.teardown();
-    interrupt.disable();
-    stdinDispatcher?.dispose();
     tddAgent.kill();
     reviewAgent.kill();
-    rl.close();
+    if (_rl) _rl.close();
   };
   process.on("SIGINT", () => {
     cleanup();
@@ -772,7 +819,8 @@ const main = async () => {
   log(`   ${BOT_TDD.badge} ${a.dim}persistent (${tddAgent.sessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_REVIEW.badge} ${a.dim}persistent (${reviewAgent.sessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
-  if (interactive) log(`   ${a.dim}Press${a.reset} ${a.bold}Ctrl+S${a.reset} ${a.dim}to skip current slice${a.reset}`);
+  if (interactive)
+    log(`   ${a.dim}Press${a.reset} ${a.bold}S${a.reset} ${a.dim}to skip current slice${a.reset}`);
 
   // 9. Group list with start marker
   const startIdx = groupFilter
@@ -825,7 +873,10 @@ const main = async () => {
         );
         groupSlicesCompleted++;
         globalSlicesCompleted++;
-        hud.update({ completedSlices: globalSlicesCompleted, groupCompleted: groupSlicesCompleted });
+        hud.update({
+          completedSlices: globalSlicesCompleted,
+          groupCompleted: groupSlicesCompleted,
+        });
         continue;
       }
 
@@ -835,6 +886,30 @@ const main = async () => {
         activeAgent: "TDD",
         activeAgentActivity: "implementing...",
       });
+
+      // Skip signal — active for the entire slice, not just TDD.
+      // Pressing S toggles skip; checked after each async operation.
+      sliceSkippable = true;
+      sliceSkipFlag = false;
+
+      const doSkip = async () => {
+        sliceSkippable = false;
+        sliceSkipFlag = false;
+        hud.setSkipping(false);
+        log(`\n${ts()} ${a.yellow}⏭ Slice ${slice.number} skipped by operator${a.reset}`);
+        tddAgent.kill();
+        tddAgent = spawnAgent(BOT_TDD, tddSkill);
+        tddFirstMessage.value = true;
+        reviewFirstMessage.value = true;
+        state = { ...state, lastCompletedSlice: slice.number };
+        await saveState(resolve(cwd, CONFIG.stateFile), state);
+        groupSlicesCompleted++;
+        globalSlicesCompleted++;
+        hud.update({
+          completedSlices: globalSlicesCompleted,
+          groupCompleted: groupSlicesCompleted,
+        });
+      };
 
       // Resume support: TDD done but review was interrupted
       const alreadyImplemented =
@@ -851,44 +926,34 @@ const main = async () => {
 
         const tddPrompt = buildTddPrompt(slice.content);
         const prompt = tddFirstMessage.value ? withBrief(tddPrompt, brief) : tddPrompt;
-        const s = makeStreamer(BOT_TDD);
+        const s = boundMakeStreamer(BOT_TDD);
 
-        // Race TDD agent against skip handler — Ctrl+S skips current slice.
-        // skip.cancel() must fire synchronously when TDD wins to prevent a
-        // late Ctrl+S from triggering after the agent already finished.
-        const skip = stdinDispatcher
-          ? createSkipHandler(true, { dispatcher: stdinDispatcher, suppress: interrupt })
-          : createSkipHandler(false);
-        const tddPromise = withInterrupt(tddAgent, () => tddAgent.send(prompt, s));
+        let tddResult = await withInterrupt(tddAgent, () => tddAgent.send(prompt, s));
+        s.flush();
 
-        const raceResult = await Promise.race([
-          tddPromise.then((r) => { skip.cancel(); return { kind: "done" as const, result: r }; }),
-          skip.waitForSkip().then((skipped) => ({ kind: "skip" as const, skipped })),
-        ]);
-
-        if (raceResult.kind === "skip" && raceResult.skipped) {
-          s.flush();
-          log(`\n${ts()} ${a.yellow}⏭ Slice ${slice.number} skipped by operator${a.reset}`);
-          tddAgent.kill();
-          tddAgent = spawnAgent(BOT_TDD, tddSkill);
-          tddFirstMessage.value = true;
-          reviewFirstMessage.value = true;
-          state = { ...state, lastCompletedSlice: slice.number };
-          await saveState(resolve(cwd, CONFIG.stateFile), state);
-          groupSlicesCompleted++;
-          globalSlicesCompleted++;
-          hud.update({ completedSlices: globalSlicesCompleted, groupCompleted: groupSlicesCompleted });
+        if (sliceSkipFlag) {
+          await doSkip();
           continue;
         }
 
-        // After the skip branch (which continues), only "done" is reachable.
-        // TS can't narrow through `continue`, so we check explicitly.
-        if (raceResult.kind !== "done") continue;
-        const tddResult = raceResult.result;
-        s.flush();
+        // Hard interrupt: agent was killed, respawn and send the guidance
+        if (hardInterruptPending) {
+          const guidance = hardInterruptPending;
+          hardInterruptPending = null;
+          log(`${ts()} ${a.yellow}⚡ Respawning TDD agent with guidance...${a.reset}`);
+          tddAgent = spawnAgent(BOT_TDD, tddSkill);
+          tddFirstMessage.value = true;
+          reviewFirstMessage.value = true;
+          const s2 = boundMakeStreamer(BOT_TDD);
+          tddResult = await withInterrupt(tddAgent, () =>
+            tddAgent.send(withBrief(guidance, brief), s2),
+          );
+          s2.flush();
+        }
+
         tddFirstMessage.value = false;
         await exitOnCreditExhaustion(tddResult, tddAgent);
-        await followUpIfNeeded(tddResult, tddAgent, noInteraction);
+        await followUpIfNeeded(tddResult, tddAgent, noInteraction, boundMakeStreamer);
 
         if (tddResult.exitCode !== 0) {
           log(
@@ -921,8 +986,16 @@ const main = async () => {
         await saveState(resolve(cwd, CONFIG.stateFile), state);
         groupSlicesCompleted++;
         globalSlicesCompleted++;
-        hud.update({ completedSlices: globalSlicesCompleted, groupCompleted: groupSlicesCompleted });
+        hud.update({
+          completedSlices: globalSlicesCompleted,
+          groupCompleted: groupSlicesCompleted,
+        });
         continue; // skip to next slice
+      }
+
+      if (sliceSkipFlag) {
+        await doSkip();
+        continue;
       }
 
       hud.update({ activeAgent: "REV", activeAgentActivity: "reviewing..." });
@@ -938,9 +1011,14 @@ const main = async () => {
         profile.testCommand,
         exitOnCreditExhaustion,
         withInterrupt,
+        boundMakeStreamer,
         reviewBase,
       );
       reviewBase = await captureRef(cwd);
+      if (sliceSkipFlag) {
+        await doSkip();
+        continue;
+      }
 
       // Slice outro — summary via quiet mode
       log(`\n${ts()} ${a.dim}extracting slice summary...${a.reset}`);
@@ -973,6 +1051,7 @@ Be concrete and specific. No filler.`,
         activeAgent: undefined,
         activeAgentActivity: undefined,
       });
+      sliceSkippable = false;
     }
 
     // ── Gap analysis ──
@@ -984,7 +1063,7 @@ Be concrete and specific. No filler.`,
       const groupContent = group.slices.map((s: Slice) => s.content).join("\n\n---\n\n");
       const gapAgent = spawnAgent(BOT_GAP);
       const gapPrompt = withBrief(buildGapPrompt(groupContent, groupBaseSha), brief);
-      let s = makeStreamer(BOT_GAP);
+      let s = boundMakeStreamer(BOT_GAP);
       const gapResult = await withInterrupt(gapAgent, () => gapAgent.send(gapPrompt, s));
       s.flush();
       await exitOnCreditExhaustion(gapResult, gapAgent);
@@ -1004,14 +1083,14 @@ Be concrete and specific. No filler.`,
             groupContent,
             `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
           );
-          s = makeStreamer(BOT_TDD);
+          s = boundMakeStreamer(BOT_TDD);
           const gapFixResult = await withInterrupt(tddAgent, () =>
             tddAgent.send(tddFirstMessage.value ? withBrief(gapFixPrompt, brief) : gapFixPrompt, s),
           );
           s.flush();
           tddFirstMessage.value = false;
           await exitOnCreditExhaustion(gapFixResult, tddAgent);
-          await followUpIfNeeded(gapFixResult, tddAgent, noInteraction);
+          await followUpIfNeeded(gapFixResult, tddAgent, noInteraction, boundMakeStreamer);
           if (!(await hasChanges(cwd, gapBaseSha))) {
             log(`${ts()} ${a.dim}TDD bot made no changes for gaps${a.reset}`);
           } else {
@@ -1031,6 +1110,7 @@ Be concrete and specific. No filler.`,
                 profile.testCommand,
                 exitOnCreditExhaustion,
                 withInterrupt,
+                boundMakeStreamer,
                 gapBaseSha,
               );
               log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
@@ -1049,12 +1129,13 @@ Be concrete and specific. No filler.`,
       groupName: group.name,
       cwd,
       agent: tddAgent,
-      makeStreamer: () => makeStreamer(BOT_TDD),
+      makeStreamer: () => boundMakeStreamer(BOT_TDD),
       exitOnCreditExhaustion,
       withInterrupt,
       hasDirtyTree,
       log,
-      followUpIfNeeded: (result, agent) => followUpIfNeeded(result, agent, noInteraction),
+      followUpIfNeeded: (result, agent) =>
+        followUpIfNeeded(result, agent, noInteraction, boundMakeStreamer),
     });
 
     state = { ...state, lastCompletedGroup: group.name };
@@ -1100,7 +1181,7 @@ Be concrete and specific. No filler.`,
       // Fresh agent per final pass
       const finalAgent = spawnAgent(BOT_FINAL);
       const finalPrompt = withBrief(pass.prompt, brief);
-      let s = makeStreamer(BOT_FINAL);
+      let s = boundMakeStreamer(BOT_FINAL);
       const finalResult = await withInterrupt(finalAgent, () => finalAgent.send(finalPrompt, s));
       s.flush();
       await exitOnCreditExhaustion(finalResult, finalAgent);
@@ -1128,14 +1209,14 @@ Be concrete and specific. No filler.`,
         planContent,
         `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
       );
-      s = makeStreamer(BOT_TDD);
+      s = boundMakeStreamer(BOT_TDD);
       const fixResult = await withInterrupt(tddAgent, () =>
         tddAgent.send(tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt, s),
       );
       s.flush();
       tddFirstMessage.value = false;
       await exitOnCreditExhaustion(fixResult, tddAgent);
-      await followUpIfNeeded(fixResult, tddAgent, noInteraction);
+      await followUpIfNeeded(fixResult, tddAgent, noInteraction, boundMakeStreamer);
       if (!(await hasChanges(cwd, preFixSha))) {
         log(`${ts()} ${a.dim}TDD bot made no changes for ${pass.name}${a.reset}`);
         continue;
@@ -1162,6 +1243,7 @@ Be concrete and specific. No filler.`,
         profile.testCommand,
         exitOnCreditExhaustion,
         withInterrupt,
+        boundMakeStreamer,
         preFixSha,
       );
       log(`${ts()} ${a.green}✓ ${pass.name}: resolved${a.reset}`);
