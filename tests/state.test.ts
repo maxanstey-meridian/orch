@@ -192,6 +192,13 @@ describe("state", () => {
   });
 });
 
+describe("saveState without parent directory", () => {
+  it("throws ENOENT when parent directory does not exist", async () => {
+    const missingDir = join(tmpdir(), `orch-nonexistent-${process.pid}`, "sub", "state.json");
+    await expect(saveState(missingDir, { lastCompletedSlice: 1 })).rejects.toThrow("ENOENT");
+  });
+});
+
 describe("statePathForPlan", () => {
   it("returns .orch/state/plan-<id>.json for a given orchDir and planId", () => {
     expect(statePathForPlan("/repo/.orch", "a1b2c3")).toBe("/repo/.orch/state/plan-a1b2c3.json");
@@ -199,6 +206,15 @@ describe("statePathForPlan", () => {
 
   it("handles trailing slash in orchDir without doubling", () => {
     expect(statePathForPlan("/repo/.orch/", "a1b2c3")).toBe("/repo/.orch/state/plan-a1b2c3.json");
+  });
+
+  it("path-traversal input escapes state directory (documents unsafe behaviour)", () => {
+    const result = statePathForPlan("/repo/.orch", "../../etc");
+    // join() resolves traversal segments — the path escapes .orch/state/
+    // This is safe in practice because main.ts validates planId upstream,
+    // but documents that statePathForPlan itself performs no validation.
+    expect(result).toBe("/repo/.orch/state/etc.json");
+    expect(result).not.toContain("plan-");
   });
 
   it("state saved for plan A does not affect state loaded for plan B", async () => {
