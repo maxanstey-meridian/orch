@@ -31,7 +31,7 @@ import {
 import { runFingerprint, wrapBrief } from "./fingerprint.js";
 import { runInit, profileToMarkdown, createAsk } from "./init.js";
 import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
-import { captureRef, hasChanges, getStatus, hasDirtyTree, stashSave, stashPop } from "./git.js";
+import { captureRef, hasChanges, getStatus, hasDirtyTree, stashSave } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
 import { parseVerifyResult } from "./verify.js";
 import { isCleanReview } from "./review-check.js";
@@ -1008,7 +1008,8 @@ const main = async () => {
         sliceSkipFlag = !sliceSkipFlag;
         hud.setSkipping(sliceSkipFlag);
       } else if (key === "q" || key === "\x03") {
-        void cleanup().finally(() => process.exit(130));
+        cleanup();
+        process.exit(130);
       }
     });
     hud.onInterruptSubmit((text, mode) => {
@@ -1036,19 +1037,19 @@ const main = async () => {
   };
 
   // 7. Signal handlers + cleanup
-  let didStash = false;
-  const cleanup = async () => {
+  const cleanup = () => {
     hud.teardown();
     tddAgent.kill();
     reviewAgent.kill();
     if (_rl) _rl.close();
-    if (didStash) await stashPop(cwd, log);
   };
   process.on("SIGINT", () => {
-    void cleanup().finally(() => process.exit(130));
+    cleanup();
+    process.exit(130);
   });
   process.on("SIGTERM", () => {
-    void cleanup().finally(() => process.exit(143));
+    cleanup();
+    process.exit(143);
   });
 
   // Closure over mutable `state` — always saves the latest value
@@ -1062,7 +1063,7 @@ const main = async () => {
         `${ts()} ${a.yellow}Agent was interrupted mid-response. The current slice will be re-run on resume.${a.reset}`,
       );
     }
-    await cleanup();
+    cleanup();
     process.exit(2);
   };
 
@@ -1096,7 +1097,7 @@ const main = async () => {
 
   if (groupFilter && startIdx === -1) {
     console.error(`No group "${groupFilter}". Available: ${groups.map((g) => g.name).join(", ")}`);
-    await cleanup();
+    cleanup();
     process.exit(1);
   }
 
@@ -1113,7 +1114,7 @@ const main = async () => {
   log("");
 
   // Stash any unrelated working tree changes to protect them from the TDD bot
-  didStash = await stashSave(cwd);
+  const didStash = await stashSave(cwd);
   if (didStash) log(`${ts()} ${a.dim}Stashed working tree changes for safekeeping${a.reset}`);
 
   const runBaseSha = await captureRef(cwd);
@@ -1645,7 +1646,7 @@ Be concrete and specific. No filler.`,
         const answer = await hud.askUser(`Group done. Run ${nextLabel} next? (Y/n) `);
         if (answer.toLowerCase() === "n") {
           log(`Stopped. Resume with --group "${next.name}"`);
-          await cleanup();
+          cleanup();
           process.exit(0);
         }
       }
@@ -1744,7 +1745,7 @@ Be concrete and specific. No filler.`,
   logSection(`${a.green}✅ All groups complete + final review done${a.reset}`);
   const status = await getStatus(cwd);
   log(`\n${status}`);
-  await cleanup();
+  cleanup();
   await clearState(stateFile);
 };
 
