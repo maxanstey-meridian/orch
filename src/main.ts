@@ -805,9 +805,11 @@ const main = async () => {
   try {
     activePlanId = planIdFromPath(planPath);
   } catch {
-    // External plan file (e.g. plan.md) — derive stable ID from path hash or global state
-    activePlanId =
-      globalState.currentPlanId ?? createHash("sha256").update(planPath).digest("hex").slice(0, 6);
+    // External plan file (e.g. plan.md) — derive stable ID from path hash
+    // For --work, always use path hash (never stale globalState.currentPlanId)
+    activePlanId = workMode
+      ? createHash("sha256").update(planPath).digest("hex").slice(0, 6)
+      : globalState.currentPlanId ?? createHash("sha256").update(planPath).digest("hex").slice(0, 6);
 
     // For --work with non-standard plan names, copy to .orch/plan-<id>.md for state scoping
     if (workMode) {
