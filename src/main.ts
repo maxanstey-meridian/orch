@@ -416,6 +416,87 @@ export const commitSweep = async (deps: CommitSweepDeps): Promise<void> => {
   }
 };
 
+// ─── Plan-then-execute ──────────────────────────────────────────────────────
+
+const buildPlanPrompt = (sliceContent: string): string =>
+  `You are a planning agent. Explore the codebase and produce a step-by-step TDD execution plan for the following slice.
+
+## Plan Slice
+${sliceContent}
+
+## Instructions
+1. Read the relevant files to understand current state.
+2. Output numbered RED→GREEN cycles. Each cycle: one failing test, then minimal code to pass.
+3. Do NOT write any code — plan only.`;
+
+type PlanThenExecuteDeps = {
+  sliceContent: string;
+  planAgent: AgentProcess;
+  tddAgent: AgentProcess;
+  brief: string;
+  makePlanStreamer: () => Streamer;
+  makeExecuteStreamer: () => Streamer;
+  withInterrupt: <T>(agent: AgentProcess, fn: () => Promise<T>) => Promise<T>;
+  isSkipped: () => boolean;
+  isHardInterrupted: () => string | null;
+  onToolUse?: (summary: string) => void;
+  log: (...args: unknown[]) => void;
+};
+
+type PlanThenExecuteResult = {
+  tddResult: AgentResult;
+  skipped: boolean;
+  hardInterrupt?: string;
+};
+
+export const planThenExecute = async (
+  deps: PlanThenExecuteDeps,
+): Promise<PlanThenExecuteResult> => {
+  // ── Plan phase ──
+  const planPrompt = buildPlanPrompt(deps.sliceContent);
+  const ps = deps.makePlanStreamer();
+  const planResult = await deps.withInterrupt(deps.planAgent, () =>
+    deps.planAgent.send(planPrompt, ps, deps.onToolUse),
+  );
+  ps.flush();
+
+  if (deps.isSkipped()) {
+    deps.planAgent.kill();
+    return { tddResult: planResult, skipped: true };
+  }
+
+  const hardInterruptGuidance = deps.isHardInterrupted();
+  if (hardInterruptGuidance) {
+    deps.planAgent.kill();
+    return { tddResult: planResult, skipped: false, hardInterrupt: hardInterruptGuidance };
+  }
+
+  deps.planAgent.kill();
+
+  // Extract plan text — prefer structured planText, fall back to assistantText
+  const plan = planResult.planText ?? planResult.assistantText ?? "";
+
+  // ── Execute phase ──
+  deps.log(`${BOT_TDD.badge} executing plan...`);
+  const executePrompt = `Execute this plan:\n\n${plan}`;
+  const es = deps.makeExecuteStreamer();
+  const tddResult = await deps.withInterrupt(deps.tddAgent, () =>
+    deps.tddAgent.send(executePrompt, es, deps.onToolUse),
+  );
+  es.flush();
+
+  if (deps.isSkipped()) {
+    return { tddResult, skipped: true };
+  }
+
+  const execInterrupt = deps.isHardInterrupted();
+  if (execInterrupt) {
+    return { tddResult, skipped: false, hardInterrupt: execInterrupt };
+  }
+
+  return { tddResult, skipped: false };
+};
+
 const buildReviewPreamble = (baseSha: string): string =>
   `## How to review
 
@@ -1092,23 +1173,36 @@ const main = async () => {
           `${ts()} ${a.dim}⏩ TDD already ran for Slice ${slice.number} — resuming review${a.reset}`,
         );
       } else {
-        log(`${ts()} ${BOT_TDD.badge} ${a.cyan}implementing...${a.reset}`);
+        // ── Plan phase ──
+        log(`${ts()} ${BOT_PLAN.badge} ${a.white}planning...${a.reset}`);
+        hud.update({ activeAgent: "PLN", activeAgentActivity: "planning..." });
 
-        const tddPrompt = buildTddPrompt(slice.content);
-        const prompt = tddFirstMessage.value ? withBrief(tddPrompt, brief) : tddPrompt;
-        const s = boundMakeStreamer(BOT_TDD);
+        const planAgent = spawnPlanAgentWithSkill();
 
-        let tddResult = await withInterrupt(tddAgent, () => tddAgent.send(prompt, s, onToolUse));
-        s.flush();
+        const pteResult = await planThenExecute({
+          sliceContent: slice.content,
+          planAgent,
+          tddAgent,
+          brief: tddFirstMessage.value ? brief : "",
+          makePlanStreamer: () => boundMakeStreamer(BOT_PLAN),
+          makeExecuteStreamer: () => boundMakeStreamer(BOT_TDD),
+          withInterrupt,
+          isSkipped: () => sliceSkipFlag,
+          isHardInterrupted: () => hardInterruptPending,
+          onToolUse,
+          log,
+        });
 
-        if (sliceSkipFlag) {
+        if (pteResult.skipped) {
           await doSkip();
           continue;
         }
 
-        // Hard interrupt: agent was killed, respawn and send the guidance
-        if (hardInterruptPending) {
-          const guidance = hardInterruptPending;
+        let tddResult = pteResult.tddResult;
+
+        // Hard interrupt: agent was killed during plan or execute phase
+        if (pteResult.hardInterrupt) {
+          const guidance = pteResult.hardInterrupt;
           hardInterruptPending = null;
           log(`${ts()} ${a.yellow}⚡ Respawning TDD agent with guidance...${a.reset}`);
           tddAgent = await spawnTddAgent(tddSkill);
