@@ -1089,6 +1089,21 @@ const main = async () => {
           continue;
         }
 
+        // ── Commit sweep — ensure TDD bot's work is committed ────────────
+        await commitSweep({
+          groupName: `Slice ${slice.number}`,
+          cwd,
+          agent: tddAgent,
+          makeStreamer: () => boundMakeStreamer(BOT_TDD),
+          exitOnCreditExhaustion,
+          withInterrupt,
+          hasDirtyTree,
+          log,
+          followUpIfNeeded: (result, agent) =>
+            followUpIfNeeded(result, agent, noInteraction, boundMakeStreamer, onToolUse, hud.askUser),
+          onToolUse,
+        });
+
         // ── Already-implemented detection ────────────────────────────────
         const tddText = tddResult.assistantText ?? "";
         const alreadyDone =
@@ -1096,7 +1111,8 @@ const main = async () => {
           /already exist/i.test(tddText) ||
           /nothing (?:left )?to (?:do|implement|change)/i.test(tddText);
 
-        if (alreadyDone && !(await hasChanges(cwd, reviewBase))) {
+        const headAfterTdd = await captureRef(cwd);
+        if (alreadyDone && headAfterTdd === reviewBase) {
           log(
             `${ts()} ${a.dim}⏩ Slice ${slice.number} already implemented — skipping verify/review${a.reset}`,
           );
