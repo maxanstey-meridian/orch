@@ -1136,6 +1136,9 @@ const main = async () => {
           continue;
         }
 
+        // Capture baseline BEFORE commit sweep — verify needs to diff against pre-TDD state
+        const verifyBaseSha = await captureRef(cwd);
+
         // ── Commit sweep — ensure TDD bot's work is committed ────────────
         await commitSweep({
           groupName: `Slice ${slice.number}`,
@@ -1179,7 +1182,6 @@ const main = async () => {
         }
 
         // ── Verify gate ──────────────────────────────────────────────────
-        const verifyBaseSha = await captureRef(cwd);
         hud.update({ activeAgent: "VFY", activeAgentActivity: "verifying..." });
         log(`${ts()} ${BOT_VERIFY.badge} ${a.green}verifying slice ${slice.number}...${a.reset}`);
 
