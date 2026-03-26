@@ -111,6 +111,8 @@ const summarizeToolUse = (block: ToolUseBlock): string => {
       return `Finding: ${String(input.pattern ?? "").slice(0, 30)}`;
     case "LSP":
       return `LSP: ${String(input.method ?? "")}`;
+    case "ExitPlanMode":
+      return "Plan ready";
     default:
       return name;
   }

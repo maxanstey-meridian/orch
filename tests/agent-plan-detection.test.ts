@@ -66,4 +66,80 @@ done
     expect(result.planText).toBeUndefined();
     expect(result.assistantText).toBe("just text");
   });
+
+  it("summarizeToolUse reports ExitPlanMode via onToolUse callback", async () => {
+    const script = join(tempDir, "agent.sh");
+    await writeFile(
+      script,
+      `#!/bin/sh
+while IFS= read -r line; do
+  echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"ExitPlanMode","input":{"plan":"the plan"}}]}}'
+  echo '{"type":"result","result":"done","duration_ms":100,"num_turns":1}'
+done
+`,
+    );
+    await chmod(script, 0o755);
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: "plan", color: "yellow", badge: "P" },
+    });
+
+    const toolSummaries: string[] = [];
+    await agent.send("test", undefined, (summary) => toolSummaries.push(summary));
+    agent.kill();
+
+    expect(toolSummaries).toContain("Plan ready");
+  });
+
+  it("planText is undefined when ExitPlanMode input.plan is missing", async () => {
+    const script = join(tempDir, "agent.sh");
+    await writeFile(
+      script,
+      `#!/bin/sh
+while IFS= read -r line; do
+  echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"ExitPlanMode","input":{}}]}}'
+  echo '{"type":"result","result":"done","duration_ms":100,"num_turns":1}'
+done
+`,
+    );
+    await chmod(script, 0o755);
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: "plan", color: "yellow", badge: "P" },
+    });
+
+    const result = await agent.send("test");
+    agent.kill();
+
+    expect(result.planText).toBeUndefined();
+  });
+
+  it("planText is undefined when ExitPlanMode input.plan is non-string", async () => {
+    const script = join(tempDir, "agent.sh");
+    await writeFile(
+      script,
+      `#!/bin/sh
+while IFS= read -r line; do
+  echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"ExitPlanMode","input":{"plan":42}}]}}'
+  echo '{"type":"result","result":"done","duration_ms":100,"num_turns":1}'
+done
+`,
+    );
+    await chmod(script, 0o755);
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: "plan", color: "yellow", badge: "P" },
+    });
+
+    const result = await agent.send("test");
+    agent.kill();
+
+    expect(result.planText).toBeUndefined();
+  });
 });
