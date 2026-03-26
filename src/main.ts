@@ -30,6 +30,7 @@ import {
 } from "./state.js";
 import { runFingerprint } from "./fingerprint.js";
 import { buildTddPrompt, buildCommitSweepPrompt, buildReviewPrompt, buildGapPrompt, buildFinalPasses, withBrief } from "./prompts.js";
+import { a, ts, BOT_TDD, BOT_REVIEW, BOT_GAP, BOT_FINAL, BOT_VERIFY, BOT_PLAN, logSection, printSliceIntro, printSliceSummary } from "./display.js";
 import { runInit, profileToMarkdown, createAsk } from "./init.js";
 import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
 import { captureRef, hasChanges, getStatus, hasDirtyTree, stashBackup } from "./git.js";
@@ -49,65 +50,7 @@ const CONFIG = {
   briefDir: ".orch",
 };
 
-// ─── ANSI ────────────────────────────────────────────────────────────────────
-
-const a = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  dim: "\x1b[2m",
-  cyan: "\x1b[36m",
-  magenta: "\x1b[35m",
-  green: "\x1b[32m",
-  red: "\x1b[31m",
-  yellow: "\x1b[33m",
-  white: "\x1b[37m",
-  bgCyan: "\x1b[46m\x1b[30m",
-  bgMagenta: "\x1b[45m\x1b[30m",
-  bgGreen: "\x1b[42m\x1b[30m",
-};
-
-const ts = (): string => {
-  const d = new Date();
-  return `${a.dim}${d.toLocaleTimeString("en-GB", { hour12: false })}${a.reset}`;
-};
-
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
-
-const logSection = (title: string) => {
-  const line = "━".repeat(64);
-  log(`\n${a.bold}${a.white}${line}${a.reset}`);
-  log(`${a.bold}  ${title}${a.reset}`);
-  log(`${a.bold}${a.white}${line}${a.reset}`);
-};
-
-// ─── Bot styles ──────────────────────────────────────────────────────────────
-
-const BOT_TDD: AgentStyle = { label: "TDD", color: a.cyan, badge: `${a.bgCyan} TDD ${a.reset}` };
-const BOT_REVIEW: AgentStyle = {
-  label: "REVIEW",
-  color: a.magenta,
-  badge: `${a.bgMagenta} REV ${a.reset}`,
-};
-const BOT_GAP: AgentStyle = {
-  label: "GAP",
-  color: a.yellow,
-  badge: `${a.yellow}${a.bold} GAP ${a.reset}`,
-};
-const BOT_FINAL: AgentStyle = {
-  label: "FINAL",
-  color: a.green,
-  badge: `${a.bgGreen} FIN ${a.reset}`,
-};
-const BOT_VERIFY: AgentStyle = {
-  label: "VERIFY",
-  color: a.green,
-  badge: `${a.bgGreen} VFY ${a.reset}`,
-};
-const BOT_PLAN: AgentStyle = {
-  label: "PLAN",
-  color: a.white,
-  badge: `${a.bold}${a.white} PLN ${a.reset}`,
-};
 
 // ─── Agent helpers ───────────────────────────────────────────────────────────
 
@@ -464,31 +407,6 @@ export const planThenExecute = async (
   }
 
   return { tddResult, skipped: false };
-};
-
-// ─── Terminal output ─────────────────────────────────────────────────────────
-
-const printSliceIntro = (slice: Slice) => {
-  log(`\n${a.bold}${a.white}┌─ Slice ${slice.number}: ${slice.title}${a.reset}`);
-  const introLine = slice.content
-    .split("\n")
-    .find((l: string) => l.trim() && !l.startsWith("#") && !l.startsWith("---"));
-  if (introLine) log(`${a.dim}│  ${introLine.trim()}${a.reset}`);
-  log(`${a.dim}└──${a.reset}\n`);
-};
-
-const printSliceSummary = (sliceNumber: number, summary: string) => {
-  if (!summary.trim()) return;
-  log("");
-  log(`${a.bold}${a.green}┌─ Slice ${sliceNumber} complete ────────────────────────────${a.reset}`);
-  for (const line of summary.trim().split("\n")) {
-    const formatted = line
-      .replace(/^## (.+)/, `${a.bold}${a.white}│ $1${a.reset}`)
-      .replace(/^- (.+)/, `${a.dim}│${a.reset}  - $1`)
-      .replace(/^(?!│)(.+)/, `${a.dim}│${a.reset}  $1`);
-    log(formatted);
-  }
-  log(`${a.bold}${a.green}└──────────────────────────────────────────────${a.reset}`);
 };
 
 // ─── Review-fix loop ─────────────────────────────────────────────────────────
@@ -931,7 +849,7 @@ const main = async () => {
       continue;
     }
 
-    logSection(
+    logSection(log,
       `Group: ${group.name} — ${group.slices.map((s: Slice) => `Slice ${s.number}`).join(", ")}`,
     );
     hud.update({
@@ -963,7 +881,7 @@ const main = async () => {
         continue;
       }
 
-      printSliceIntro(slice);
+      printSliceIntro(log, slice);
       hud.update({
         currentSlice: { number: slice.number },
       });
@@ -1284,7 +1202,7 @@ const main = async () => {
 
 Be concrete and specific. No filler.`,
       );
-      printSliceSummary(slice.number, summary);
+      printSliceSummary(log, slice.number, summary);
 
       state = { ...state, lastCompletedSlice: slice.number };
       await saveState(stateFile, state);
@@ -1451,7 +1369,7 @@ Be concrete and specific. No filler.`,
 
   // 11. Final review passes
   if (await hasChanges(cwd, runBaseSha)) {
-    logSection("Final review — 3 targeted passes");
+    logSection(log, "Final review — 3 targeted passes");
 
     const passes = buildFinalPasses(runBaseSha, planContent);
 
@@ -1538,7 +1456,7 @@ Be concrete and specific. No filler.`,
   }
 
   // 12. Cleanup
-  logSection(`${a.green}✅ All groups complete + final review done${a.reset}`);
+  logSection(log, `${a.green}✅ All groups complete + final review done${a.reset}`);
   const status = await getStatus(cwd);
   log(`\n${status}`);
   cleanup();
