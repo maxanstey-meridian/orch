@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { generatePlan, isPlanFormat } from "../src/plan-generator.js";
+import { generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId } from "../src/plan-generator.js";
 import { parsePlanText } from "../src/plan-parser.js";
 import type { AgentProcess, AgentResult } from "../src/agent.js";
 
@@ -61,6 +61,53 @@ const mockAgent = (responseText: string): AgentProcess => ({
   get stderr() { return ""; },
 });
 
+// ─── planFileName ───────────────────────────────────────────────────────────
+
+describe("planFileName", () => {
+  it("returns plan-<id>.md for a given hex id", () => {
+    expect(planFileName("a1b2c3")).toBe("plan-a1b2c3.md");
+  });
+});
+
+// ─── planIdFromPath ─────────────────────────────────────────────────────────
+
+describe("planIdFromPath", () => {
+  it("extracts the 6-char hex id from a valid plan path", () => {
+    expect(planIdFromPath("/foo/.orch/plan-a1b2c3.md")).toBe("a1b2c3");
+  });
+
+  it("throws when filename does not match plan-<hex>.md pattern", () => {
+    expect(() => planIdFromPath("/foo/random.md")).toThrow("Cannot extract plan ID");
+  });
+
+  it("throws for uppercase hex in filename", () => {
+    expect(() => planIdFromPath("/foo/.orch/plan-A1B2C3.md")).toThrow("Cannot extract plan ID");
+  });
+
+  it("throws for too-short hex (5 chars)", () => {
+    expect(() => planIdFromPath("/foo/.orch/plan-a1b2c.md")).toThrow("Cannot extract plan ID");
+  });
+
+  it("throws for too-long hex (7 chars)", () => {
+    expect(() => planIdFromPath("/foo/.orch/plan-a1b2c3d.md")).toThrow("Cannot extract plan ID");
+  });
+});
+
+// ─── generatePlanId ─────────────────────────────────────────────────────────
+
+describe("generatePlanId", () => {
+  it("returns a 6-char hex string", () => {
+    const id = generatePlanId();
+    expect(id).toMatch(/^[0-9a-f]{6}$/);
+  });
+
+  it("produces distinct values across multiple calls", () => {
+    const ids = Array.from({ length: 10 }, () => generatePlanId());
+    const unique = new Set(ids);
+    expect(unique.size).toBeGreaterThanOrEqual(2);
+  });
+});
+
 // ─── isPlanFormat ───────────────────────────────────────────────────────────
 
 describe("isPlanFormat", () => {
@@ -97,17 +144,18 @@ describe("generatePlan", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("generates plan from inventory and writes to output dir", async () => {
+  it("writes plan to plan-<id>.md and returns planPath and planId", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Login\nUsers can log in.\n\n## Dashboard\nWidgets.");
 
     const outputDir = join(tmpDir, ".orch");
     const agent = mockAgent(VALID_PLAN);
 
-    const outPath = await generatePlan(inventoryPath, "Brief content here", agent, outputDir);
+    const result = await generatePlan(inventoryPath, "Brief content here", agent, outputDir);
 
-    expect(outPath).toBe(join(outputDir, "generated-plan.md"));
-    const written = readFileSync(outPath, "utf-8");
+    expect(result.planId).toMatch(/^[0-9a-f]{6}$/);
+    expect(result.planPath).toBe(join(outputDir, `plan-${result.planId}.md`));
+    const written = readFileSync(result.planPath, "utf-8");
     expect(written).toContain("## Group: Auth");
     expect(written).toContain("### Slice 1: User login");
   });
@@ -119,10 +167,10 @@ describe("generatePlan", () => {
     const outputDir = join(tmpDir, ".orch");
     const agent = mockAgent(PLAN_WITH_PREAMBLE);
 
-    const outPath = await generatePlan(inventoryPath, "", agent, outputDir);
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
-    const written = readFileSync(outPath, "utf-8");
-    expect(written.startsWith("## Group:")).toBe(true);
+    const written = readFileSync(planPath, "utf-8");
+    expect(written).toContain("## Group:");
     expect(written).not.toContain("Here's the plan");
   });
 
@@ -133,9 +181,9 @@ describe("generatePlan", () => {
     const outputDir = join(tmpDir, ".orch");
     const agent = mockAgent(VALID_PLAN);
 
-    const outPath = await generatePlan(inventoryPath, "", agent, outputDir);
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
-    const written = readFileSync(outPath, "utf-8");
+    const written = readFileSync(planPath, "utf-8");
     const groups = parsePlanText(written);
     expect(groups.length).toBe(2);
     expect(groups[0].name).toBe("Auth");
@@ -197,6 +245,48 @@ describe("generatePlan", () => {
 
     expect(capturedPrompt).not.toContain("## Codebase context");
     expect(capturedPrompt).toContain("## Feature inventory");
+  });
+
+  it("omits source comment when sourcePath is not provided", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_PLAN);
+
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
+
+    const written = readFileSync(planPath, "utf-8");
+    expect(written.startsWith("<!--")).toBe(false);
+  });
+
+  it("prepends source comment when sourcePath is provided", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_PLAN);
+
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir, "features/inventory.md");
+
+    const written = readFileSync(planPath, "utf-8");
+    expect(written.startsWith("<!-- Generated from: features/inventory.md -->")).toBe(true);
+  });
+
+  it("plan with source comment prefix still parses via parsePlanText", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_PLAN);
+
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir, "inv.md");
+
+    const written = readFileSync(planPath, "utf-8");
+    expect(written.startsWith("<!--")).toBe(true);
+    const groups = parsePlanText(written);
+    expect(groups.length).toBe(2);
+    expect(groups[0].name).toBe("Auth");
   });
 
   it("includes brief content in prompt sent to agent", async () => {

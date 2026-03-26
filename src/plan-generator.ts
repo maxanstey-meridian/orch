@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { parsePlanText } from "./plan-parser.js";
@@ -5,7 +6,17 @@ import type { AgentProcess } from "./agent.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-export const GENERATED_PLAN_FILE = "generated-plan.md";
+export const generatePlanId = (): string => randomBytes(3).toString("hex");
+
+export const planFileName = (id: string): string => `plan-${id}.md`;
+
+const PLAN_ID_RE = /plan-([0-9a-f]{6})\.md$/;
+
+export const planIdFromPath = (planPath: string): string => {
+  const match = PLAN_ID_RE.exec(planPath);
+  if (!match) throw new Error(`Cannot extract plan ID from path: ${planPath}`);
+  return match[1];
+};
 
 const PLAN_INSTRUCTIONS = `Transform this feature inventory into a group-and-slice plan.
 
@@ -37,12 +48,15 @@ const stripPreamble = (text: string): string => {
 
 // ─── Plan generation ────────────────────────────────────────────────────────
 
+export type GeneratePlanResult = { planPath: string; planId: string };
+
 export const generatePlan = async (
   inventoryPath: string,
   briefContent: string,
   agent: AgentProcess,
   outputDir: string,
-): Promise<string> => {
+  sourcePath?: string,
+): Promise<GeneratePlanResult> => {
   const inventory = readFileSync(inventoryPath, "utf-8");
 
   const parts: string[] = [];
@@ -60,10 +74,14 @@ export const generatePlan = async (
   // Validate — parsePlanText throws if no groups found
   parsePlanText(planText, "generated plan");
 
+  // Build output with optional source comment
+  const prefix = sourcePath ? `<!-- Generated from: ${sourcePath} -->\n` : "";
+  const planId = generatePlanId();
+
   // Write to disk
   mkdirSync(outputDir, { recursive: true });
-  const outPath = join(outputDir, GENERATED_PLAN_FILE);
-  writeFileSync(outPath, planText);
+  const outPath = join(outputDir, planFileName(planId));
+  writeFileSync(outPath, prefix + planText);
 
-  return outPath;
+  return { planPath: outPath, planId };
 };

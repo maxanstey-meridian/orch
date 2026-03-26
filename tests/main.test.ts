@@ -46,8 +46,8 @@ describe("--reset flag behavior", () => {
     expect(state).toEqual({});
   });
 
-  it("integration: --reset flag clears state file via the real CLI", async () => {
-    // Set up git repo so assertGitRepo passes
+  it("--reset with external plan and no currentPlanId does not use global state file", async () => {
+    // Set up git repo
     exec("git init", tempDir);
     exec('git config user.email "test@test.com"', tempDir);
     exec('git config user.name "Test"', tempDir);
@@ -56,37 +56,24 @@ describe("--reset flag behavior", () => {
     exec('git commit -m "init"', tempDir);
     await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
 
-    // Pre-existing state
-    const stateFile = join(tempDir, ".orchestrator-state.json");
-    await writeFile(stateFile, JSON.stringify({ lastCompletedSlice: 5 }));
+    // Write global state WITHOUT currentPlanId but with some data
+    const globalStateFile = join(tempDir, ".orchestrator-state.json");
+    await saveState(globalStateFile, { lastCompletedSlice: 3 });
 
-    // Run main.ts — it will spawn claude (which may not exist), but --reset
-    // runs before agent spawning. Kill after 3s to avoid hanging.
     const mainPath = join(import.meta.dirname, "../src/main.ts");
-    const r = spawnSync("npx", [
+    spawnSync("npx", [
       "tsx", mainPath, "--plan", join(tempDir, "plan.md"),
       "--skip-fingerprint", "--no-interaction", "--reset",
     ], {
       cwd: tempDir,
       encoding: "utf-8",
-      timeout: 3_000,
+      timeout: 5_000,
       stdio: ["pipe", "pipe", "pipe"],
     });
 
-    const stdout = strip(r.stdout ?? "");
-
-    // State clearing happens at line 489-491, before agent spawning at line 496.
-    // Even if the process gets killed later, stdout should have flushed "State cleared."
-    expect(stdout).toContain("State cleared.");
-
-    // State file should be deleted
-    let exists = true;
-    try {
-      await readFile(stateFile, "utf-8");
-    } catch {
-      exists = false;
-    }
-    expect(exists).toBe(false);
+    // Global state file must survive — --reset should not touch it
+    const globalState = await loadState(globalStateFile);
+    expect(globalState.lastCompletedSlice).toBe(3);
   }, 15_000);
 });
 
@@ -137,6 +124,93 @@ describe("CLI flag wiring", () => {
     const stderr = strip(r.stderr ?? "");
     expect(stderr).toContain("No plan found");
   });
+
+  it("--reset clears per-plan state file, not global state", async () => {
+    initGitRepo(tempDir);
+
+    const orchDir = join(tempDir, ".orch");
+    const stateDir = join(orchDir, "state");
+    execSync(`mkdir -p "${stateDir}"`);
+
+    // Write plan file with ID
+    await writeFile(join(orchDir, "plan-abc123.md"), MINIMAL_PLAN);
+
+    // Write global state with currentPlanId
+    const globalStateFile = join(tempDir, ".orchestrator-state.json");
+    await saveState(globalStateFile, { currentPlanId: "abc123" });
+
+    // Write per-plan state with progress
+    const planStateFile = join(stateDir, "plan-abc123.json");
+    await saveState(planStateFile, { lastCompletedSlice: 5 });
+
+    // --reset --resume should clear per-plan state
+    const r = runMain(
+      ["--resume", "--skip-fingerprint", "--no-interaction", "--reset"],
+      tempDir,
+    );
+
+    const stdout = strip(r.stdout ?? "");
+    expect(stdout).toContain("State cleared");
+
+    // Per-plan state should be cleared
+    const planState = await loadState(planStateFile);
+    expect(planState).toEqual({});
+
+    // Global state should still have currentPlanId
+    const globalState = await loadState(globalStateFile);
+    expect(globalState.currentPlanId).toBe("abc123");
+  }, 15_000);
+
+  it("--reset succeeds when .orch/state/ directory does not exist yet", async () => {
+    initGitRepo(tempDir);
+
+    const orchDir = join(tempDir, ".orch");
+    execSync(`mkdir -p "${orchDir}"`);
+
+    // Write plan file but do NOT create state/ subdirectory
+    await writeFile(join(orchDir, "plan-def456.md"), MINIMAL_PLAN);
+
+    // Write global state with currentPlanId pointing to this plan
+    const globalStateFile = join(tempDir, ".orchestrator-state.json");
+    await saveState(globalStateFile, { currentPlanId: "def456" });
+
+    const r = runMain(
+      ["--resume", "--skip-fingerprint", "--no-interaction", "--reset"],
+      tempDir,
+    );
+
+    const stdout = strip(r.stdout ?? "");
+    expect(stdout).toContain("State cleared");
+    // Should not crash — exit due to plan processing, not state error
+    expect(r.stderr ?? "").not.toContain("ENOENT");
+  }, 15_000);
+
+  it("--resume finds plan-<id>.md via currentPlanId in state", async () => {
+    initGitRepo(tempDir);
+
+    // Write a plan file with the new naming scheme
+    const orchDir = join(tempDir, ".orch");
+    execSync(`mkdir -p "${orchDir}"`);
+    await writeFile(join(orchDir, "plan-abc123.md"), MINIMAL_PLAN);
+
+    // Write state with currentPlanId
+    const stateFile = join(tempDir, ".orchestrator-state.json");
+    await saveState(stateFile, { currentPlanId: "abc123" });
+
+    // --resume without explicit path should find it via state
+    const r = runMain(
+      ["--resume", "--skip-fingerprint", "--no-interaction"],
+      tempDir,
+    );
+
+    // If plan resolution fails, process exits immediately with status 1
+    // and "No plan found" in stderr. If it succeeds, it proceeds to
+    // orchestration (and eventually times out or crashes spawning agents).
+    // A non-1 exit status or a SIGTERM signal means it got past plan resolution.
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).not.toContain("No plan found");
+    expect(r.status).not.toBe(1);
+  }, 15_000);
 
   it("--plan with file already in plan format skips generation (treats as resume)", async () => {
     initGitRepo(tempDir);
