@@ -492,4 +492,90 @@ describe("planThenExecute", () => {
     // TDD agent SHOULD have been called (plan phase passed)
     expect(tddAgent.send).toHaveBeenCalledOnce();
   });
+
+  it("brief dep is accepted but not included in execute prompt (documents current behavior)", async () => {
+    const { planThenExecute } = await import("../src/main.js");
+
+    const planAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText: "the plan" })),
+    });
+    const tddAgent = makeAgent();
+
+    await planThenExecute({
+      sliceContent: "slice",
+      planAgent,
+      tddAgent,
+      brief: "This is the project brief with important context",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => false,
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log: () => {},
+    });
+
+    const tddPrompt = (tddAgent.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    // brief is not currently wired into the execute prompt — caller handles it via withBrief
+    expect(tddPrompt).not.toContain("project brief");
+    expect(tddPrompt).toContain("Execute this plan:");
+  });
+
+  it("execute prompt contains 'Execute this plan' even when plan is empty", async () => {
+    const { planThenExecute } = await import("../src/main.js");
+
+    const planAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText: undefined, assistantText: "" })),
+    });
+    const tddAgent = makeAgent();
+
+    await planThenExecute({
+      sliceContent: "slice",
+      planAgent,
+      tddAgent,
+      brief: "",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => false,
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log: () => {},
+    });
+
+    const tddPrompt = (tddAgent.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(tddPrompt).toBe("Execute this plan:\n\n");
+  });
+
+  it("returns skipped=true when skip flag is set during execute phase", async () => {
+    const { planThenExecute } = await import("../src/main.js");
+
+    let callCount = 0;
+    const planAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText: "the plan" })),
+    });
+    const tddAgent = makeAgent();
+
+    const result = await planThenExecute({
+      sliceContent: "slice",
+      planAgent,
+      tddAgent,
+      brief: "",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => {
+        callCount++;
+        // First call (after plan phase) — not skipped; second (after execute) — skipped
+        return callCount > 1;
+      },
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log: () => {},
+    });
+
+    expect(result.skipped).toBe(true);
+    // TDD agent SHOULD have been called (plan phase passed)
+    expect(tddAgent.send).toHaveBeenCalledOnce();
+  });
 });
