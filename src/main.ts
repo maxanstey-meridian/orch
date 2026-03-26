@@ -1501,8 +1501,7 @@ Be concrete and specific. No filler.`,
       });
     }
 
-    // Reset skip visual (but keep sliceSkippable true for gap/commit phases)
-    sliceSkipFlag = false;
+    // Reset skip visual but keep sliceSkipFlag alive for gap/commit phases
     hud.setSkipping(false);
     hud.setActivity("");
 
@@ -1646,7 +1645,7 @@ Be concrete and specific. No filler.`,
         const answer = await hud.askUser(`Group done. Run ${nextLabel} next? (Y/n) `);
         if (answer.toLowerCase() === "n") {
           log(`Stopped. Resume with --group "${next.name}"`);
-          cleanup();
+          await cleanup();
           process.exit(0);
         }
       }
