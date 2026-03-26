@@ -7,14 +7,12 @@
  *
  * Usage:
  *   npx ts-node src/main.ts --plan inventory.md              # generate plan and exit
- *   npx ts-node src/main.ts --work                            # execute last generated plan
- *   npx ts-node src/main.ts --resume                          # resume last generated plan
- *   npx ts-node src/main.ts --resume plan.md                  # resume specific plan
- *   npx ts-node src/main.ts --resume --auto                   # no inter-group prompts
- *   npx ts-node src/main.ts --resume --group Auth             # start from group
- *   npx ts-node src/main.ts --resume --no-interaction         # suppress all prompts
- *   npx ts-node src/main.ts --resume --skip-fingerprint
- *   npx ts-node src/main.ts --resume --review-threshold 50
+ *   npx ts-node src/main.ts --work plan.md                    # execute a plan
+ *   npx ts-node src/main.ts --work plan.md --group Auth       # start from group
+ *   npx ts-node src/main.ts --work plan.md --auto             # no inter-group prompts
+ *   npx ts-node src/main.ts --work plan.md --no-interaction   # suppress all prompts
+ *   npx ts-node src/main.ts --work plan.md --reset            # clear state and re-run
+ *   npx ts-node src/main.ts --resume                          # (deprecated) resume last plan
  *   npx ts-node src/main.ts --init --plan inventory.md        # interactive project init
  */
 
@@ -662,6 +660,9 @@ const main = async () => {
 
   const inventoryPath = getArg("--plan");
   const resumeMode = args.includes("--resume");
+  if (resumeMode) {
+    console.error(`${a.yellow}Warning: --resume is deprecated. Use --work <plan> instead.${a.reset}`);
+  }
   // --resume takes an optional path; only consume next arg if it's not another flag
   const resumeIdx = args.indexOf("--resume");
   const resumeNext = resumeIdx !== -1 ? args[resumeIdx + 1] : undefined;
@@ -670,6 +671,8 @@ const main = async () => {
     console.error(`${a.yellow}Warning: --plan-only is deprecated. --plan now generates and exits by default.${a.reset}`);
   }
   const workMode = args.includes("--work");
+  const workRaw = getArg("--work");
+  const workPath = workRaw && !workRaw.startsWith("-") ? workRaw : undefined;
   const auto = args.includes("--auto");
   const skipFingerprint = args.includes("--skip-fingerprint");
   const noInteraction = args.includes("--no-interaction");
@@ -688,6 +691,10 @@ const main = async () => {
   }
   if (inventoryPath && workMode) {
     console.error("--plan and --work are mutually exclusive. Use --plan to generate, then --work to execute.");
+    process.exit(1);
+  }
+  if (workMode && !workPath) {
+    console.error("--work requires a plan path. Usage: --work <plan.md>");
     process.exit(1);
   }
   if (!inventoryPath && !resumeMode && !workMode) {
@@ -742,8 +749,11 @@ const main = async () => {
   //    (uses currentPlanId from state loaded in step 3)
   let planPath: string;
 
-  if (resumeMode || workMode) {
-    // --resume [path] or --work: use explicit path, or find existing plan
+  if (workMode) {
+    // --work <plan>: explicit path, no fallback
+    planPath = resolve(workPath!);
+  } else if (resumeMode) {
+    // --resume [path]: use explicit path, or find existing plan (deprecated)
     if (resumeRaw) {
       planPath = resolve(resumeRaw);
     } else if (statePlanPath && existsSync(statePlanPath)) {
@@ -798,6 +808,15 @@ const main = async () => {
     // External plan file (e.g. plan.md) — derive stable ID from path hash or global state
     activePlanId =
       globalState.currentPlanId ?? createHash("sha256").update(planPath).digest("hex").slice(0, 6);
+
+    // For --work with non-standard plan names, copy to .orch/plan-<id>.md for state scoping
+    if (workMode) {
+      mkdirSync(orchDir, { recursive: true });
+      const canonicalPath = resolve(orchDir, planFileName(activePlanId));
+      if (!existsSync(canonicalPath)) {
+        writeFileSync(canonicalPath, readFileSync(planPath, "utf-8"));
+      }
+    }
   }
   const stateFile = statePathForPlan(orchDir, activePlanId);
   mkdirSync(resolve(orchDir, "state"), { recursive: true });

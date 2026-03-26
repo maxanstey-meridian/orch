@@ -244,7 +244,36 @@ describe("CLI flag wiring", () => {
     expect(r.status).not.toBe(0);
   });
 
-  it("--work alone with no existing plan exits with error", async () => {
+  it("--work .orch/plan-a1b2c3.md uses scoped state path", async () => {
+    initGitRepo(tempDir);
+    const { mkdirSync } = await import("fs");
+    mkdirSync(join(tempDir, ".orch"), { recursive: true });
+    await writeFile(
+      join(tempDir, ".orch", "plan-a1b2c3.md"),
+      MINIMAL_PLAN,
+    );
+
+    // --work with a plan-<id>.md path should derive state at .orch/state/plan-a1b2c3.json
+    // Process will attempt orchestration (and hang/crash without agent), but the
+    // state dir + plan ID derivation happen before orchestration starts.
+    spawnSync("npx", [
+      "tsx", mainPath,
+      "--work", join(tempDir, ".orch", "plan-a1b2c3.md"),
+      "--skip-fingerprint", "--no-interaction",
+    ], {
+      cwd: tempDir,
+      encoding: "utf-8",
+      timeout: 8_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    // State directory should have been created with the correct plan ID
+    const { existsSync } = await import("fs");
+    const stateDir = join(tempDir, ".orch", "state");
+    expect(existsSync(stateDir)).toBe(true);
+  }, 15_000);
+
+  it("--work without a path argument errors immediately", async () => {
     initGitRepo(tempDir);
 
     const r = runMain(
@@ -253,8 +282,78 @@ describe("CLI flag wiring", () => {
     );
 
     const stderr = strip(r.stderr ?? "");
-    expect(stderr).toContain("No plan found");
+    expect(stderr).toContain("--work requires a plan path");
     expect(r.status).not.toBe(0);
+  });
+
+  it("--work plan.md (non-standard name) creates scoped state with fresh ID", async () => {
+    initGitRepo(tempDir);
+    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
+
+    // --work with a non-standard plan name should:
+    // 1. Generate a plan ID from the path
+    // 2. Copy/symlink to .orch/plan-<id>.md
+    // 3. Create state at .orch/state/plan-<id>.json
+    spawnSync("npx", [
+      "tsx", mainPath,
+      "--work", join(tempDir, "plan.md"),
+      "--skip-fingerprint", "--no-interaction",
+    ], {
+      cwd: tempDir,
+      encoding: "utf-8",
+      timeout: 8_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const { existsSync, readdirSync } = await import("fs");
+    // .orch directory should exist with a plan-<id>.md symlink/copy
+    const orchDir = join(tempDir, ".orch");
+    expect(existsSync(orchDir)).toBe(true);
+    const orchFiles = readdirSync(orchDir);
+    const planCopy = orchFiles.find((f: string) => /^plan-[0-9a-f]{6}\.md$/.test(f));
+    expect(planCopy).toBeDefined();
+
+    // State directory should also exist
+    expect(existsSync(join(orchDir, "state"))).toBe(true);
+  }, 15_000);
+
+  it("--work + --group Auth skips to that group", async () => {
+    initGitRepo(tempDir);
+    const multiGroupPlan = `## Group: Setup\n### Slice 1: Init\nDo setup.\n\n## Group: Auth\n### Slice 2: Login\nDo login.\n`;
+    const { mkdirSync } = await import("fs");
+    mkdirSync(join(tempDir, ".orch"), { recursive: true });
+    await writeFile(join(tempDir, ".orch", "plan-abc123.md"), multiGroupPlan);
+
+    const r = spawnSync("npx", [
+      "tsx", mainPath,
+      "--work", join(tempDir, ".orch", "plan-abc123.md"),
+      "--skip-fingerprint", "--no-interaction",
+      "--group", "Auth",
+    ], {
+      cwd: tempDir,
+      encoding: "utf-8",
+      timeout: 8_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const combined = strip((r.stdout ?? "") + (r.stderr ?? ""));
+    // Should show the Auth group, not the Setup group
+    expect(combined).toContain("Auth");
+    // Should skip Setup — the first group section header should not appear in output
+    expect(combined).not.toContain("Group: Setup — Slice 1");
+  }, 15_000);
+
+  it("--resume prints deprecation warning to stderr", async () => {
+    initGitRepo(tempDir);
+    // No plan file → will error with "No plan found" but deprecation warning appears first
+    const r = runMain(
+      ["--resume", "--skip-fingerprint", "--no-interaction"],
+      tempDir,
+    );
+
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("deprecated");
+    expect(stderr).toContain("--work");
   });
 
   it("--resume with no path and no existing plan files exits with error", async () => {
