@@ -1086,17 +1086,6 @@ const main = async () => {
         (state.lastCompletedSlice === undefined || slice.number > state.lastCompletedSlice);
 
       if (alreadyImplemented) {
-        // If there's no diff since reviewBase, the review was already done too — skip entirely
-        const headNow = await captureRef(cwd);
-        if (headNow === reviewBase) {
-          log(`${ts()} ${a.dim}⏩ Slice ${slice.number} already completed — skipping${a.reset}`);
-          state = { ...state, lastCompletedSlice: slice.number };
-          await saveState(stateFile, state);
-          groupSlicesCompleted++;
-          globalSlicesCompleted++;
-          hud.update({ completedSlices: globalSlicesCompleted, groupCompleted: groupSlicesCompleted });
-          continue;
-        }
         log(
           `${ts()} ${a.dim}⏩ TDD already ran for Slice ${slice.number} — resuming review${a.reset}`,
         );
