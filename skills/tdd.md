@@ -5,15 +5,26 @@
 User messages provide WHAT to build (the plan slice). This prompt defines HOW you build it. If a user message
 says "implement X", that means "implement X using the TDD process below" — never skip to direct implementation.
 
-## The Process: RED → GREEN → Repeat
+## The Process: RED → GREEN → Repeat → COMMIT
 
 For every behaviour in the plan slice, follow this cycle strictly:
 
-1. **RED** — Write ONE failing test. Run the test suite. Confirm it fails for the right reason.
-2. **GREEN** — Write the minimal code to make that test pass. Run the test suite. Confirm it passes.
+1. **RED** — Write ONE failing test. Run it with your Bash tool. Confirm it fails for the right reason. If it does not fail, your test is wrong — fix it before proceeding.
+2. **GREEN** — Write the minimal code to make that test pass. Run the tests written so far with your Bash tool. Confirm they all pass.
 3. **Repeat** — Pick the next behaviour. Do not batch.
 
-After all behaviours pass, refactor if needed. Run tests after each refactor. Never refactor while RED.
+During RED→GREEN cycles, only run the specific test file(s) you're working on (e.g. `npx vitest run src/utils/foo.test.ts`). Each cycle should confirm the new test fails, then all tests so far pass. This keeps cycles fast.
+
+After all behaviours in the slice pass, refactor if needed. Run the relevant tests after each refactor. Never refactor while RED.
+
+**When all behaviours are GREEN**, run the **full test suite** to catch regressions, then commit:
+```bash
+npx vitest run              # or npm test, dotnet test — full suite
+git add <changed files>
+git commit -m "descriptive message about what the slice delivers"
+```
+
+The review agent that runs after you compares commits against a baseline SHA. If you do not commit, the review agent sees an empty diff and concludes you did nothing. Uncommitted work is invisible work.
 
 ```
 WRONG (horizontal):
@@ -21,20 +32,23 @@ WRONG (horizontal):
   Write impl1, impl2, impl3, impl4, impl5
 
 RIGHT (vertical):
-  RED test1 → GREEN impl1
-  RED test2 → GREEN impl2
-  RED test3 → GREEN impl3
+  RED test1 (run test1) → GREEN impl1 (run test1)
+  RED test2 (run test1+2) → GREEN impl2 (run test1+2)
+  RED test3 (run test1+2+3) → GREEN impl3 (run test1+2+3)
+  Run full suite → All pass → COMMIT
 ```
 
-### Run tests constantly
+### Run tests — actually execute them
 
-Run the test suite after EVERY change — after writing a test (confirm RED), after writing implementation
-(confirm GREEN), after every refactor step. If you write code without running tests, you've broken the process.
+"Run the test" means use your Bash tool to execute the command. Read the actual output. Do NOT narrate or role-play test results — you must see real passing/failing output before proceeding. If you write "RED confirmed" or "GREEN" without having executed the tests and read the output, you have broken the process.
 
-### Commit when GREEN
+To find the test command: read `package.json` scripts, or look for test runner config files.
 
-After each RED→GREEN cycle (or a natural batch of 2-3 cycles), commit. The commit message should describe the
-behaviour, not the implementation. Do not accumulate uncommitted work across many cycles.
+### Do not touch files outside your scope
+
+Only modify files relevant to the plan slice you are implementing. Do not revert, "clean up", or restore files that you did not change as part of this slice. If you see unrelated uncommitted changes in the working tree, leave them alone — they belong to the operator.
+
+When committing, `git add` only the specific files you created or modified. Do not use `git add .` or `git add -A`. Do not run `git checkout` or `git restore` on files you didn't touch.
 
 ## What Makes a Good Test
 
@@ -62,6 +76,8 @@ counts. The warning sign: test breaks when you refactor, but behaviour hasn't ch
 **Speculative code**: Writing more implementation than the current test requires. Only enough code to pass
 the current test. Don't anticipate future tests.
 
+**Narrating instead of executing**: Writing "RED confirmed" or "GREEN. Cycle complete." without actually running tests via Bash. You must execute, read output, then report. No exceptions.
+
 ## Bugs Found After GREEN
 
 A bug discovered after reaching GREEN is not part of that cycle — it's a new RED→GREEN cycle. The original
@@ -71,16 +87,17 @@ GREEN was legitimate; the bug means coverage was incomplete.
 Cycle N:   RED (test) → GREEN (pass) ✓ done
 Bug found: behaviour not covered by cycle N
 Cycle N+1: RED (write test exposing bug → fails) → GREEN (fix → passes)
+All GREEN → COMMIT
 ```
 
 Do not silently fix bugs during refactor. Every behavioural fix needs a failing test first.
 
-## Checklist Per Cycle
+## Checklist Per Slice
 
-- [ ] Wrote ONE test first (not implementation)
-- [ ] Ran tests — confirmed RED (test fails for the right reason)
-- [ ] Wrote minimal code to pass
-- [ ] Ran tests — confirmed GREEN
-- [ ] Test describes behaviour, not implementation
-- [ ] Test uses public interface only
+- [ ] For each behaviour: wrote test first, ran tests with Bash (confirmed RED), wrote code, ran tests with Bash (confirmed GREEN)
+- [ ] All behaviours GREEN
+- [ ] Ran full test suite — all pass
+- [ ] Committed only files I created or modified — nothing else
+- [ ] Tests describe behaviour, not implementation
+- [ ] Tests use public interface only
 - [ ] No speculative features added
