@@ -30,6 +30,10 @@ export type Hud = {
   startPrompt: (mode: "guide" | "interrupt") => void;
   /** Show "skipping…" indicator on the shortcut bar. */
   setSkipping: (v: boolean) => void;
+  /** Show tool-use activity with spinner (empty string clears). */
+  setActivity: (text: string) => void;
+  /** Show a prompt in the HUD and return the user's answer. */
+  askUser: (prompt: string) => Promise<string>;
 };
 
 const formatElapsed = (ms: number): string => {
@@ -81,15 +85,23 @@ let _keyHandler: KeyHandler | null = null;
 let _interruptSubmitHandler: InterruptSubmitHandler | null = null;
 let _startPrompt: ((mode: "guide" | "interrupt") => void) | null = null;
 let _setSkipping: ((v: boolean) => void) | null = null;
+let _setActivity: ((text: string) => void) | null = null;
+let _askPrompt: ((prompt: string) => void) | null = null;
+let _askResolve: ((answer: string) => void) | null = null;
 
 // ─── ink component ───────────────────────────────────────────────────────────
+
+const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 
 const App = () => {
   const [items, setItems] = useState<string[]>([]);
   const [, setTick] = useState(0);
-  const [mode, setMode] = useState<"status" | "guide" | "interrupt">("status");
+  const [mode, setMode] = useState<"status" | "guide" | "interrupt" | "ask">("status");
   const [inputText, setInputText] = useState("");
+  const [askLabel, setAskLabel] = useState("");
   const [skipping, setSkipping] = useState(false);
+  const [activity, setActivity] = useState("");
+  const [spinIdx, setSpinIdx] = useState(0);
 
   useEffect(() => {
     _notify = () => {
@@ -101,26 +113,59 @@ const App = () => {
       setInputText("");
     };
     _setSkipping = setSkipping;
-    const iv = setInterval(() => setTick((t) => t + 1), 1000);
+    _setActivity = setActivity;
+    _askPrompt = (prompt) => {
+      setAskLabel(prompt);
+      setMode("ask");
+      setInputText("");
+    };
+    const tickIv = setInterval(() => setTick((t) => t + 1), 1000);
     return () => {
       _notify = null;
       _startPrompt = null;
       _setSkipping = null;
-      clearInterval(iv);
+      _setActivity = null;
+      _askPrompt = null;
+      clearInterval(tickIv);
     };
   }, []);
 
+  // Spinner only runs while activity is showing — avoids constant re-renders
+  useEffect(() => {
+    if (!activity) return;
+    const iv = setInterval(() => setSpinIdx((i) => (i + 1) % SPINNER.length), 120);
+    return () => clearInterval(iv);
+  }, [activity]);
+
   useInput((input, key) => {
-    if (mode === "guide" || mode === "interrupt") {
+    // Q and ctrl+c always quit, regardless of input mode
+    if (input === "q" || (key.ctrl && input === "c")) {
+      if (_keyHandler) _keyHandler(input === "q" ? "q" : "\x03");
+      return;
+    }
+
+    if (mode === "guide" || mode === "interrupt" || mode === "ask") {
       if (key.return) {
         const text = inputText.trim();
-        const m = mode;
-        setMode("status");
-        setInputText("");
-        if (text && _interruptSubmitHandler) _interruptSubmitHandler(text, m);
+        if (mode === "ask") {
+          setMode("status");
+          setInputText("");
+          if (_askResolve) { const r = _askResolve; _askResolve = null; r(text); }
+        } else {
+          const m = mode;
+          setMode("status");
+          setInputText("");
+          if (text && _interruptSubmitHandler) _interruptSubmitHandler(text, m as "guide" | "interrupt");
+        }
       } else if (key.escape) {
-        setMode("status");
-        setInputText("");
+        if (mode === "ask") {
+          setMode("status");
+          setInputText("");
+          if (_askResolve) { const r = _askResolve; _askResolve = null; r(""); }
+        } else {
+          setMode("status");
+          setInputText("");
+        }
       } else if (key.backspace || key.delete) {
         setInputText((t) => t.slice(0, -1));
       } else if (input && !key.ctrl && !key.meta) {
@@ -136,6 +181,18 @@ const App = () => {
   });
 
   const cols = _getCols();
+
+  if (mode === "ask") {
+    const prompt = ` ${askLabel}${inputText}█`;
+    const padded = prompt + " ".repeat(Math.max(0, cols - prompt.length));
+    return (
+      <>
+        <Static items={items}>{(line, index) => <Text key={index}>{line}</Text>}</Static>
+        <Text>{" "}</Text>
+        <Text bold color="green">{padded}</Text>
+      </>
+    );
+  }
 
   if (mode === "guide" || mode === "interrupt") {
     const label = mode === "guide" ? "Guide" : "Interrupt";
@@ -170,6 +227,7 @@ const App = () => {
           <Text dimColor>{"S: skip"}</Text>
         )}
         <Text dimColor>{" | Q: quit"}</Text>
+        {activity ? <Text dimColor>{`  ${SPINNER[spinIdx]} ${activity}`}</Text> : null}
       </Text>
     </>
   );
@@ -193,6 +251,11 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
       onInterruptSubmit: () => {},
       startPrompt: () => {},
       setSkipping: () => {},
+      setActivity: () => {},
+      askUser: (prompt) => new Promise((resolve) => {
+        const rl = require("readline").createInterface({ input: process.stdin, output: stdout });
+        rl.question(prompt, (answer: string) => { rl.close(); resolve(answer); });
+      }),
     };
   }
 
@@ -257,5 +320,12 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
     setSkipping: (v) => {
       if (_setSkipping) _setSkipping(v);
     },
+    setActivity: (text) => {
+      if (_setActivity) _setActivity(text);
+    },
+    askUser: (prompt) => new Promise((resolve) => {
+      _askResolve = resolve;
+      if (_askPrompt) _askPrompt(prompt);
+    }),
   };
 };

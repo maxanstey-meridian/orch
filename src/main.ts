@@ -24,7 +24,13 @@ import { readFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { readFile } from "fs/promises";
 import { parsePlan, type Slice } from "./plan-parser.js";
 import { generatePlan, isPlanFormat, planFileName, planIdFromPath } from "./plan-generator.js";
-import { loadState, saveState, clearState, statePathForPlan, type OrchestratorState } from "./state.js";
+import {
+  loadState,
+  saveState,
+  clearState,
+  statePathForPlan,
+  type OrchestratorState,
+} from "./state.js";
 import { runFingerprint, wrapBrief } from "./fingerprint.js";
 import { runInit, profileToMarkdown, createAsk } from "./init.js";
 import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
@@ -238,6 +244,8 @@ const followUpIfNeeded = async (
   agent: AgentProcess,
   noInteraction: boolean,
   createStreamer: (style: AgentStyle) => Streamer = (style) => makeStreamer(style),
+  toolUseHandler?: (summary: string) => void,
+  askUser: (prompt: string) => Promise<string> = ask,
   maxFollowUps = 3,
 ): Promise<AgentResult> => {
   let current = result;
@@ -245,7 +253,7 @@ const followUpIfNeeded = async (
 
   while (current.needsInput && !noInteraction && followUps < maxFollowUps) {
     log(`\n${ts()} ${a.yellow}Bot is asking for input ↑${a.reset}`);
-    const answer = await ask(`${a.bold}Your response${a.reset} (or Enter to skip): `);
+    const answer = await askUser(`${a.bold}Your response${a.reset} (or Enter to skip): `);
 
     const s = createStreamer(agent.style);
     if (!answer.trim()) {
@@ -253,9 +261,10 @@ const followUpIfNeeded = async (
       current = await agent.send(
         "No preference — proceed with your best judgement. Make the decision yourself and continue implementing.",
         s,
+        toolUseHandler,
       );
     } else {
-      current = await agent.send(answer, s);
+      current = await agent.send(answer, s, toolUseHandler);
     }
     s.flush();
     followUps++;
@@ -327,6 +336,7 @@ type CommitSweepDeps = {
   hasDirtyTree: (cwd: string) => Promise<boolean>;
   log: (...args: unknown[]) => void;
   followUpIfNeeded?: (result: AgentResult, agent: AgentProcess) => Promise<AgentResult>;
+  onToolUse?: (summary: string) => void;
 };
 
 export const commitSweep = async (deps: CommitSweepDeps): Promise<void> => {
@@ -341,7 +351,9 @@ export const commitSweep = async (deps: CommitSweepDeps): Promise<void> => {
   deps.log(`${ts()} ${BOT_TDD.badge} uncommitted changes detected — asking TDD bot to commit`);
   const prompt = buildCommitSweepPrompt(deps.groupName);
   const s = deps.makeStreamer();
-  const result = await deps.withInterrupt(deps.agent, () => deps.agent.send(prompt, s));
+  const result = await deps.withInterrupt(deps.agent, () =>
+    deps.agent.send(prompt, s, deps.onToolUse),
+  );
   s.flush();
   await deps.exitOnCreditExhaustion(result, deps.agent);
   if (deps.followUpIfNeeded && result.needsInput) {
@@ -541,6 +553,8 @@ const reviewFixLoop = async (
   exitOnCreditExhaustion: (result: AgentResult, agent: AgentProcess) => Promise<void>,
   withInterrupt: <T>(agent: AgentProcess, fn: () => Promise<T>) => Promise<T>,
   createStreamer: (style: AgentStyle) => Streamer,
+  toolUseHandler?: (summary: string) => void,
+  askUser?: (prompt: string) => Promise<string>,
   baseSha?: string,
   onStatusChange?: (agent: string, activity: string) => void,
   shouldSkip?: () => boolean,
@@ -564,7 +578,9 @@ const reviewFixLoop = async (
       ? withBrief(buildReviewPrompt(content, reviewSha), brief)
       : buildReviewPrompt(content, reviewSha);
     let s = createStreamer(BOT_REVIEW);
-    const reviewResult = await withInterrupt(reviewAgent, () => reviewAgent.send(reviewPrompt, s));
+    const reviewResult = await withInterrupt(reviewAgent, () =>
+      reviewAgent.send(reviewPrompt, s, toolUseHandler),
+    );
     s.flush();
     await exitOnCreditExhaustion(reviewResult, reviewAgent);
     reviewFirstMessage.value = false;
@@ -581,11 +597,15 @@ const reviewFixLoop = async (
     const fixPrompt = buildTddPrompt(content, reviewText);
     s = createStreamer(BOT_TDD);
     const fixResult = await withInterrupt(tddAgent, () =>
-      tddAgent.send(tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt, s),
+      tddAgent.send(
+        tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt,
+        s,
+        toolUseHandler,
+      ),
     );
     s.flush();
     tddFirstMessage.value = false;
-    await followUpIfNeeded(fixResult, tddAgent, noInteraction, createStreamer);
+    await followUpIfNeeded(fixResult, tddAgent, noInteraction, createStreamer, toolUseHandler, askUser);
 
     if (!(await hasChanges(cwd, preFixSha))) {
       log(`${ts()} ${a.dim}TDD bot made no changes — review cycle complete${a.reset}`);
@@ -616,7 +636,13 @@ const doGeneratePlan = async (
   log(`${a.bold}Generating plan from inventory...${a.reset}`);
   const planAgent = spawnAgent(BOT_PLAN);
   try {
-    const { planPath, planId } = await generatePlan(inventoryPath, briefContent, planAgent, outputDir, inventoryPath);
+    const { planPath, planId } = await generatePlan(
+      inventoryPath,
+      briefContent,
+      planAgent,
+      outputDir,
+      inventoryPath,
+    );
     log(`${a.green}Plan written to ${planPath}${a.reset}`);
     // Persist planId to global state so --resume can find it
     await saveState(globalStatePath, { ...currentGlobalState, currentPlanId: planId });
@@ -744,7 +770,13 @@ const main = async () => {
             log(`${a.dim}Using existing plan.${a.reset}`);
             planPath = statePlanPath;
           } else {
-            planPath = await doGeneratePlan(inputPath, brief, orchDir, globalStateFile, globalState);
+            planPath = await doGeneratePlan(
+              inputPath,
+              brief,
+              orchDir,
+              globalStateFile,
+              globalState,
+            );
           }
         }
       } else {
@@ -759,8 +791,8 @@ const main = async () => {
     activePlanId = planIdFromPath(planPath);
   } catch {
     // External plan file (e.g. plan.md) — derive stable ID from path hash or global state
-    activePlanId = globalState.currentPlanId
-      ?? createHash("sha256").update(planPath).digest("hex").slice(0, 6);
+    activePlanId =
+      globalState.currentPlanId ?? createHash("sha256").update(planPath).digest("hex").slice(0, 6);
   }
   const stateFile = statePathForPlan(orchDir, activePlanId);
   mkdirSync(resolve(orchDir, "state"), { recursive: true });
@@ -792,7 +824,22 @@ const main = async () => {
   // Replay buffered pre-ink output through ink so it knows about those lines
   for (const line of earlyLog) log(line);
   const hudWriter = hud.createWriter();
-  const boundMakeStreamer = (style: AgentStyle): Streamer => makeStreamer(style, hudWriter);
+  let _activityShowing = false;
+  const onToolUse = (summary: string) => {
+    _activityShowing = true;
+    hud.setActivity(summary);
+  };
+
+  const boundMakeStreamer = (style: AgentStyle): Streamer => {
+    const base = makeStreamer(style, hudWriter);
+    // Clear activity spinner once on first text chunk, not on every chunk
+    const wrapped = (text: string) => {
+      if (_activityShowing) { _activityShowing = false; hud.setActivity(""); }
+      base(text);
+    };
+    wrapped.flush = base.flush;
+    return wrapped;
+  };
 
   // 5. Load per-plan state
   let state: OrchestratorState = await loadState(stateFile);
@@ -941,6 +988,10 @@ const main = async () => {
 
     const groupBaseSha = await captureRef(cwd);
 
+    // Skip signal — active for the entire group (slices, gap analysis, commit sweep).
+    sliceSkippable = true;
+    sliceSkipFlag = false;
+
     // ── Slice loop ──
     let reviewBase = groupBaseSha;
     let groupSlicesCompleted = 0;
@@ -965,13 +1016,7 @@ const main = async () => {
         activeAgentActivity: "implementing...",
       });
 
-      // Skip signal — active for the entire slice, not just TDD.
-      // Pressing S toggles skip; checked after each async operation.
-      sliceSkippable = true;
-      sliceSkipFlag = false;
-
       const doSkip = async () => {
-        sliceSkippable = false;
         sliceSkipFlag = false;
         hud.setSkipping(false);
         log(`\n${ts()} ${a.yellow}⏭ Slice ${slice.number} skipped by operator${a.reset}`);
@@ -1006,7 +1051,7 @@ const main = async () => {
         const prompt = tddFirstMessage.value ? withBrief(tddPrompt, brief) : tddPrompt;
         const s = boundMakeStreamer(BOT_TDD);
 
-        let tddResult = await withInterrupt(tddAgent, () => tddAgent.send(prompt, s));
+        let tddResult = await withInterrupt(tddAgent, () => tddAgent.send(prompt, s, onToolUse));
         s.flush();
 
         if (sliceSkipFlag) {
@@ -1024,16 +1069,19 @@ const main = async () => {
           reviewFirstMessage.value = true;
           const s2 = boundMakeStreamer(BOT_TDD);
           tddResult = await withInterrupt(tddAgent, () =>
-            tddAgent.send(withBrief(guidance, brief), s2),
+            tddAgent.send(withBrief(guidance, brief), s2, onToolUse),
           );
           s2.flush();
         }
 
         tddFirstMessage.value = false;
         await exitOnCreditExhaustion(tddResult, tddAgent);
-        await followUpIfNeeded(tddResult, tddAgent, noInteraction, boundMakeStreamer);
+        await followUpIfNeeded(tddResult, tddAgent, noInteraction, boundMakeStreamer, onToolUse, hud.askUser);
 
-        if (sliceSkipFlag) { await doSkip(); continue; }
+        if (sliceSkipFlag) {
+          await doSkip();
+          continue;
+        }
 
         if (tddResult.exitCode !== 0) {
           log(
@@ -1051,7 +1099,10 @@ const main = async () => {
           continue;
         }
 
-        if (sliceSkipFlag) { await doSkip(); continue; }
+        if (sliceSkipFlag) {
+          await doSkip();
+          continue;
+        }
 
         state = { ...state, lastSliceImplemented: slice.number };
         await saveState(stateFile, state);
@@ -1094,6 +1145,8 @@ const main = async () => {
         exitOnCreditExhaustion,
         withInterrupt,
         boundMakeStreamer,
+        onToolUse,
+        hud.askUser,
         reviewBase,
         (agent, activity) => hud.update({ activeAgent: agent, activeAgentActivity: activity }),
         () => sliceSkipFlag,
@@ -1135,11 +1188,19 @@ Be concrete and specific. No filler.`,
         activeAgent: undefined,
         activeAgentActivity: undefined,
       });
-      sliceSkippable = false;
     }
 
+    // Reset skip visual (but keep sliceSkippable true for gap/commit phases)
+    sliceSkipFlag = false;
+    hud.setSkipping(false);
+    hud.setActivity("");
+
     // ── Gap analysis ──
-    if (await hasChanges(cwd, groupBaseSha)) {
+    if (sliceSkipFlag) {
+      log(`\n${ts()} ${a.yellow}⏭ Gap analysis skipped by operator${a.reset}`);
+      sliceSkipFlag = false;
+      hud.setSkipping(false);
+    } else if (await hasChanges(cwd, groupBaseSha)) {
       log(
         `\n${ts()} ${BOT_GAP.badge} ${a.yellow}scanning for coverage gaps across group...${a.reset}`,
       );
@@ -1148,11 +1209,15 @@ Be concrete and specific. No filler.`,
       const gapAgent = spawnAgent(BOT_GAP);
       const gapPrompt = withBrief(buildGapPrompt(groupContent, groupBaseSha), brief);
       let s = boundMakeStreamer(BOT_GAP);
-      const gapResult = await withInterrupt(gapAgent, () => gapAgent.send(gapPrompt, s));
+      const gapResult = await withInterrupt(gapAgent, () => gapAgent.send(gapPrompt, s, onToolUse));
       s.flush();
       await exitOnCreditExhaustion(gapResult, gapAgent);
 
-      if (gapResult.exitCode !== 0) {
+      if (sliceSkipFlag) {
+        log(`\n${ts()} ${a.yellow}⏭ Gap fixes skipped by operator${a.reset}`);
+        sliceSkipFlag = false;
+        hud.setSkipping(false);
+      } else if (gapResult.exitCode !== 0) {
         log(
           `${ts()} ${a.yellow}⚠ Gap analysis agent failed (exit ${gapResult.exitCode}) — skipping${a.reset}`,
         );
@@ -1162,44 +1227,64 @@ Be concrete and specific. No filler.`,
         if (gapText && !gapText.includes("NO_GAPS_FOUND")) {
           log(`${ts()} ${BOT_GAP.badge} ${a.yellow}gaps found — sending to TDD bot${a.reset}`);
 
-          const gapBaseSha = await captureRef(cwd);
-          const gapFixPrompt = buildTddPrompt(
-            groupContent,
-            `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
-          );
-          s = boundMakeStreamer(BOT_TDD);
-          const gapFixResult = await withInterrupt(tddAgent, () =>
-            tddAgent.send(tddFirstMessage.value ? withBrief(gapFixPrompt, brief) : gapFixPrompt, s),
-          );
-          s.flush();
-          tddFirstMessage.value = false;
-          await exitOnCreditExhaustion(gapFixResult, tddAgent);
-          await followUpIfNeeded(gapFixResult, tddAgent, noInteraction, boundMakeStreamer);
-          if (!(await hasChanges(cwd, gapBaseSha))) {
-            log(`${ts()} ${a.dim}TDD bot made no changes for gaps${a.reset}`);
+          if (sliceSkipFlag) {
+            log(`${ts()} ${a.yellow}⏭ Gap fixes skipped by operator${a.reset}`);
+            sliceSkipFlag = false;
+            hud.setSkipping(false);
           } else {
-            const testResult = await runTestGate({ testCommand: profile.testCommand });
-            if (!testResult.passed) {
-              log(`${ts()} ${a.yellow}⚠ Tests failed after gap fixes${a.reset}`);
+            const gapBaseSha = await captureRef(cwd);
+            const gapFixPrompt = buildTddPrompt(
+              groupContent,
+              `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
+            );
+            s = boundMakeStreamer(BOT_TDD);
+            const gapFixResult = await withInterrupt(tddAgent, () =>
+              tddAgent.send(
+                tddFirstMessage.value ? withBrief(gapFixPrompt, brief) : gapFixPrompt,
+                s,
+                onToolUse,
+              ),
+            );
+            s.flush();
+            tddFirstMessage.value = false;
+            await exitOnCreditExhaustion(gapFixResult, tddAgent);
+            await followUpIfNeeded(
+              gapFixResult,
+              tddAgent,
+              noInteraction,
+              boundMakeStreamer,
+              onToolUse,
+              hud.askUser,
+            );
+            if (!(await hasChanges(cwd, gapBaseSha))) {
+              log(`${ts()} ${a.dim}TDD bot made no changes for gaps${a.reset}`);
             } else {
-              await reviewFixLoop(
-                tddAgent,
-                reviewAgent,
-                groupContent,
-                brief,
-                cwd,
-                noInteraction,
-                tddFirstMessage,
-                reviewFirstMessage,
-                profile.testCommand,
-                exitOnCreditExhaustion,
-                withInterrupt,
-                boundMakeStreamer,
-                gapBaseSha,
-                (agent, activity) => hud.update({ activeAgent: agent, activeAgentActivity: activity }),
-                () => sliceSkipFlag,
-              );
-              log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
+              const testResult = await runTestGate({ testCommand: profile.testCommand });
+              if (!testResult.passed) {
+                log(`${ts()} ${a.yellow}⚠ Tests failed after gap fixes${a.reset}`);
+              } else {
+                await reviewFixLoop(
+                  tddAgent,
+                  reviewAgent,
+                  groupContent,
+                  brief,
+                  cwd,
+                  noInteraction,
+                  tddFirstMessage,
+                  reviewFirstMessage,
+                  profile.testCommand,
+                  exitOnCreditExhaustion,
+                  withInterrupt,
+                  boundMakeStreamer,
+                  onToolUse,
+                  hud.askUser,
+                  gapBaseSha,
+                  (agent, activity) =>
+                    hud.update({ activeAgent: agent, activeAgentActivity: activity }),
+                  () => sliceSkipFlag,
+                );
+                log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
+              }
             }
           }
         } else {
@@ -1211,6 +1296,11 @@ Be concrete and specific. No filler.`,
     }
 
     // ── Commit sweep — catch uncommitted changes before marking group done ──
+    if (sliceSkipFlag) {
+      log(`\n${ts()} ${a.yellow}⏭ Commit sweep skipped by operator${a.reset}`);
+      sliceSkipFlag = false;
+      hud.setSkipping(false);
+    }
     await commitSweep({
       groupName: group.name,
       cwd,
@@ -1221,11 +1311,15 @@ Be concrete and specific. No filler.`,
       hasDirtyTree,
       log,
       followUpIfNeeded: (result, agent) =>
-        followUpIfNeeded(result, agent, noInteraction, boundMakeStreamer),
+        followUpIfNeeded(result, agent, noInteraction, boundMakeStreamer, onToolUse, hud.askUser),
+      onToolUse,
     });
 
     state = { ...state, lastCompletedGroup: group.name };
     await saveState(stateFile, state);
+    sliceSkippable = false;
+    sliceSkipFlag = false;
+    hud.setSkipping(false);
 
     // ── Inter-group transition ──
     if (i < remaining.length - 1) {
@@ -1243,8 +1337,9 @@ Be concrete and specific. No filler.`,
       if (auto || noInteraction) {
         log(`\n${ts()} ${a.dim}→ next: ${nextLabel}${a.reset}`);
       } else {
-        const answer = await ask(
-          `\n${ts()} Group done. Run ${a.bold}${nextLabel}${a.reset} next? (Y/n) `,
+        log(`\n${ts()} ${a.green}✓ Group "${group.name}" complete${a.reset}`);
+        const answer = await hud.askUser(
+          `Group done. Run ${nextLabel} next? (Y/n) `,
         );
         if (answer.toLowerCase() === "n") {
           log(`Stopped. Resume with --group "${next.name}"`);
@@ -1268,7 +1363,9 @@ Be concrete and specific. No filler.`,
       const finalAgent = spawnAgent(BOT_FINAL);
       const finalPrompt = withBrief(pass.prompt, brief);
       let s = boundMakeStreamer(BOT_FINAL);
-      const finalResult = await withInterrupt(finalAgent, () => finalAgent.send(finalPrompt, s));
+      const finalResult = await withInterrupt(finalAgent, () =>
+        finalAgent.send(finalPrompt, s, onToolUse),
+      );
       s.flush();
       await exitOnCreditExhaustion(finalResult, finalAgent);
       finalAgent.kill();
@@ -1297,12 +1394,16 @@ Be concrete and specific. No filler.`,
       );
       s = boundMakeStreamer(BOT_TDD);
       const fixResult = await withInterrupt(tddAgent, () =>
-        tddAgent.send(tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt, s),
+        tddAgent.send(
+          tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt,
+          s,
+          onToolUse,
+        ),
       );
       s.flush();
       tddFirstMessage.value = false;
       await exitOnCreditExhaustion(fixResult, tddAgent);
-      await followUpIfNeeded(fixResult, tddAgent, noInteraction, boundMakeStreamer);
+      await followUpIfNeeded(fixResult, tddAgent, noInteraction, boundMakeStreamer, onToolUse, hud.askUser);
       if (!(await hasChanges(cwd, preFixSha))) {
         log(`${ts()} ${a.dim}TDD bot made no changes for ${pass.name}${a.reset}`);
         continue;
@@ -1330,6 +1431,8 @@ Be concrete and specific. No filler.`,
         exitOnCreditExhaustion,
         withInterrupt,
         boundMakeStreamer,
+        onToolUse,
+        hud.askUser,
         preFixSha,
         (agent, activity) => hud.update({ activeAgent: agent, activeAgentActivity: activity }),
       );

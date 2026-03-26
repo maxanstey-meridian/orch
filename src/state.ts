@@ -7,7 +7,10 @@ const stateSchema = z
     lastCompletedSlice: z.number().int().nonnegative().optional(),
     lastCompletedGroup: z.string().min(1).optional(),
     lastSliceImplemented: z.number().int().nonnegative().optional(),
-    currentPlanId: z.string().regex(/^[0-9a-f]{6}$/).optional(),
+    currentPlanId: z
+      .string()
+      .regex(/^[0-9a-f]{6}$/)
+      .optional(),
   })
   .passthrough();
 
