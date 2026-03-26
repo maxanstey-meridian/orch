@@ -441,12 +441,15 @@ type PlanThenExecuteDeps = {
   isHardInterrupted: () => string | null;
   onToolUse?: (summary: string) => void;
   log: (...args: unknown[]) => void;
+  noInteraction?: boolean;
+  askUser?: (prompt: string) => Promise<string>;
 };
 
 type PlanThenExecuteResult = {
   tddResult: AgentResult;
   skipped: boolean;
   hardInterrupt?: string;
+  replan?: boolean;
 };
 
 export const planThenExecute = async (
@@ -476,9 +479,32 @@ export const planThenExecute = async (
   // Extract plan text — prefer structured planText, fall back to assistantText
   const plan = planResult.planText ?? planResult.assistantText ?? "";
 
+  // ── Confirmation gate ──
+  let operatorGuidance = "";
+  if (!deps.noInteraction && deps.askUser) {
+    const planLines = plan.split("\n");
+    const MAX_PREVIEW = 30;
+    const preview = planLines.slice(0, MAX_PREVIEW).join("\n");
+    deps.log(`${BOT_PLAN.badge} plan ready`);
+    deps.log(preview);
+    if (planLines.length > MAX_PREVIEW) {
+      deps.log(`... (truncated, ${planLines.length} lines)`);
+    }
+    const answer = await deps.askUser("Accept plan? (y)es / (e)dit / (r)eplan: ");
+    if (answer.startsWith("r")) {
+      return { tddResult: planResult, skipped: false, replan: true };
+    }
+    if (answer.startsWith("e")) {
+      operatorGuidance = await deps.askUser("Guidance for execution: ");
+    }
+    // "y", empty, or after guidance — fall through to execute
+  }
+
   // ── Execute phase ──
   deps.log(`${BOT_TDD.badge} executing plan...`);
-  const executePrompt = `Execute this plan:\n\n${plan}`;
+  let executePrompt = operatorGuidance
+    ? `Operator guidance: ${operatorGuidance}\n\nExecute this plan:\n\n${plan}`
+    : `Execute this plan:\n\n${plan}`;
   const es = deps.makeExecuteStreamer();
   const tddResult = await deps.withInterrupt(deps.tddAgent, () =>
     deps.tddAgent.send(executePrompt, es, deps.onToolUse),
@@ -1178,25 +1204,33 @@ const main = async () => {
           `${ts()} ${a.dim}⏩ TDD already ran for Slice ${slice.number} — resuming review${a.reset}`,
         );
       } else {
-        // ── Plan phase ──
-        log(`${ts()} ${BOT_PLAN.badge} ${a.white}planning...${a.reset}`);
-        hud.update({ activeAgent: "PLN", activeAgentActivity: "planning..." });
+        // ── Plan phase (with replan loop) ──
+        let replanAttempts = 0;
+        const MAX_REPLANS = 2;
+        let pteResult: Awaited<ReturnType<typeof planThenExecute>>;
+        do {
+          log(`${ts()} ${BOT_PLAN.badge} ${a.white}${replanAttempts > 0 ? "replanning..." : "planning..."}${a.reset}`);
+          hud.update({ activeAgent: "PLN", activeAgentActivity: replanAttempts > 0 ? "replanning..." : "planning..." });
 
-        const planAgent = spawnPlanAgentWithSkill();
+          const planAgent = spawnPlanAgentWithSkill();
 
-        const pteResult = await planThenExecute({
-          sliceContent: slice.content,
-          planAgent,
-          tddAgent,
-          brief: tddFirstMessage.value ? brief : "",
-          makePlanStreamer: () => boundMakeStreamer(BOT_PLAN),
-          makeExecuteStreamer: () => boundMakeStreamer(BOT_TDD),
-          withInterrupt,
-          isSkipped: () => sliceSkipFlag,
-          isHardInterrupted: () => hardInterruptPending,
-          onToolUse,
-          log,
-        });
+          pteResult = await planThenExecute({
+            sliceContent: slice.content,
+            planAgent,
+            tddAgent,
+            brief: tddFirstMessage.value ? brief : "",
+            makePlanStreamer: () => boundMakeStreamer(BOT_PLAN),
+            makeExecuteStreamer: () => boundMakeStreamer(BOT_TDD),
+            withInterrupt,
+            isSkipped: () => sliceSkipFlag,
+            isHardInterrupted: () => hardInterruptPending,
+            onToolUse,
+            log,
+            noInteraction,
+            askUser: noInteraction ? undefined : hud.askUser,
+          });
+          replanAttempts++;
+        } while (pteResult.replan && replanAttempts <= MAX_REPLANS);
 
         if (pteResult.skipped) {
           await doSkip();

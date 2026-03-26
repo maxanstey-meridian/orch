@@ -181,6 +181,222 @@ describe("planThenExecute", () => {
     expect(tddAgent.send).not.toHaveBeenCalled();
   });
 
+  it("skips confirmation when noInteraction is true", async () => {
+    const { planThenExecute } = await import("../src/main.js");
+
+    const askUser = vi.fn();
+    const planAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText: "the plan" })),
+    });
+    const tddAgent = makeAgent();
+
+    await planThenExecute({
+      sliceContent: "slice",
+      planAgent,
+      tddAgent,
+      brief: "",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => false,
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log: () => {},
+      noInteraction: true,
+      askUser,
+    });
+
+    expect(askUser).not.toHaveBeenCalled();
+    expect(tddAgent.send).toHaveBeenCalledOnce();
+  });
+
+  it("asks for confirmation and proceeds on 'y'", async () => {
+    const { planThenExecute } = await import("../src/main.js");
+
+    const askUser = vi.fn().mockResolvedValue("y");
+    const planAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText: "the plan" })),
+    });
+    const tddAgent = makeAgent();
+
+    await planThenExecute({
+      sliceContent: "slice",
+      planAgent,
+      tddAgent,
+      brief: "",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => false,
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log: () => {},
+      noInteraction: false,
+      askUser,
+    });
+
+    expect(askUser).toHaveBeenCalledOnce();
+    expect(tddAgent.send).toHaveBeenCalledOnce();
+    const prompt = askUser.mock.calls[0][0] as string;
+    expect(prompt).toContain("Accept plan");
+  });
+
+  it("proceeds on empty input (Enter key)", async () => {
+    const { planThenExecute } = await import("../src/main.js");
+
+    const askUser = vi.fn().mockResolvedValue("");
+    const planAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText: "the plan" })),
+    });
+    const tddAgent = makeAgent();
+
+    const result = await planThenExecute({
+      sliceContent: "slice",
+      planAgent,
+      tddAgent,
+      brief: "",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => false,
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log: () => {},
+      noInteraction: false,
+      askUser,
+    });
+
+    expect(tddAgent.send).toHaveBeenCalledOnce();
+    expect(result.replan).toBeUndefined();
+  });
+
+  it("logs truncated plan text before asking", async () => {
+    const { planThenExecute } = await import("../src/main.js");
+
+    const lines = Array.from({ length: 50 }, (_, i) => `Step ${i + 1}`);
+    const planText = lines.join("\n");
+    const askUser = vi.fn().mockResolvedValue("y");
+    const log = vi.fn();
+    const planAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText })),
+    });
+    const tddAgent = makeAgent();
+
+    await planThenExecute({
+      sliceContent: "slice",
+      planAgent,
+      tddAgent,
+      brief: "",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => false,
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log,
+      noInteraction: false,
+      askUser,
+    });
+
+    const loggedText = log.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+    expect(loggedText).toContain("Step 1");
+    expect(loggedText).not.toContain("Step 50");
+    expect(loggedText).toContain("truncated");
+    expect(loggedText).toContain("50 lines");
+  });
+
+  it("asks for guidance on 'e' and prepends to execute prompt", async () => {
+    const { planThenExecute } = await import("../src/main.js");
+
+    const askUser = vi.fn()
+      .mockResolvedValueOnce("e")
+      .mockResolvedValueOnce("Focus on error handling");
+    const planAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText: "the plan text" })),
+    });
+    const tddAgent = makeAgent();
+
+    await planThenExecute({
+      sliceContent: "slice",
+      planAgent,
+      tddAgent,
+      brief: "",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => false,
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log: () => {},
+      noInteraction: false,
+      askUser,
+    });
+
+    expect(askUser).toHaveBeenCalledTimes(2);
+    expect(tddAgent.send).toHaveBeenCalledOnce();
+    const tddPrompt = (tddAgent.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(tddPrompt).toContain("Focus on error handling");
+    expect(tddPrompt).toContain("the plan text");
+  });
+
+  it("kills plan agent even when replanning", async () => {
+    const { planThenExecute } = await import("../src/main.js");
+
+    const askUser = vi.fn().mockResolvedValue("r");
+    const planAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText: "the plan" })),
+    });
+    const tddAgent = makeAgent();
+
+    await planThenExecute({
+      sliceContent: "slice",
+      planAgent,
+      tddAgent,
+      brief: "",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => false,
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log: () => {},
+      noInteraction: false,
+      askUser,
+    });
+
+    expect(planAgent.kill).toHaveBeenCalledOnce();
+  });
+
+  it("returns replan signal on 'r' input", async () => {
+    const { planThenExecute } = await import("../src/main.js");
+
+    const askUser = vi.fn().mockResolvedValue("r");
+    const planAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText: "the plan" })),
+    });
+    const tddAgent = makeAgent();
+
+    const result = await planThenExecute({
+      sliceContent: "slice",
+      planAgent,
+      tddAgent,
+      brief: "",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => false,
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log: () => {},
+      noInteraction: false,
+      askUser,
+    });
+
+    expect(result.replan).toBe(true);
+    expect(result.skipped).toBe(false);
+    expect(tddAgent.send).not.toHaveBeenCalled();
+  });
+
   it("returns hardInterrupt guidance when execute phase is interrupted", async () => {
     const { planThenExecute } = await import("../src/main.js");
 
