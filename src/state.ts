@@ -7,6 +7,7 @@ const stateSchema = z
     lastCompletedSlice: z.number().int().nonnegative().optional(),
     lastCompletedGroup: z.string().min(1).optional(),
     lastSliceImplemented: z.number().int().nonnegative().optional(),
+    reviewBaseSha: z.string().min(1).optional(),
   })
   .passthrough();
 
