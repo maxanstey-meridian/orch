@@ -167,18 +167,6 @@ describe("state", () => {
     await expect(loadState(testPath)).rejects.toThrow("lastCompletedSlice");
   });
 
-  it("persists currentPlanId and loads it back", async () => {
-    const state = { currentPlanId: "a1b2c3" };
-    await saveState(testPath, state);
-    const loaded = await loadState(testPath);
-    expect(loaded.currentPlanId).toBe("a1b2c3");
-  });
-
-  it("throws when currentPlanId is not a valid 6-char hex string", async () => {
-    await writeFile(testPath, JSON.stringify({ currentPlanId: "nope" }));
-    await expect(loadState(testPath)).rejects.toThrow("currentPlanId");
-  });
-
   it("NaN in raw JSON is unparseable and returns fresh state", async () => {
     await writeFile(testPath, '{"lastCompletedSlice": NaN}');
     // NaN is invalid JSON — JSON.parse throws

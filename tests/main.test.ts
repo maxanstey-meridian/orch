@@ -47,37 +47,7 @@ describe("--reset flag behavior", () => {
     expect(state).toEqual({});
   });
 
-  it("--reset with external plan and no currentPlanId does not use global state file", async () => {
-    // Set up git repo
-    exec("git init", tempDir);
-    exec('git config user.email "test@test.com"', tempDir);
-    exec('git config user.name "Test"', tempDir);
-    await writeFile(join(tempDir, "file.txt"), "init");
-    exec("git add .", tempDir);
-    exec('git commit -m "init"', tempDir);
-    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
-
-    // Write global state WITHOUT currentPlanId but with some data
-    const globalStateFile = join(tempDir, ".orchestrator-state.json");
-    await saveState(globalStateFile, { lastCompletedSlice: 3 });
-
-    const mainPath = join(import.meta.dirname, "../src/main.ts");
-    spawnSync("npx", [
-      "tsx", mainPath, "--plan", join(tempDir, "plan.md"),
-      "--skip-fingerprint", "--no-interaction", "--reset",
-    ], {
-      cwd: tempDir,
-      encoding: "utf-8",
-      timeout: 5_000,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    // Global state file must survive — --reset should not touch it
-    const globalState = await loadState(globalStateFile);
-    expect(globalState.lastCompletedSlice).toBe(3);
-  }, 15_000);
-
-  it("--reset actually deletes the per-plan state file", async () => {
+  it("--reset clears per-plan state file via --work", async () => {
     exec("git init", tempDir);
     exec('git config user.email "test@test.com"', tempDir);
     exec('git config user.name "Test"', tempDir);
@@ -103,24 +73,24 @@ describe("--reset flag behavior", () => {
 
     const mainPath = join(import.meta.dirname, "../src/main.ts");
     spawnSync("npx", [
-      "tsx", mainPath, "--plan", planPath,
-      "--skip-fingerprint", "--no-interaction", "--reset", "--plan-only",
+      "tsx", mainPath, "--work", planPath,
+      "--skip-fingerprint", "--no-interaction", "--reset",
     ], {
       cwd: tempDir,
       encoding: "utf-8",
-      timeout: 5_000,
+      timeout: 8_000,
       stdio: ["pipe", "pipe", "pipe"],
     });
 
-    // Per-plan state file should be cleared (--plan-only exits before new state is written)
+    // Per-plan state file should be cleared
     const stateAfter = await loadState(perPlanStateFile);
     expect(stateAfter).toEqual({});
   }, 15_000);
 });
 
 describe("SHA-256 fallback plan ID derivation", () => {
-  // main.ts:792-793 derives a stable plan ID from the plan path when
-  // planIdFromPath throws (external plan file) and no currentPlanId exists.
+  // main.ts derives a stable plan ID from the plan path when
+  // planIdFromPath throws (external plan file).
   const derivePlanId = (path: string): string =>
     createHash("sha256").update(path).digest("hex").slice(0, 6);
 
@@ -171,7 +141,7 @@ describe("CLI flag wiring", () => {
     await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
 
     const r = runMain(
-      ["--resume", join(tempDir, "plan.md"), "--init", "--group", "Foo"],
+      ["--work", join(tempDir, "plan.md"), "--init", "--group", "Foo"],
       tempDir,
     );
 
@@ -195,30 +165,7 @@ describe("CLI flag wiring", () => {
     expect(r.status).not.toBe(0);
   });
 
-  it("--plan without --plan-only also takes the generate-and-exit path", async () => {
-    initGitRepo(tempDir);
-    // Provide a file that IS already a plan — skips plan generation entirely
-    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
-
-    // With --plan-only: exits with "Plan written to" (existing behavior)
-    const withFlag = runMain(
-      ["--plan", join(tempDir, "plan.md"), "--skip-fingerprint", "--no-interaction", "--plan-only"],
-      tempDir,
-    );
-    const withFlagOut = strip((withFlag.stdout ?? "") + (withFlag.stderr ?? ""));
-    expect(withFlagOut).toContain("Plan written to");
-
-    // Without --plan-only: should now also exit with "Plan written to"
-    const withoutFlag = runMain(
-      ["--plan", join(tempDir, "plan.md"), "--skip-fingerprint", "--no-interaction"],
-      tempDir,
-    );
-    const withoutFlagOut = strip((withoutFlag.stdout ?? "") + (withoutFlag.stderr ?? ""));
-    expect(withoutFlagOut).toContain("Plan written to");
-    expect(withoutFlag.status).toBe(0);
-  });
-
-  it("--plan-only prints deprecation warning but still works", async () => {
+  it("--plan-only is no longer recognized and exits with error", async () => {
     initGitRepo(tempDir);
     await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
 
@@ -227,10 +174,10 @@ describe("CLI flag wiring", () => {
       tempDir,
     );
 
-    const combined = strip((r.stdout ?? "") + (r.stderr ?? ""));
-    expect(combined).toContain("deprecated");
-    expect(combined).toContain("Plan written to");
-    expect(r.status).toBe(0);
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("--plan-only");
+    expect(stderr).toContain("no longer supported");
+    expect(r.status).not.toBe(0);
   });
 
   it("no-flags error mentions --plan and --work", async () => {
@@ -317,18 +264,14 @@ describe("CLI flag wiring", () => {
     expect(existsSync(join(orchDir, "state"))).toBe(true);
   }, 15_000);
 
-  it("--work plan.md ignores stale globalState.currentPlanId", async () => {
+  it("--work plan.md does not touch unrelated plan files in .orch", async () => {
     initGitRepo(tempDir);
     await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
 
-    // Pre-seed global state with a stale currentPlanId from a different plan
-    const globalStateFile = join(tempDir, ".orchestrator-state.json");
-    await saveState(globalStateFile, { currentPlanId: "999aaa" });
-
-    // Also create the stale plan file so we can verify it's NOT overwritten
+    // Create an unrelated plan file
     const { mkdirSync } = await import("fs");
     mkdirSync(join(tempDir, ".orch"), { recursive: true });
-    await writeFile(join(tempDir, ".orch", "plan-999aaa.md"), "# stale plan — do not overwrite");
+    await writeFile(join(tempDir, ".orch", "plan-999aaa.md"), "# other plan — do not overwrite");
 
     spawnSync("npx", [
       "tsx", mainPath,
@@ -341,15 +284,14 @@ describe("CLI flag wiring", () => {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
-    // The stale plan file should NOT have been overwritten
-    const staleContent = await readFile(join(tempDir, ".orch", "plan-999aaa.md"), "utf-8");
-    expect(staleContent).toContain("stale plan — do not overwrite");
+    // The unrelated plan file should NOT have been overwritten
+    const otherContent = await readFile(join(tempDir, ".orch", "plan-999aaa.md"), "utf-8");
+    expect(otherContent).toContain("other plan — do not overwrite");
 
-    // A NEW plan-<hash>.md should have been created (not using the stale ID)
+    // A new plan-<hash>.md should have been created for plan.md
     const { readdirSync } = await import("fs");
     const orchFiles = readdirSync(join(tempDir, ".orch"));
     const planFiles = orchFiles.filter((f: string) => /^plan-[0-9a-f]{6}\.md$/.test(f));
-    // Should have 2: the stale one AND the new hash-based one
     expect(planFiles.length).toBeGreaterThanOrEqual(2);
   }, 15_000);
 
@@ -391,28 +333,20 @@ describe("CLI flag wiring", () => {
     expect(r.status).not.toBe(0);
   });
 
-  it("--resume with explicit path prints deprecation and resolves plan", async () => {
+  it("--resume is no longer recognized and exits with error", async () => {
     initGitRepo(tempDir);
     await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
 
-    // --resume <path> should print deprecation warning and still resolve
-    const r = spawnSync("npx", [
-      "tsx", mainPath,
-      "--resume", join(tempDir, "plan.md"),
-      "--skip-fingerprint", "--no-interaction",
-    ], {
-      cwd: tempDir,
-      encoding: "utf-8",
-      timeout: 8_000,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const r = runMain(
+      ["--resume", join(tempDir, "plan.md")],
+      tempDir,
+    );
 
-    const combined = strip((r.stdout ?? "") + (r.stderr ?? ""));
-    expect(combined).toContain("deprecated");
-    expect(combined).toContain("--work");
-    // Should resolve the plan and attempt orchestration (not error on path)
-    expect(combined).not.toContain("No plan found");
-  }, 15_000);
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("--resume");
+    expect(stderr).toContain("no longer supported");
+    expect(r.status).not.toBe(0);
+  });
 
   it("--work plan.md --reset clears per-plan state for the hash-derived ID", async () => {
     initGitRepo(tempDir);
@@ -514,31 +448,56 @@ describe("CLI flag wiring", () => {
     expect(r.status).not.toBe(0);
   });
 
-  it("--resume prints deprecation warning to stderr", async () => {
+  it("--resume without path also exits with error (not recognized)", async () => {
     initGitRepo(tempDir);
-    // No plan file → will error with "No plan found" but deprecation warning appears first
+
     const r = runMain(
-      ["--resume", "--skip-fingerprint", "--no-interaction"],
+      ["--resume"],
       tempDir,
     );
 
     const stderr = strip(r.stderr ?? "");
-    expect(stderr).toContain("deprecated");
-    expect(stderr).toContain("--work");
+    expect(stderr).toContain("--resume");
+    expect(stderr).toContain("no longer supported");
+    expect(r.status).not.toBe(0);
   });
 
-  it("--resume with no path and no existing plan files exits with error", async () => {
-    initGitRepo(tempDir);
+});
 
-    const r = runMain(
-      ["--resume", "--skip-fingerprint", "--no-interaction"],
-      tempDir,
-    );
+describe("legacy cleanup", () => {
+  it("no references to .orchestrator-state.json remain in source files", () => {
+    const { execSync } = require("child_process");
+    const result = execSync(
+      'grep -r ".orchestrator-state.json" src/ --include="*.ts" -l || true',
+      { encoding: "utf-8" },
+    ).trim();
+    expect(result).toBe("");
+  });
+});
 
-    const stderr = strip(r.stderr ?? "");
-    expect(stderr).toContain("No plan found");
+describe(".orch/ directory structure", () => {
+  it("state files live under .orch/state/plan-<id>.json", () => {
+    const statePath = statePathForPlan("/repo/.orch", "a1b2c3");
+    expect(statePath).toBe("/repo/.orch/state/plan-a1b2c3.json");
   });
 
+  it("no global stateFile config exists (only per-plan state)", () => {
+    const { execSync } = require("child_process");
+    const result = execSync(
+      'grep -r "CONFIG.stateFile\\|stateFile:" src/ --include="*.ts" -l || true',
+      { encoding: "utf-8" },
+    ).trim();
+    expect(result).toBe("");
+  });
+
+  it("no references to currentPlanId remain in source", () => {
+    const { execSync } = require("child_process");
+    const result = execSync(
+      'grep -r "currentPlanId" src/ --include="*.ts" -l || true',
+      { encoding: "utf-8" },
+    ).trim();
+    expect(result).toBe("");
+  });
 });
 
 describe("exit code 2 on credit exhaustion (component-level)", () => {
@@ -618,10 +577,8 @@ describe("mid-response logging (component-level)", () => {
 
 describe("skip-slice state persistence (component-level)", () => {
   it("lastCompletedSlice is advanced and saved after a skip", async () => {
-    // The skip branch in main.ts (lines 827-828) does:
-    //   state = { ...state, lastCompletedSlice: slice.number };
-    //   await saveState(resolve(cwd, CONFIG.stateFile), state);
-    // Verify the save → load round trip that resume depends on.
+    // The skip branch in main.ts advances lastCompletedSlice and saves per-plan state.
+    // Verify the save → load round trip.
     const stateFile = join(tempDir, "state.json");
 
     // Simulate state before skip: slice 2 completed, about to skip slice 3
@@ -661,7 +618,7 @@ describe("fingerprint force wiring (integration)", () => {
     // Run WITHOUT --skip-fingerprint — fingerprint should regenerate
     const r = spawnSync("npx", [
       "tsx", mainPath, "--plan", join(tempDir, "plan.md"),
-      "--no-interaction", "--plan-only",
+      "--no-interaction",
     ], {
       cwd: tempDir,
       encoding: "utf-8",

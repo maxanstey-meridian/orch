@@ -12,7 +12,6 @@
  *   npx ts-node src/main.ts --work plan.md --auto             # no inter-group prompts
  *   npx ts-node src/main.ts --work plan.md --no-interaction   # suppress all prompts
  *   npx ts-node src/main.ts --work plan.md --reset            # clear state and re-run
- *   npx ts-node src/main.ts --resume                          # (deprecated) resume last plan
  *   npx ts-node src/main.ts --init --plan inventory.md        # interactive project init
  */
 
@@ -46,7 +45,6 @@ import { createHud, type WriteFn } from "./hud.js";
 
 const CONFIG = {
   maxReviewCycles: 3,
-  stateFile: ".orchestrator-state.json",
   briefDir: ".orch",
 };
 
@@ -625,13 +623,11 @@ const doGeneratePlan = async (
   inventoryPath: string,
   briefContent: string,
   outputDir: string,
-  globalStatePath: string,
-  currentGlobalState: OrchestratorState,
 ): Promise<string> => {
   log(`${a.bold}Generating plan from inventory...${a.reset}`);
   const planAgent = spawnAgent(BOT_PLAN);
   try {
-    const { planPath, planId } = await generatePlan(
+    const { planPath } = await generatePlan(
       inventoryPath,
       briefContent,
       planAgent,
@@ -639,8 +635,6 @@ const doGeneratePlan = async (
       inventoryPath,
     );
     log(`${a.green}Plan written to ${planPath}${a.reset}`);
-    // Persist planId to global state so --resume can find it
-    await saveState(globalStatePath, { ...currentGlobalState, currentPlanId: planId });
     return planPath;
   } finally {
     planAgent.kill();
@@ -659,16 +653,13 @@ const main = async () => {
   };
 
   const inventoryPath = getArg("--plan");
-  const resumeMode = args.includes("--resume");
-  if (resumeMode) {
-    console.error(`${a.yellow}Warning: --resume is deprecated. Use --work <plan> instead.${a.reset}`);
+  if (args.includes("--resume")) {
+    console.error("--resume is no longer supported. Use --work <plan> instead.");
+    process.exit(1);
   }
-  // --resume takes an optional path; only consume next arg if it's not another flag
-  const resumeIdx = args.indexOf("--resume");
-  const resumeNext = resumeIdx !== -1 ? args[resumeIdx + 1] : undefined;
-  const resumeRaw = resumeNext && !resumeNext.startsWith("-") ? resumeNext : undefined;
   if (args.includes("--plan-only")) {
-    console.error(`${a.yellow}Warning: --plan-only is deprecated. --plan now generates and exits by default.${a.reset}`);
+    console.error("--plan-only is no longer supported. Use --plan instead (it generates and exits by default).");
+    process.exit(1);
   }
   const workMode = args.includes("--work");
   const workRaw = getArg("--work");
@@ -697,9 +688,9 @@ const main = async () => {
     console.error("--work requires a plan path. Usage: --work <plan.md>");
     process.exit(1);
   }
-  if (!inventoryPath && !resumeMode && !workMode) {
+  if (!inventoryPath && !workMode) {
     console.error(
-      "Provide --plan <inventory> to generate a plan, or --work to execute an existing one, or --resume to continue.",
+      "Provide --plan <inventory> to generate a plan, or --work <plan> to execute an existing one.",
     );
     process.exit(1);
   }
@@ -736,67 +727,23 @@ const main = async () => {
     forceRefresh: !skipFingerprint,
   });
 
-  // 3. Load global state — needed for plan resolution (currentPlanId)
-  const globalStateFile = resolve(cwd, CONFIG.stateFile);
-  const globalState = await loadState(globalStateFile);
-
-  // Helper: resolve plan path from currentPlanId in global state
-  const statePlanPath = globalState.currentPlanId
-    ? resolve(orchDir, planFileName(globalState.currentPlanId))
-    : undefined;
-
-  // 4. Resolve plan path — generate from inventory or resume existing
-  //    (uses currentPlanId from state loaded in step 3)
+  // 3. Resolve plan path — generate from inventory or use existing
   let planPath: string;
 
   if (workMode) {
     // --work <plan>: explicit path, no fallback
     planPath = resolve(workPath!);
-  } else if (resumeMode) {
-    // --resume [path]: use explicit path, or find existing plan (deprecated)
-    if (resumeRaw) {
-      planPath = resolve(resumeRaw);
-    } else if (statePlanPath && existsSync(statePlanPath)) {
-      planPath = statePlanPath;
-    } else if (existsSync(resolve(cwd, "plan.md"))) {
-      planPath = resolve(cwd, "plan.md");
-    } else {
-      console.error("No plan found. Use --plan <inventory> to generate one.");
-      process.exit(1);
-    }
   } else {
     // --plan <input>: generate plan from inventory (or detect it's already a plan)
     const inputPath = resolve(inventoryPath!);
     const srcContent = readFileSync(inputPath, "utf-8");
 
     if (isPlanFormat(srcContent)) {
-      // Already a plan — treat as resume
-      log(`${a.dim}Input is already a plan — treating as resume.${a.reset}`);
+      // Already a plan — use directly
+      log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
       planPath = inputPath;
     } else {
-      // Check if a generated plan already exists (via state or legacy path)
-      if (statePlanPath && existsSync(statePlanPath)) {
-        if (noInteraction) {
-          log(`${a.dim}Using existing plan (--no-interaction).${a.reset}`);
-          planPath = statePlanPath;
-        } else {
-          const answer = await ask("A generated plan already exists. Regenerate? (y/N) ");
-          if (answer.trim().toLowerCase() !== "y") {
-            log(`${a.dim}Using existing plan.${a.reset}`);
-            planPath = statePlanPath;
-          } else {
-            planPath = await doGeneratePlan(
-              inputPath,
-              brief,
-              orchDir,
-              globalStateFile,
-              globalState,
-            );
-          }
-        }
-      } else {
-        planPath = await doGeneratePlan(inputPath, brief, orchDir, globalStateFile, globalState);
-      }
+      planPath = await doGeneratePlan(inputPath, brief, orchDir);
     }
   }
 
@@ -806,18 +753,13 @@ const main = async () => {
     activePlanId = planIdFromPath(planPath);
   } catch {
     // External plan file (e.g. plan.md) — derive stable ID from path hash
-    // For --work, always use path hash (never stale globalState.currentPlanId)
-    activePlanId = workMode
-      ? createHash("sha256").update(planPath).digest("hex").slice(0, 6)
-      : globalState.currentPlanId ?? createHash("sha256").update(planPath).digest("hex").slice(0, 6);
+    activePlanId = createHash("sha256").update(planPath).digest("hex").slice(0, 6);
 
-    // For --work with non-standard plan names, copy to .orch/plan-<id>.md for state scoping
-    if (workMode) {
-      mkdirSync(orchDir, { recursive: true });
-      const canonicalPath = resolve(orchDir, planFileName(activePlanId));
-      if (!existsSync(canonicalPath)) {
-        writeFileSync(canonicalPath, readFileSync(planPath, "utf-8"));
-      }
+    // Copy non-standard plan names to .orch/plan-<id>.md for state scoping
+    mkdirSync(orchDir, { recursive: true });
+    const canonicalPath = resolve(orchDir, planFileName(activePlanId));
+    if (!existsSync(canonicalPath)) {
+      writeFileSync(canonicalPath, readFileSync(planPath, "utf-8"));
     }
   }
   const stateFile = statePathForPlan(orchDir, activePlanId);
@@ -829,8 +771,8 @@ const main = async () => {
     log(`${a.dim}State cleared.${a.reset}`);
   }
 
-  // Generate-only mode: --plan without --work or --resume
-  const generateOnly = !!inventoryPath && !workMode && !resumeMode;
+  // Generate-only mode: --plan without --work
+  const generateOnly = !!inventoryPath && !workMode;
   if (generateOnly) {
     if (_rl) _rl.close();
     // Flush buffered output + final message directly (no HUD in this path)
@@ -1001,6 +943,16 @@ const main = async () => {
   // 10. Group loop
   for (let i = 0; i < remaining.length; i++) {
     const group = remaining[i];
+
+    // Skip entire group if all its slices are already completed
+    const allSlicesDone = state.lastCompletedSlice !== undefined &&
+      group.slices.every((s) => s.number <= state.lastCompletedSlice!);
+    if (allSlicesDone) {
+      log(`\n${ts()} ${a.dim}⏩ Group "${group.name}" already completed — skipping${a.reset}`);
+      globalSlicesCompleted += group.slices.length;
+      hud.update({ completedSlices: globalSlicesCompleted });
+      continue;
+    }
 
     logSection(
       `Group: ${group.name} — ${group.slices.map((s: Slice) => `Slice ${s.number}`).join(", ")}`,
