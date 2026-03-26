@@ -999,6 +999,9 @@ const main = async () => {
           `${ts()} ${a.dim}⏩ TDD already ran for Slice ${slice.number} — resuming review${a.reset}`,
         );
       } else {
+        // Capture baseline BEFORE TDD runs — verify needs to diff against pre-TDD state
+        const verifyBaseSha = await captureRef(cwd);
+
         // ── Plan phase (with replan loop) ──
         let replanAttempts = 0;
         const MAX_REPLANS = 2;
@@ -1092,9 +1095,6 @@ const main = async () => {
           );
           continue;
         }
-
-        // Capture baseline BEFORE commit sweep — verify needs to diff against pre-TDD state
-        const verifyBaseSha = await captureRef(cwd);
 
         // ── Commit sweep — ensure TDD bot's work is committed ────────────
         await commitSweep({
