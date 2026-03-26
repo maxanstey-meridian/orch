@@ -36,10 +36,10 @@ export const stashSave = async (cwd: string): Promise<boolean> => {
   return true;
 };
 
-export const stashPop = async (cwd: string): Promise<void> => {
+export const stashPop = async (cwd: string, log: (...args: unknown[]) => void = console.error): Promise<void> => {
   try {
     await git(["stash", "pop"], cwd);
-  } catch {
-    // stash pop can fail if the stash conflicts — leave it in the stash list
+  } catch (e) {
+    log("Warning: failed to pop stash — your changes are still in `git stash list`", e);
   }
 };
