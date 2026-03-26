@@ -13,7 +13,6 @@ type StackInfo = {
 
 export type ProjectProfile = {
   readonly stack?: string;
-  readonly testCommand?: string;
 };
 
 export type FingerprintResult = {
@@ -461,9 +460,6 @@ export const runFingerprint = async (opts: FingerprintOptions): Promise<Fingerpr
         if (brief && cachedProfile) {
           const profile: ProjectProfile = {
             ...(typeof cachedProfile.stack === "string" ? { stack: cachedProfile.stack } : {}),
-            ...(typeof cachedProfile.testCommand === "string"
-              ? { testCommand: cachedProfile.testCommand }
-              : {}),
           };
           return { brief, profile };
         }
@@ -480,10 +476,8 @@ export const runFingerprint = async (opts: FingerprintOptions): Promise<Fingerpr
   // Init profile takes priority — prepend operator-stated context
   const brief = initPrefix ? `${initPrefix}\n\n${generated}` : generated;
 
-  const testCommand = deriveTestCommand(stack, testStyle);
   const profile: ProjectProfile = {
     stack: stack.lang,
-    ...(testCommand ? { testCommand } : {}),
   };
 
   // Suggest --init when project has no manifest files
@@ -497,14 +491,6 @@ export const runFingerprint = async (opts: FingerprintOptions): Promise<Fingerpr
   writeFileSync(profilePath, JSON.stringify(profile));
 
   return { brief, profile };
-};
-
-const deriveTestCommand = (stack: StackInfo, testStyle: string): string | undefined => {
-  if (testStyle === "No tests found") return undefined;
-  if (stack.lang === "C#") return "dotnet test";
-  if (testStyle === "Vitest") return "npx vitest run";
-  if (testStyle === "Jest") return "npx jest";
-  return undefined;
 };
 
 export const wrapBrief = (brief: string): string => {

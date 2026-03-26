@@ -377,8 +377,6 @@ describe("runFingerprint", () => {
     expect(result.brief).toContain("# Codebase Brief");
     expect(result.brief).toContain("TypeScript");
     expect(result.profile.stack).toBe("TypeScript");
-    expect(result.profile.testCommand).toBe("npx vitest run");
-
     // Verify brief was written to disk
     const onDisk = await readFile(join(outputDir, "brief.md"), "utf-8");
     expect(onDisk).toBe(result.brief);
@@ -475,7 +473,6 @@ describe("runFingerprint", () => {
 
     const result = await runFingerprint({ cwd: tempDir, outputDir: join(tempDir, ".orch") });
     expect(result.profile.stack).toBe("C#");
-    expect(result.profile.testCommand).toBe("dotnet test");
   });
 
   it("returns npx jest for Jest project", async () => {
@@ -493,22 +490,7 @@ describe("runFingerprint", () => {
     );
 
     const result = await runFingerprint({ cwd: tempDir, outputDir: join(tempDir, ".orch") });
-    expect(result.profile.testCommand).toBe("npx jest");
-  });
-
-  it("returns brief with no testCommand when no tests exist", async () => {
-    await writeFile(
-      join(tempDir, "package.json"),
-      JSON.stringify({
-        dependencies: {},
-        devDependencies: { typescript: "^5.0.0" },
-      }),
-    );
-
-    const result = await runFingerprint({ cwd: tempDir, outputDir: join(tempDir, ".orch") });
-    expect(result.brief).toContain("TypeScript");
     expect(result.profile.stack).toBe("TypeScript");
-    expect(result.profile.testCommand).toBeUndefined();
   });
 });
 

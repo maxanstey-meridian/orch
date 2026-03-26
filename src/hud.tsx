@@ -138,9 +138,9 @@ const App = () => {
   }, [activity]);
 
   useInput((input, key) => {
-    // Q and ctrl+c always quit, regardless of input mode
-    if (input === "q" || (key.ctrl && input === "c")) {
-      if (_keyHandler) _keyHandler(input === "q" ? "q" : "\x03");
+    // ctrl+c always quits, regardless of input mode
+    if (key.ctrl && input === "c") {
+      if (_keyHandler) _keyHandler("\x03");
       return;
     }
 
@@ -236,7 +236,7 @@ const App = () => {
 // ─── createHud ───────────────────────────────────────────────────────────────
 
 export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process.stdout): Hud => {
-  if (!enabled) {
+  if (!enabled || !process.stdin.isTTY) {
     return {
       update: () => {},
       teardown: () => {},
