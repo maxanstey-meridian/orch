@@ -289,6 +289,19 @@ describe("generatePlan", () => {
     expect(groups[0].name).toBe("Auth");
   });
 
+  it("creates deeply nested output directories that do not exist", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, "nonexistent", "deep", ".orch");
+    const agent = mockAgent(VALID_PLAN);
+
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
+
+    const written = readFileSync(planPath, "utf-8");
+    expect(written).toContain("## Group: Auth");
+  });
+
   it("includes brief content in prompt sent to agent", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");

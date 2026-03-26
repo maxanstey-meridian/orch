@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile, readFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
+import { createHash } from "crypto";
 import { execSync, spawnSync } from "child_process";
-import { loadState, saveState, clearState } from "../src/state.js";
+import { loadState, saveState, clearState, statePathForPlan } from "../src/state.js";
 import { detectCreditExhaustion } from "../src/credit-detection.js";
 import { buildCommitSweepPrompt, commitSweep } from "../src/main.js";
 import type { AgentResult, AgentProcess } from "../src/agent.js";
@@ -75,6 +76,72 @@ describe("--reset flag behavior", () => {
     const globalState = await loadState(globalStateFile);
     expect(globalState.lastCompletedSlice).toBe(3);
   }, 15_000);
+
+  it("--reset actually deletes the per-plan state file", async () => {
+    exec("git init", tempDir);
+    exec('git config user.email "test@test.com"', tempDir);
+    exec('git config user.name "Test"', tempDir);
+    await writeFile(join(tempDir, "file.txt"), "init");
+    exec("git add .", tempDir);
+    exec('git commit -m "init"', tempDir);
+    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
+
+    // Derive the plan ID the same way main.ts does for external plans
+    const planPath = join(tempDir, "plan.md");
+    const planId = createHash("sha256").update(planPath).digest("hex").slice(0, 6);
+    const orchDir = join(tempDir, ".orch");
+    const perPlanStateFile = statePathForPlan(orchDir, planId);
+
+    // Pre-create state directory and write per-plan state
+    const { mkdirSync } = await import("fs");
+    mkdirSync(join(orchDir, "state"), { recursive: true });
+    await saveState(perPlanStateFile, { lastCompletedSlice: 7 });
+
+    // Verify state file exists before reset
+    const stateBefore = await loadState(perPlanStateFile);
+    expect(stateBefore.lastCompletedSlice).toBe(7);
+
+    const mainPath = join(import.meta.dirname, "../src/main.ts");
+    spawnSync("npx", [
+      "tsx", mainPath, "--plan", planPath,
+      "--skip-fingerprint", "--no-interaction", "--reset", "--plan-only",
+    ], {
+      cwd: tempDir,
+      encoding: "utf-8",
+      timeout: 5_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    // Per-plan state file should be cleared (--plan-only exits before new state is written)
+    const stateAfter = await loadState(perPlanStateFile);
+    expect(stateAfter).toEqual({});
+  }, 15_000);
+});
+
+describe("SHA-256 fallback plan ID derivation", () => {
+  // main.ts:792-793 derives a stable plan ID from the plan path when
+  // planIdFromPath throws (external plan file) and no currentPlanId exists.
+  const derivePlanId = (path: string): string =>
+    createHash("sha256").update(path).digest("hex").slice(0, 6);
+
+  it("produces a deterministic 6-char hex ID from the same path", () => {
+    const id1 = derivePlanId("/repo/plan.md");
+    const id2 = derivePlanId("/repo/plan.md");
+    expect(id1).toMatch(/^[0-9a-f]{6}$/);
+    expect(id1).toBe(id2);
+  });
+
+  it("produces different IDs for different paths", () => {
+    const idA = derivePlanId("/repo/plan-a.md");
+    const idB = derivePlanId("/repo/plan-b.md");
+    expect(idA).not.toBe(idB);
+  });
+
+  it("derived ID maps to a valid statePathForPlan path", () => {
+    const id = derivePlanId("/repo/plan.md");
+    const statePath = statePathForPlan("/repo/.orch", id);
+    expect(statePath).toMatch(/\.orch\/state\/plan-[0-9a-f]{6}\.json$/);
+  });
 });
 
 // ─── CLI wiring integration tests ────────────────────────────────────────────
