@@ -379,6 +379,141 @@ describe("CLI flag wiring", () => {
     expect(combined).not.toContain("Group: Setup — Slice 1");
   }, 15_000);
 
+  // ── Gap-coverage tests ──────────────────────────────────────────────────
+
+  it("--work as the only flag (no path, no other args) errors", async () => {
+    initGitRepo(tempDir);
+
+    const r = runMain(["--work"], tempDir);
+
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("--work requires a plan path");
+    expect(r.status).not.toBe(0);
+  });
+
+  it("--resume with explicit path prints deprecation and resolves plan", async () => {
+    initGitRepo(tempDir);
+    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
+
+    // --resume <path> should print deprecation warning and still resolve
+    const r = spawnSync("npx", [
+      "tsx", mainPath,
+      "--resume", join(tempDir, "plan.md"),
+      "--skip-fingerprint", "--no-interaction",
+    ], {
+      cwd: tempDir,
+      encoding: "utf-8",
+      timeout: 8_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const combined = strip((r.stdout ?? "") + (r.stderr ?? ""));
+    expect(combined).toContain("deprecated");
+    expect(combined).toContain("--work");
+    // Should resolve the plan and attempt orchestration (not error on path)
+    expect(combined).not.toContain("No plan found");
+  }, 15_000);
+
+  it("--work plan.md --reset clears per-plan state for the hash-derived ID", async () => {
+    initGitRepo(tempDir);
+    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
+
+    // Derive the same ID main.ts would use for this path
+    const planPath = join(tempDir, "plan.md");
+    const expectedId = createHash("sha256").update(planPath).digest("hex").slice(0, 6);
+    const orchDir = join(tempDir, ".orch");
+    const perPlanState = statePathForPlan(orchDir, expectedId);
+
+    // Pre-create state
+    const { mkdirSync } = await import("fs");
+    mkdirSync(join(orchDir, "state"), { recursive: true });
+    await saveState(perPlanState, { lastCompletedSlice: 5 });
+
+    // Verify state exists
+    const before = await loadState(perPlanState);
+    expect(before.lastCompletedSlice).toBe(5);
+
+    spawnSync("npx", [
+      "tsx", mainPath,
+      "--work", planPath,
+      "--skip-fingerprint", "--no-interaction", "--reset",
+    ], {
+      cwd: tempDir,
+      encoding: "utf-8",
+      timeout: 8_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    // State should be cleared
+    const after = await loadState(perPlanState);
+    expect(after).toEqual({});
+  }, 15_000);
+
+  it("--work plan.md --auto starts without inter-group prompts", async () => {
+    initGitRepo(tempDir);
+    const multiGroupPlan = `## Group: A\n### Slice 1: S1\nDo A.\n\n## Group: B\n### Slice 2: S2\nDo B.\n`;
+    await writeFile(join(tempDir, "plan.md"), multiGroupPlan);
+
+    const r = spawnSync("npx", [
+      "tsx", mainPath,
+      "--work", join(tempDir, "plan.md"),
+      "--skip-fingerprint", "--no-interaction", "--auto",
+    ], {
+      cwd: tempDir,
+      encoding: "utf-8",
+      timeout: 8_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const combined = strip((r.stdout ?? "") + (r.stderr ?? ""));
+    // Should start orchestration (both groups visible, no "Continue?" prompt)
+    expect(combined).toContain("Group: A");
+    // Should not contain any fallback or argument errors
+    expect(combined).not.toContain("--work requires");
+    expect(combined).not.toContain("No plan found");
+  }, 15_000);
+
+  it("--plan with nonexistent inventory file exits with error", async () => {
+    initGitRepo(tempDir);
+
+    const r = runMain(
+      ["--plan", join(tempDir, "nonexistent-inventory.md"), "--skip-fingerprint", "--no-interaction"],
+      tempDir,
+    );
+
+    expect(r.status).not.toBe(0);
+  });
+
+  it("--work with nonexistent plan file exits with error", async () => {
+    initGitRepo(tempDir);
+
+    const r = spawnSync("npx", [
+      "tsx", mainPath,
+      "--work", join(tempDir, "nonexistent-plan.md"),
+      "--skip-fingerprint", "--no-interaction",
+    ], {
+      cwd: tempDir,
+      encoding: "utf-8",
+      timeout: 8_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    expect(r.status).not.toBe(0);
+  }, 15_000);
+
+  it("--work with dash-prefixed path is treated as missing argument", async () => {
+    initGitRepo(tempDir);
+
+    const r = runMain(
+      ["--work", "-plan.md"],
+      tempDir,
+    );
+
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("--work requires a plan path");
+    expect(r.status).not.toBe(0);
+  });
+
   it("--resume prints deprecation warning to stderr", async () => {
     initGitRepo(tempDir);
     // No plan file → will error with "No plan found" but deprecation warning appears first
