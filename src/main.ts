@@ -36,7 +36,7 @@ import { runInit, profileToMarkdown, createAsk } from "./init.js";
 import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
 import { captureRef, hasChanges, getStatus, hasDirtyTree } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
-import { runTestGate } from "./test-gate.js";
+import { parseVerifyResult } from "./verify.js";
 import { isCleanReview } from "./review-check.js";
 
 import { detectCreditExhaustion } from "./credit-detection.js";
@@ -100,6 +100,11 @@ const BOT_FINAL: AgentStyle = {
   label: "FINAL",
   color: a.green,
   badge: `${a.bgGreen} FIN ${a.reset}`,
+};
+const BOT_VERIFY: AgentStyle = {
+  label: "VERIFY",
+  color: a.green,
+  badge: `${a.bgGreen} VFY ${a.reset}`,
 };
 const BOT_PLAN: AgentStyle = {
   label: "PLAN",
@@ -549,7 +554,6 @@ const reviewFixLoop = async (
   noInteraction: boolean,
   tddFirstMessage: { value: boolean },
   reviewFirstMessage: { value: boolean },
-  testCommand: string | undefined,
   exitOnCreditExhaustion: (result: AgentResult, agent: AgentProcess) => Promise<void>,
   withInterrupt: <T>(agent: AgentProcess, fn: () => Promise<T>) => Promise<T>,
   createStreamer: (style: AgentStyle) => Streamer,
@@ -610,13 +614,6 @@ const reviewFixLoop = async (
     if (!(await hasChanges(cwd, preFixSha))) {
       log(`${ts()} ${a.dim}TDD bot made no changes — review cycle complete${a.reset}`);
       break;
-    }
-
-    const testResult = await runTestGate({ testCommand });
-    if (!testResult.passed) {
-      log(
-        `${ts()} ${a.yellow}⚠ Tests failed after review fix cycle ${cycle}. Continuing...${a.reset}`,
-      );
     }
 
     // Advance review base so next cycle only reviews the fix delta, not the entire original diff
@@ -697,6 +694,7 @@ const main = async () => {
   const skillsDir = resolve(import.meta.dirname, "..", "skills");
   const tddSkill = readFileSync(resolve(skillsDir, "tdd.md"), "utf-8");
   const reviewSkill = readFileSync(resolve(skillsDir, "deep-review.md"), "utf-8");
+  const verifySkill = readFileSync(resolve(skillsDir, "verify.md"), "utf-8");
 
   const cwd = process.cwd();
   const orchDir = resolve(cwd, CONFIG.briefDir);
@@ -816,7 +814,7 @@ const main = async () => {
 
   // 4b. HUD — persistent status bar at bottom of terminal
   const totalSlices = groups.reduce((n, g) => n + g.slices.length, 0);
-  const isTTY = process.stdout.isTTY === true;
+  const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
   const hud = createHud(isTTY);
   let globalSlicesCompleted = 0;
   hud.update({ totalSlices, completedSlices: 0, startTime: Date.now() });
@@ -934,9 +932,6 @@ const main = async () => {
   log(`   ${a.dim}Plan${a.reset}    ${planPath}`);
   log(
     `   ${a.dim}Brief${a.reset}   ${brief ? `${a.green}✓${a.reset} .orch/brief.md` : `${a.dim}none${a.reset}`}`,
-  );
-  log(
-    `   ${a.dim}Tests${a.reset}   ${profile.testCommand ? `${a.green}✓${a.reset} ${profile.testCommand}` : `${a.yellow}⚠ none detected${a.reset}`}`,
   );
   log(
     `   ${a.dim}Mode${a.reset}    ${groupFilter ? `start from "${groupFilter}"` : auto ? "automatic" : "interactive"}`,
@@ -1090,14 +1085,91 @@ const main = async () => {
           continue;
         }
 
-        // Test gate
-        const testResult = await runTestGate({ testCommand: profile.testCommand });
-        if (!testResult.passed) {
-          log(
-            `${ts()} ${a.red}✗ Tests failed after TDD agent on Slice ${slice.number}. Continuing...${a.reset}`,
-          );
+        // ── Already-implemented detection ────────────────────────────────
+        const tddText = tddResult.assistantText ?? "";
+        const alreadyDone =
+          /already (?:fully )?implemented/i.test(tddText) ||
+          /already exist/i.test(tddText) ||
+          /nothing (?:left )?to (?:do|implement|change)/i.test(tddText);
+
+        if (alreadyDone && !(await hasChanges(cwd, reviewBase))) {
+          log(`${ts()} ${a.dim}⏩ Slice ${slice.number} already implemented — skipping verify/review${a.reset}`);
+          state = { ...state, lastSliceImplemented: slice.number, lastCompletedSlice: slice.number };
+          await saveState(stateFile, state);
+          groupSlicesCompleted++;
+          globalSlicesCompleted++;
+          hud.update({ completedSlices: globalSlicesCompleted, groupCompleted: groupSlicesCompleted });
           continue;
         }
+
+        // ── Verify gate ──────────────────────────────────────────────────
+        const verifyBaseSha = await captureRef(cwd);
+        hud.update({ activeAgent: "VFY", activeAgentActivity: "verifying..." });
+        log(`${ts()} ${BOT_VERIFY.badge} ${a.green}verifying slice ${slice.number}...${a.reset}`);
+
+        const verifyAgent = spawnAgent(BOT_VERIFY, verifySkill);
+        const verifyPrompt = withBrief(
+          `Verify the changes since commit ${verifyBaseSha}. Context: TDD implementation of Slice ${slice.number}.`,
+          brief,
+        );
+        let vs = boundMakeStreamer(BOT_VERIFY);
+        const verifyResult = await withInterrupt(verifyAgent, () =>
+          verifyAgent.send(verifyPrompt, vs, onToolUse),
+        );
+        vs.flush();
+        let parsed = parseVerifyResult(verifyResult.assistantText ?? "");
+
+        if (!parsed.passed) {
+          // One retry: send failures to TDD bot, verify again
+          log(`${ts()} ${a.yellow}⚠ Verification failed — sending failures to TDD bot${a.reset}`);
+          const failureContext = parsed.newFailures.length > 0
+            ? parsed.newFailures.join("\n")
+            : "Verification checks failed. Run the test/lint/typecheck pipeline and fix any failures.";
+          const retryPrompt = `Verification found new failures after your implementation. Fix them:\n\n${failureContext}`;
+          const rs = boundMakeStreamer(BOT_TDD);
+          await withInterrupt(tddAgent, () =>
+            tddAgent.send(retryPrompt, rs, onToolUse),
+          );
+          rs.flush();
+
+          // Re-verify
+          hud.update({ activeAgent: "VFY", activeAgentActivity: "re-verifying..." });
+          log(`${ts()} ${BOT_VERIFY.badge} ${a.green}re-verifying...${a.reset}`);
+          vs = boundMakeStreamer(BOT_VERIFY);
+          const reVerifyResult = await withInterrupt(verifyAgent, () =>
+            verifyAgent.send(
+              `Re-verify changes since ${verifyBaseSha}. The TDD bot attempted fixes.`,
+              vs,
+              onToolUse,
+            ),
+          );
+          vs.flush();
+          parsed = parseVerifyResult(reVerifyResult.assistantText ?? "");
+
+          if (!parsed.passed) {
+            // Hard stop — ask operator
+            verifyAgent.kill();
+            const failSummary = parsed.newFailures.join("\n") || "Checks still failing after retry.";
+            log(`${ts()} ${a.red}✗ Verification still failing after retry on Slice ${slice.number}${a.reset}`);
+            const answer = await hud.askUser(
+              `Slice ${slice.number} verification failed:\n${failSummary}\n\n(r)etry / (s)kip / s(t)op? `,
+            );
+            const choice = answer.trim().toLowerCase();
+            if (choice === "t" || choice === "stop") {
+              log(`${ts()} ${a.red}✗ Operator stopped run at Slice ${slice.number}${a.reset}`);
+              hud.teardown();
+              process.exit(1);
+            }
+            if (choice === "s" || choice === "skip") {
+              log(`${ts()} ${a.yellow}⏭ Operator skipped Slice ${slice.number}${a.reset}`);
+              continue;
+            }
+            // "r" or anything else → fall through to review (best effort)
+            log(`${ts()} ${a.yellow}↻ Operator chose retry — continuing to review${a.reset}`);
+          }
+        }
+
+        verifyAgent.kill();
 
         if (sliceSkipFlag) {
           await doSkip();
@@ -1141,7 +1213,6 @@ const main = async () => {
         noInteraction,
         tddFirstMessage,
         reviewFirstMessage,
-        profile.testCommand,
         exitOnCreditExhaustion,
         withInterrupt,
         boundMakeStreamer,
@@ -1259,32 +1330,26 @@ Be concrete and specific. No filler.`,
             if (!(await hasChanges(cwd, gapBaseSha))) {
               log(`${ts()} ${a.dim}TDD bot made no changes for gaps${a.reset}`);
             } else {
-              const testResult = await runTestGate({ testCommand: profile.testCommand });
-              if (!testResult.passed) {
-                log(`${ts()} ${a.yellow}⚠ Tests failed after gap fixes${a.reset}`);
-              } else {
-                await reviewFixLoop(
-                  tddAgent,
-                  reviewAgent,
-                  groupContent,
-                  brief,
-                  cwd,
-                  noInteraction,
-                  tddFirstMessage,
-                  reviewFirstMessage,
-                  profile.testCommand,
-                  exitOnCreditExhaustion,
-                  withInterrupt,
-                  boundMakeStreamer,
-                  onToolUse,
-                  hud.askUser,
-                  gapBaseSha,
-                  (agent, activity) =>
-                    hud.update({ activeAgent: agent, activeAgentActivity: activity }),
-                  () => sliceSkipFlag,
-                );
-                log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
-              }
+              await reviewFixLoop(
+                tddAgent,
+                reviewAgent,
+                groupContent,
+                brief,
+                cwd,
+                noInteraction,
+                tddFirstMessage,
+                reviewFirstMessage,
+                exitOnCreditExhaustion,
+                withInterrupt,
+                boundMakeStreamer,
+                onToolUse,
+                hud.askUser,
+                gapBaseSha,
+                (agent, activity) =>
+                  hud.update({ activeAgent: agent, activeAgentActivity: activity }),
+                () => sliceSkipFlag,
+              );
+              log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
             }
           }
         } else {
@@ -1409,14 +1474,6 @@ Be concrete and specific. No filler.`,
         continue;
       }
 
-      const testResult = await runTestGate({ testCommand: profile.testCommand });
-      if (!testResult.passed) {
-        log(
-          `${ts()} ${a.yellow}⚠ Tests failed after ${pass.name} fixes — continuing with next pass${a.reset}`,
-        );
-        continue;
-      }
-
       // Review cycle on the fixes
       await reviewFixLoop(
         tddAgent,
@@ -1427,7 +1484,6 @@ Be concrete and specific. No filler.`,
         noInteraction,
         tddFirstMessage,
         reviewFirstMessage,
-        profile.testCommand,
         exitOnCreditExhaustion,
         withInterrupt,
         boundMakeStreamer,

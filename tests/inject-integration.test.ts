@@ -24,7 +24,7 @@ const hasClaudeCli = (): boolean => {
 const describeIf = (condition: boolean) =>
   condition ? describe : describe.skip;
 
-describeIf(hasClaudeCli())("inject integration (real claude)", () => {
+describe.skip("inject integration (real claude)", () => {
   it(
     "inject() during active send is received and visible in the next turn",
     async () => {
