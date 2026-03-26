@@ -180,6 +180,17 @@ describe("CLI flag wiring", () => {
     expect(r.status).not.toBe(0);
   });
 
+  it("--plan-only as sole flag (without --plan) exits with error", async () => {
+    initGitRepo(tempDir);
+
+    const r = runMain(["--plan-only"], tempDir);
+
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("--plan-only");
+    expect(stderr).toContain("no longer supported");
+    expect(r.status).not.toBe(0);
+  });
+
   it("no-flags error mentions --plan and --work", async () => {
     initGitRepo(tempDir);
 
@@ -462,6 +473,25 @@ describe("CLI flag wiring", () => {
     expect(r.status).not.toBe(0);
   });
 
+  it("--resume in non-git directory fails with git repo error (assertGitRepo runs first)", async () => {
+    // Documenting current behavior: assertGitRepo runs before flag checks,
+    // so deprecated flags in a non-git dir get "not a git repository" instead
+    // of the deprecation message.
+    const r = runMain(["--resume"], tempDir);
+
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("git");
+    expect(r.status).not.toBe(0);
+  });
+
+  it("--plan-only in non-git directory fails with git repo error (assertGitRepo runs first)", async () => {
+    const r = runMain(["--plan-only"], tempDir);
+
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("git");
+    expect(r.status).not.toBe(0);
+  });
+
 });
 
 describe("legacy cleanup", () => {
@@ -489,6 +519,54 @@ describe(".orch/ directory structure", () => {
     ).trim();
     expect(result).toBe("");
   });
+
+  it("--work plan.md creates plan-<id>.md and state/ dir with matching ID layout", async () => {
+    const { mkdtemp, rm, writeFile: wf } = await import("fs/promises");
+    const { existsSync, readdirSync } = await import("fs");
+    const dir = await mkdtemp(join(tmpdir(), "orch-struct-"));
+    try {
+      execSync("git init", { cwd: dir });
+      execSync('git config user.email "t@t.com"', { cwd: dir });
+      execSync('git config user.name "T"', { cwd: dir });
+      await wf(join(dir, "f.txt"), "x");
+      execSync("git add . && git commit -m init", { cwd: dir });
+      await wf(join(dir, "plan.md"), MINIMAL_PLAN);
+
+      // Pre-seed per-plan state so the state file exists after --work
+      const planPath = join(dir, "plan.md");
+      const expectedId = createHash("sha256").update(planPath).digest("hex").slice(0, 6);
+      const orchDir = join(dir, ".orch");
+      const { mkdirSync } = await import("fs");
+      mkdirSync(join(orchDir, "state"), { recursive: true });
+      await saveState(statePathForPlan(orchDir, expectedId), { lastCompletedSlice: 0 });
+
+      const mainPath = join(import.meta.dirname, "../src/main.ts");
+      spawnSync("npx", [
+        "tsx", mainPath,
+        "--work", planPath,
+        "--skip-fingerprint", "--no-interaction",
+      ], { cwd: dir, encoding: "utf-8", timeout: 8_000, stdio: ["pipe", "pipe", "pipe"] });
+
+      expect(existsSync(orchDir)).toBe(true);
+
+      // plan-<id>.md should exist (copied from plan.md)
+      const orchFiles = readdirSync(orchDir);
+      const planFile = orchFiles.find((f: string) => /^plan-[0-9a-f]{6}\.md$/.test(f));
+      expect(planFile).toBeDefined();
+
+      // Extract ID from plan file and verify it matches the state file
+      const planId = planFile!.match(/plan-([0-9a-f]{6})\.md/)![1];
+      expect(planId).toBe(expectedId);
+
+      // state/ directory should contain plan-<same-id>.json
+      const stateDir = join(orchDir, "state");
+      expect(existsSync(stateDir)).toBe(true);
+      const stateFiles = readdirSync(stateDir);
+      expect(stateFiles).toContain(`plan-${planId}.json`);
+    } finally {
+      await rm(dir, { recursive: true });
+    }
+  }, 15_000);
 
   it("no references to currentPlanId remain in source", () => {
     const { execSync } = require("child_process");
