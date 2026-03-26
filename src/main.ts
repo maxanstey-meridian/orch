@@ -27,7 +27,7 @@ import { loadState, saveState, clearState, type OrchestratorState } from "./stat
 import { runFingerprint, wrapBrief } from "./fingerprint.js";
 import { runInit, profileToMarkdown, createAsk } from "./init.js";
 import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
-import { captureRef, hasChanges, getStatus } from "./git.js";
+import { captureRef, hasChanges, getStatus, hasDirtyTree } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
 import { runTestGate } from "./test-gate.js";
 import { isCleanReview } from "./review-check.js";
@@ -294,6 +294,55 @@ ${sliceContent}
 ${integration}
 
 ${autonomy}`;
+};
+
+export const buildCommitSweepPrompt = (groupName: string): string =>
+  `There are uncommitted changes in the working tree. Review them, commit anything that belongs to the "${groupName}" group's work, and discard or stash anything that doesn't.
+
+## Group
+${groupName}
+
+## Instructions
+1. Run \`git status\` and \`git diff\` to see what changed.
+2. Stage and commit files that belong to this group's work with a descriptive message.
+3. Discard or stash anything unrelated.`;
+
+type CommitSweepDeps = {
+  groupName: string;
+  cwd: string;
+  agent: AgentProcess;
+  makeStreamer: () => Streamer;
+  exitOnCreditExhaustion: (result: AgentResult, agent: AgentProcess) => Promise<void>;
+  withInterrupt: <T>(agent: AgentProcess, fn: () => Promise<T>) => Promise<T>;
+  hasDirtyTree: (cwd: string) => Promise<boolean>;
+  log: (...args: unknown[]) => void;
+  followUpIfNeeded?: (result: AgentResult, agent: AgentProcess) => Promise<AgentResult>;
+};
+
+export const commitSweep = async (deps: CommitSweepDeps): Promise<void> => {
+  const dirty = await deps.hasDirtyTree(deps.cwd);
+  if (!dirty) return;
+
+  if (!deps.agent.alive) {
+    deps.log(`${ts()} ${a.yellow}⚠ TDD agent not alive — skipping commit sweep${a.reset}`);
+    return;
+  }
+
+  deps.log(`${ts()} ${BOT_TDD.badge} uncommitted changes detected — asking TDD bot to commit`);
+  const prompt = buildCommitSweepPrompt(deps.groupName);
+  const s = deps.makeStreamer();
+  const result = await deps.withInterrupt(deps.agent, () => deps.agent.send(prompt, s));
+  s.flush();
+  await deps.exitOnCreditExhaustion(result, deps.agent);
+  if (deps.followUpIfNeeded && result.needsInput) {
+    await deps.followUpIfNeeded(result, deps.agent);
+  }
+
+  if (result.exitCode === 0) {
+    deps.log(`${ts()} ${a.green}✓ commit sweep complete${a.reset}`);
+  } else {
+    deps.log(`${ts()} ${a.yellow}⚠ commit sweep agent failed (exit ${result.exitCode}) — uncommitted changes may remain${a.reset}`);
+  }
 };
 
 const buildReviewPrompt = (sliceContent: string, baseSha: string): string =>
@@ -995,6 +1044,19 @@ Be concrete and specific. No filler.`,
       gapAgent.kill();
     }
 
+    // ── Commit sweep — catch uncommitted changes before marking group done ──
+    await commitSweep({
+      groupName: group.name,
+      cwd,
+      agent: tddAgent,
+      makeStreamer: () => makeStreamer(BOT_TDD),
+      exitOnCreditExhaustion,
+      withInterrupt,
+      hasDirtyTree,
+      log,
+      followUpIfNeeded: (result, agent) => followUpIfNeeded(result, agent, noInteraction),
+    });
+
     state = { ...state, lastCompletedGroup: group.name };
     await saveState(resolve(cwd, CONFIG.stateFile), state);
 
@@ -1114,7 +1176,14 @@ Be concrete and specific. No filler.`,
   await clearState(resolve(cwd, CONFIG.stateFile));
 };
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+const isEntrypoint =
+  process.argv[1] &&
+  resolve(process.argv[1]).replace(/\.ts$/, "") ===
+    new URL(import.meta.url).pathname.replace(/\.ts$/, "");
+
+if (isEntrypoint) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

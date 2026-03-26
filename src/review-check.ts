@@ -6,6 +6,12 @@ const CLEAN_PATTERNS = [
   /\bno\s+problems\b/i,
   /\blgtm\b/i,
   /\blooks\s+good\b/i,
+  /\bship\s+it\b/i,
+  /\bno\s+changes?\s+(needed|required|necessary)\b/i,
+  /\bapproved\b/i,
+  /\ball\s+good\b/i,
+  /\bnothing\s+to\s+(fix|change|report)\b/i,
+  /\bcode\s+is\s+clean\b/i,
 ];
 
 export const isCleanReview = (text: string): boolean => {

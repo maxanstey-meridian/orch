@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync } from "child_process";
-import { captureRef, hasChanges, getStatus } from "./git.js";
+import { captureRef, hasChanges, getStatus, hasDirtyTree } from "./git.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
@@ -85,5 +85,33 @@ describe("git", () => {
     expect(status).toContain("file.txt");
     expect(status).toContain("untracked.txt");
     expect(status.length).toBeGreaterThan(0);
+  });
+
+  describe("hasDirtyTree", () => {
+    it("returns false on a clean repo", async () => {
+      expect(await hasDirtyTree(repoDir)).toBe(false);
+    });
+
+    it("returns true after creating an untracked file", async () => {
+      await writeFile(join(repoDir, "untracked.txt"), "new file");
+      expect(await hasDirtyTree(repoDir)).toBe(true);
+    });
+
+    it("returns true after staging a change", async () => {
+      await writeFile(join(repoDir, "file.txt"), "modified");
+      exec("git add file.txt", repoDir);
+      expect(await hasDirtyTree(repoDir)).toBe(true);
+    });
+
+    it("returns false after committing — only checks working tree, not HEAD movement", async () => {
+      const refBefore = await captureRef(repoDir);
+      await writeFile(join(repoDir, "new.txt"), "content");
+      exec("git add .", repoDir);
+      exec('git commit -m "second"', repoDir);
+      // hasDirtyTree should be false — tree is clean
+      expect(await hasDirtyTree(repoDir)).toBe(false);
+      // hasChanges should be true — HEAD moved
+      expect(await hasChanges(repoDir, refBefore)).toBe(true);
+    });
   });
 });
