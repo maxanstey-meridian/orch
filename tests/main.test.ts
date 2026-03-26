@@ -244,6 +244,19 @@ describe("CLI flag wiring", () => {
     expect(r.status).not.toBe(0);
   });
 
+  it("--work alone with no existing plan exits with error", async () => {
+    initGitRepo(tempDir);
+
+    const r = runMain(
+      ["--work", "--skip-fingerprint", "--no-interaction"],
+      tempDir,
+    );
+
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("No plan found");
+    expect(r.status).not.toBe(0);
+  });
+
   it("--resume with no path and no existing plan files exits with error", async () => {
     initGitRepo(tempDir);
 
