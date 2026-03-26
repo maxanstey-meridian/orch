@@ -32,6 +32,7 @@ import { runFingerprint } from "./fingerprint.js";
 import { buildTddPrompt, buildCommitSweepPrompt, buildReviewPrompt, buildGapPrompt, buildFinalPasses, withBrief } from "./prompts.js";
 import { a, ts, BOT_TDD, BOT_REVIEW, BOT_GAP, BOT_FINAL, BOT_VERIFY, BOT_PLAN, logSection, printSliceIntro, printSliceSummary } from "./display.js";
 import { makeStreamer, type Streamer } from "./streamer.js";
+import { Orchestrator, type OrchestratorConfig } from "./orchestrator.js";
 import { runInit, profileToMarkdown, createAsk } from "./init.js";
 import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
 import { captureRef, hasChanges, getStatus, hasDirtyTree, stashBackup } from "./git.js";
@@ -741,6 +742,20 @@ const main = async () => {
 
   const runBaseSha = await captureRef(cwd);
   const planContent = await readFile(planPath, "utf-8");
+
+  // 9b. Construct Orchestrator (scaffold — run() not called yet)
+  const orchConfig: OrchestratorConfig = {
+    cwd, planPath, planContent, brief,
+    noInteraction, auto, reviewThreshold,
+    stateFile, tddSkill, reviewSkill, verifySkill,
+  };
+  const _orch = new Orchestrator(
+    orchConfig, state, hud, log,
+    tddAgent, reviewAgent,
+    async () => spawnAgent(BOT_TDD, tddSkill),
+    async () => spawnAgent(BOT_REVIEW, reviewSkill),
+  );
+  if (interactive) _orch.setupKeyboardHandlers();
 
   // 10. Group loop
   for (let i = 0; i < remaining.length; i++) {
