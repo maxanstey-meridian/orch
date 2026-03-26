@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe as _describe, it, expect, beforeEach, afterEach } from "vitest";
+
+const describe = _describe;
+const describeIntegration = process.env.INTEGRATION ? _describe : _describe.skip;
 import { mkdtemp, rm, writeFile, readFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -28,7 +31,7 @@ afterEach(async () => {
   await rm(tempDir, { recursive: true });
 });
 
-describe("--reset flag behavior", () => {
+describeIntegration("--reset flag behavior", () => {
   it("clearState removes pre-existing state so loadState returns fresh {}", async () => {
     const stateFile = join(tempDir, "state.json");
     await saveState(stateFile, { lastCompletedSlice: 5, lastCompletedGroup: "Core" });
@@ -116,7 +119,7 @@ describe("SHA-256 fallback plan ID derivation", () => {
 
 // ─── CLI wiring integration tests ────────────────────────────────────────────
 
-describe("CLI flag wiring", () => {
+describeIntegration("CLI flag wiring", () => {
   const mainPath = join(import.meta.dirname, "../src/main.ts");
 
   const runMain = (args: string[], cwd: string) =>
@@ -494,7 +497,7 @@ describe("CLI flag wiring", () => {
 
 });
 
-describe("legacy cleanup", () => {
+describeIntegration("legacy cleanup", () => {
   it("no references to .orchestrator-state.json remain in source files", () => {
     const { execSync } = require("child_process");
     const result = execSync(
@@ -505,7 +508,7 @@ describe("legacy cleanup", () => {
   });
 });
 
-describe(".orch/ directory structure", () => {
+describeIntegration(".orch/ directory structure", () => {
   it("state files live under .orch/state/plan-<id>.json", () => {
     const statePath = statePathForPlan("/repo/.orch", "a1b2c3");
     expect(statePath).toBe("/repo/.orch/state/plan-a1b2c3.json");
@@ -653,7 +656,7 @@ describe("mid-response logging (component-level)", () => {
   });
 });
 
-describe("skip-slice state persistence (component-level)", () => {
+describeIntegration("skip-slice state persistence (component-level)", () => {
   it("lastCompletedSlice is advanced and saved after a skip", async () => {
     // The skip branch in main.ts advances lastCompletedSlice and saves per-plan state.
     // Verify the save → load round trip.
@@ -673,7 +676,7 @@ describe("skip-slice state persistence (component-level)", () => {
   });
 });
 
-describe("fingerprint force wiring (integration)", () => {
+describeIntegration("fingerprint force wiring (integration)", () => {
   const mainPath = join(import.meta.dirname, "../src/main.ts");
 
   const initGitRepo = (dir: string) => {
