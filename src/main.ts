@@ -111,12 +111,29 @@ const BOT_PLAN: AgentStyle = {
 // ─── Agent helpers ───────────────────────────────────────────────────────────
 
 const BASE_FLAGS = ["--dangerously-skip-permissions"] as const;
+const PLAN_FLAGS = ["--permission-mode", "plan"] as const;
 
 const spawnAgent = (style: AgentStyle, systemPrompt?: string): AgentProcess =>
   createAgent({
     command: "claude",
     args: [
       ...BASE_FLAGS,
+      "-p",
+      "--input-format",
+      "stream-json",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
+    ],
+    style,
+  });
+
+export const spawnPlanAgent = (style: AgentStyle, systemPrompt?: string): AgentProcess =>
+  createAgent({
+    command: "claude",
+    args: [
+      ...PLAN_FLAGS,
       "-p",
       "--input-format",
       "stream-json",
