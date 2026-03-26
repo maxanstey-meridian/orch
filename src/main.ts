@@ -140,15 +140,15 @@ const REVIEW_RULES_REMINDER = `[ORCHESTRATOR] Non-negotiable rules for your oper
 2. DO NOT SUGGEST REVERTING unrelated files (skill files, config, HUD changes) that weren't part of the slice.
 3. If the diff is empty and HEAD hasn't moved, respond with REVIEW_CLEAN. Do not claim work is missing if it was committed in prior commits.`;
 
-const spawnTddAgent = (skill: string): AgentProcess => {
+const spawnTddAgent = async (skill: string): Promise<AgentProcess> => {
   const agent = spawnAgent(BOT_TDD, skill);
-  agent.sendQuiet(TDD_RULES_REMINDER);
+  await agent.sendQuiet(TDD_RULES_REMINDER);
   return agent;
 };
 
-const spawnReviewAgent = (skill: string): AgentProcess => {
+const spawnReviewAgent = async (skill: string): Promise<AgentProcess> => {
   const agent = spawnAgent(BOT_REVIEW, skill);
-  agent.sendQuiet(REVIEW_RULES_REMINDER);
+  await agent.sendQuiet(REVIEW_RULES_REMINDER);
   return agent;
 };
 
@@ -853,8 +853,8 @@ const main = async () => {
   let state: OrchestratorState = await loadState(stateFile);
 
   // 6. Spawn persistent agents with skill system prompts
-  let tddAgent = spawnTddAgent(tddSkill);
-  let reviewAgent = spawnReviewAgent(reviewSkill);
+  let tddAgent = await spawnTddAgent(tddSkill);
+  let reviewAgent = await spawnReviewAgent(reviewSkill);
   const tddFirstMessage = { value: true };
   const reviewFirstMessage = { value: true };
 
@@ -1037,7 +1037,7 @@ const main = async () => {
         hud.setSkipping(false);
         log(`\n${ts()} ${a.yellow}⏭ Slice ${slice.number} skipped by operator${a.reset}`);
         tddAgent.kill();
-        tddAgent = spawnTddAgent(tddSkill);
+        tddAgent = await spawnTddAgent(tddSkill);
         tddFirstMessage.value = true;
         reviewFirstMessage.value = true;
         state = { ...state, lastCompletedSlice: slice.number };
@@ -1080,7 +1080,7 @@ const main = async () => {
           const guidance = hardInterruptPending;
           hardInterruptPending = null;
           log(`${ts()} ${a.yellow}⚡ Respawning TDD agent with guidance...${a.reset}`);
-          tddAgent = spawnTddAgent(tddSkill);
+          tddAgent = await spawnTddAgent(tddSkill);
           tddFirstMessage.value = true;
           reviewFirstMessage.value = true;
           const s2 = boundMakeStreamer(BOT_TDD);
@@ -1446,8 +1446,8 @@ Be concrete and specific. No filler.`,
       // Kill and respawn agents — clean context slate
       tddAgent.kill();
       reviewAgent.kill();
-      tddAgent = spawnTddAgent(tddSkill);
-      reviewAgent = spawnReviewAgent(reviewSkill);
+      tddAgent = await spawnTddAgent(tddSkill);
+      reviewAgent = await spawnReviewAgent(reviewSkill);
       tddFirstMessage.value = true;
       reviewFirstMessage.value = true;
 
