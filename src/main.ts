@@ -755,7 +755,9 @@ const main = async () => {
     async () => spawnAgent(BOT_TDD, tddSkill),
     async () => spawnAgent(BOT_REVIEW, reviewSkill),
   );
-  if (interactive) _orch.setupKeyboardHandlers();
+  // _orch.setupKeyboardHandlers() intentionally not called — inline handlers
+  // at lines 625-648 are still the active source of truth. Keyboard wiring
+  // moves to the orchestrator when the inline pipeline is replaced by run().
 
   // 10. Group loop
   for (let i = 0; i < remaining.length; i++) {
