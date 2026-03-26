@@ -93,6 +93,16 @@ let _askResolve: ((answer: string) => void) | null = null;
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 
+const RAINBOW = ["#ff0000", "#ff8800", "#ffff00", "#00ff00", "#0088ff", "#8800ff"] as const;
+
+const RainbowText = ({ text, offset }: { text: string; offset: number }) => (
+  <>
+    {[...text].map((ch, i) => (
+      <Text key={i} color={RAINBOW[(i + offset) % RAINBOW.length]}>{ch}</Text>
+    ))}
+  </>
+);
+
 const App = () => {
   const [items, setItems] = useState<string[]>([]);
   const [, setTick] = useState(0);
@@ -227,7 +237,7 @@ const App = () => {
           <Text dimColor>{"S: skip"}</Text>
         )}
         <Text dimColor>{" | Q: quit"}</Text>
-        {activity ? <Text dimColor>{`  ${SPINNER[spinIdx]} ${activity}`}</Text> : null}
+        {activity ? <Text>{`  ${SPINNER[spinIdx]} `}<RainbowText text={activity} offset={spinIdx} /></Text> : null}
       </Text>
     </>
   );

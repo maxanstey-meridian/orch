@@ -19,7 +19,7 @@ Perform a thorough structural audit searching for structural drift — where the
 Determine the review mode from `$ARGUMENTS`:
 
 - **Directory scope** (default): `$ARGUMENTS` is a path or blank. Audit the specified directory or the full codebase.
-- **Diff scope**: `$ARGUMENTS` starts with `diff`. Run `git diff` (or `git diff <range>` if a range follows) to get changed files, then audit only those files and their immediate dependents (importers/callers). This is the right mode for reviewing a branch before merge or a set of recent changes.
+- **Diff scope**: `$ARGUMENTS` starts with `diff`. Run `git diff` (or `git diff <range>` if a range follows) to get changed files, then audit only those files and their immediate dependents (importers/callers). This is the right mode for reviewing a set of recent changes.
 
 When in diff scope:
 1. Run `git diff --name-only` (or `git diff --name-only <range>`) to identify changed files
@@ -27,6 +27,7 @@ When in diff scope:
 3. For each changed file, also identify files that import from or call into it
 4. Apply all checks below, but only to this file set
 5. Pay special attention to: new dead exports introduced by the diff, type mismatches at changed call boundaries, state that was split or duplicated by the change, and names that no longer match after the change
+6. **Only review files in the diff.** If you see unrelated uncommitted changes in the working tree (other skill files, config, HUD changes), ignore them — they belong to the operator. Do not flag them or suggest reverting them.
 
 ## What to look for
 
