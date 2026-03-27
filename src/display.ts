@@ -93,13 +93,18 @@ export type BannerOpts = {
   readonly tddSessionId: string;
   readonly reviewSessionId: string;
   readonly groups: readonly Group[];
+  readonly worktree?: { readonly path: string; readonly branch: string };
 };
 
 export const printStartupBanner = (log: LogFn, opts: BannerOpts): void => {
   log(
     `\n${a.bold}🚀 Orchestrator${a.reset} ${a.dim}${new Date().toISOString().slice(0, 16)}${a.reset}`,
   );
-  log(`   ${a.dim}Plan${a.reset}    ${opts.planPath}`);
+  log(`   ${a.dim}Plan${a.reset}     ${opts.planPath}`);
+  if (opts.worktree) {
+    log(`   ${a.dim}Branch${a.reset}   ${opts.worktree.branch}`);
+    log(`   ${a.dim}Worktree${a.reset} ${opts.worktree.path}`);
+  }
   log(
     `   ${a.dim}Brief${a.reset}   ${opts.brief ? `${a.green}✓${a.reset} .orch/brief.md` : `${a.dim}none${a.reset}`}`,
   );
