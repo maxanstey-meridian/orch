@@ -30,6 +30,7 @@ import { getStatus, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
 import { parseBranchFlag } from "./cli-args.js";
 import { resolveWorktree } from "./worktree-setup.js";
+import { checkWorktreeResume } from "./worktree.js";
 import { createHud } from "./hud.js";
 
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
@@ -169,8 +170,13 @@ const main = async () => {
   log = hud.wrapLog(origLog);
   for (const line of earlyLog) log(line);
 
-  // 6. Load per-plan state + resolve worktree
+  // 6. Load per-plan state + resume mismatch guard + resolve worktree
   const state: OrchestratorState = await loadState(stateFile);
+  const resumeCheck = await checkWorktreeResume(branchName, state, cwd);
+  if (!resumeCheck.ok) {
+    origLog(resumeCheck.message);
+    process.exit(1);
+  }
   const { cwd: effectiveCwd, worktreeInfo, skipStash, updatedState } = await resolveWorktree({
     branchName, cwd, activePlanId, state, stateFile, log,
   });
