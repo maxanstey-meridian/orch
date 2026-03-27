@@ -1,8 +1,9 @@
-import { randomBytes } from "crypto";
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
+import { randomBytes, createHash } from "crypto";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
+import { join, resolve } from "path";
 import { parsePlanText } from "./plan-parser.js";
 import type { AgentProcess } from "./agent.js";
+import { a, type LogFn } from "./display.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -18,14 +19,67 @@ export const planIdFromPath = (planPath: string): string => {
   return match[1];
 };
 
+export const resolvePlanId = (planPath: string): string => {
+  try {
+    return planIdFromPath(planPath);
+  } catch {
+    return createHash("sha256").update(planPath).digest("hex").slice(0, 6);
+  }
+};
+
+export const ensureCanonicalPlan = (planPath: string, orchDir: string): string => {
+  const id = resolvePlanId(planPath);
+  // Only copy if the path doesn't already match plan-<id>.md
+  try {
+    planIdFromPath(planPath);
+    return id;
+  } catch {
+    // External plan — copy to canonical location if not already present
+    mkdirSync(orchDir, { recursive: true });
+    const canonicalPath = resolve(orchDir, planFileName(id));
+    if (!existsSync(canonicalPath)) {
+      writeFileSync(canonicalPath, readFileSync(planPath, "utf-8"));
+    }
+    return id;
+  }
+};
+
 const PLAN_INSTRUCTIONS = `Transform this feature inventory into a group-and-slice plan.
 
-Use \`## Group: <name>\` headings and \`### Slice <N>: <title>\` headings.
-Number slices sequentially from 1. Each slice needs: **Why**, **Files**,
-concrete implementation details, and **Tests**.
-Target 2-3 slices per group, max 4. Respect dependency ordering.
+**You are generating the HIGH-LEVEL plan structure, NOT per-cycle TDD plans.** Ignore the Cycle N format from your system prompt — that is for a different task.
 
-Output ONLY the plan markdown — no preamble, no commentary.`;
+## Required format
+
+Use exactly this heading structure:
+
+\`\`\`
+## Group: <group name>
+
+<optional group description>
+
+### Slice 1: <slice title>
+
+**Why:** <one sentence>
+
+**Files:** \`src/foo.ts\` (new), \`src/bar.ts\` (edit)
+
+<concrete implementation details — what to build, how it connects>
+
+**Tests:** <what to test, which file>
+
+### Slice 2: <slice title>
+
+...
+\`\`\`
+
+## Rules
+
+- Heading levels matter: \`##\` for groups, \`###\` for slices. Do not deviate.
+- **Slice numbers must be GLOBALLY unique and sequential across the entire plan.** Group 1 has Slices 1-3, Group 2 has Slices 4-6, etc. Do NOT restart numbering per group. The orchestrator tracks progress by slice number — duplicate numbers cause slices to be skipped.
+- Target 2-3 slices per group, max 4. Respect dependency ordering.
+- Each slice needs: **Why**, **Files**, concrete details, and **Tests**.
+- Output ONLY the plan markdown — no preamble, no commentary, no wrapping text.
+- Start your output with \`## Group:\` — the very first line must be a group heading.`;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -69,7 +123,16 @@ export const generatePlan = async (
   const prompt = parts.join("\n\n---\n\n");
   const result = await agent.send(prompt);
 
-  const planText = stripPreamble(result.assistantText).trim();
+  const raw = result.assistantText ?? "";
+  const planFromExit = result.planText ?? "";
+  const best = planFromExit || raw;
+  const planText = stripPreamble(best).trim();
+
+  if (!planText) {
+    throw new Error(
+      `Plan agent returned empty output.\nassistantText length: ${raw.length}\nplanText length: ${planFromExit.length}\nFirst 500 chars of assistantText:\n${raw.slice(0, 500)}`,
+    );
+  }
 
   // Validate — parsePlanText throws if no groups found
   parsePlanText(planText, "generated plan");
@@ -84,4 +147,28 @@ export const generatePlan = async (
   writeFileSync(outPath, prefix + planText);
 
   return { planPath: outPath, planId };
+};
+
+export const doGeneratePlan = async (
+  inventoryPath: string,
+  briefContent: string,
+  outputDir: string,
+  log: LogFn,
+  spawnPlanAgent: () => AgentProcess,
+): Promise<string> => {
+  log(`${a.bold}Generating plan from inventory...${a.reset}`);
+  const planAgent = spawnPlanAgent();
+  try {
+    const { planPath } = await generatePlan(
+      inventoryPath,
+      briefContent,
+      planAgent,
+      outputDir,
+      inventoryPath,
+    );
+    log(`${a.green}Plan written to ${planPath}${a.reset}`);
+    return planPath;
+  } finally {
+    planAgent.kill();
+  }
 };

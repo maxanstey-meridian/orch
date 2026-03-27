@@ -154,4 +154,32 @@ describe("detectCreditExhaustion", () => {
     // This IS a match due to concatenation — pinning as intentional
     expect(signal).toEqual({ kind: "rejected", message: "Rate limited. Wait and retry." });
   });
+
+  it("returns non-null signal for exit(2) path (rate limit with exitCode 1)", () => {
+    const result = makeResult({ resultText: "rate limit exceeded", exitCode: 1 });
+    const signal = detectCreditExhaustion(result, "");
+    expect(signal).not.toBeNull();
+  });
+
+  it("mid-response signal is returned when assistantText is non-empty", () => {
+    const result = makeResult({
+      assistantText: "I was working on the implementation...",
+      resultText: "credit exhausted",
+      exitCode: 1,
+    });
+    const signal = detectCreditExhaustion(result, "");
+    expect(signal).not.toBeNull();
+    expect(signal!.kind).toBe("mid-response");
+  });
+
+  it("rejected signal (empty assistantText) does NOT trigger mid-response log path", () => {
+    const result = makeResult({
+      assistantText: "",
+      resultText: "credit exhausted",
+      exitCode: 1,
+    });
+    const signal = detectCreditExhaustion(result, "");
+    expect(signal).not.toBeNull();
+    expect(signal!.kind).toBe("rejected");
+  });
 });

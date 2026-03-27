@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId } from "../src/plan-generator.js";
+import { generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../src/plan-generator.js";
 import { parsePlanText } from "../src/plan-parser.js";
 import type { AgentProcess, AgentResult } from "../src/agent.js";
 
@@ -105,6 +105,82 @@ describe("generatePlanId", () => {
     const ids = Array.from({ length: 10 }, () => generatePlanId());
     const unique = new Set(ids);
     expect(unique.size).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ─── resolvePlanId ──────────────────────────────────────────────────────────
+
+describe("resolvePlanId", () => {
+  it("extracts ID from a plan-<id>.md path via regex", () => {
+    expect(resolvePlanId("/repo/.orch/plan-a1b2c3.md")).toBe("a1b2c3");
+  });
+
+  it("returns a 6-char hex string for an arbitrary path (hash fallback)", () => {
+    expect(resolvePlanId("/repo/plan.md")).toMatch(/^[0-9a-f]{6}$/);
+  });
+
+  it("is deterministic — same path always produces same ID", () => {
+    const id1 = resolvePlanId("/repo/plan.md");
+    const id2 = resolvePlanId("/repo/plan.md");
+    expect(id1).toBe(id2);
+  });
+
+  it("produces different IDs for different paths", () => {
+    const idA = resolvePlanId("/repo/plan-a.md");
+    const idB = resolvePlanId("/repo/plan-b.md");
+    expect(idA).not.toBe(idB);
+  });
+});
+
+// ─── ensureCanonicalPlan ────────────────────────────────────────────────────
+
+describe("ensureCanonicalPlan", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "canonical-"));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("copies non-standard plan to orchDir/plan-<id>.md and returns the plan ID", () => {
+    const planPath = join(tmpDir, "plan.md");
+    const orchDir = join(tmpDir, ".orch");
+    writeFileSync(planPath, "## Group: Test\n### Slice 1: Noop\nDo nothing.");
+
+    const id = ensureCanonicalPlan(planPath, orchDir);
+
+    expect(id).toMatch(/^[0-9a-f]{6}$/);
+    const canonical = readFileSync(join(orchDir, `plan-${id}.md`), "utf-8");
+    expect(canonical).toContain("## Group: Test");
+  });
+
+  it("does not overwrite an existing canonical file", () => {
+    const planPath = join(tmpDir, "plan.md");
+    const orchDir = join(tmpDir, ".orch");
+    writeFileSync(planPath, "new content");
+
+    // First call creates
+    const id = ensureCanonicalPlan(planPath, orchDir);
+    // Overwrite the canonical with different content
+    writeFileSync(join(orchDir, `plan-${id}.md`), "original");
+
+    // Second call should NOT overwrite
+    ensureCanonicalPlan(planPath, orchDir);
+    const content = readFileSync(join(orchDir, `plan-${id}.md`), "utf-8");
+    expect(content).toBe("original");
+  });
+
+  it("returns regex-extracted ID for plan-<id>.md paths without copying", () => {
+    const orchDir = join(tmpDir, ".orch");
+    mkdirSync(orchDir, { recursive: true });
+    const planPath = join(orchDir, "plan-a1b2c3.md");
+    writeFileSync(planPath, "## Group: Test");
+
+    const id = ensureCanonicalPlan(planPath, orchDir);
+    expect(id).toBe("a1b2c3");
   });
 });
 
@@ -327,5 +403,48 @@ describe("generatePlan", () => {
     expect(capturedPrompt).toContain("TypeScript / NestJS stack");
     expect(capturedPrompt).toContain("# Features");
     expect(capturedPrompt).toContain("Transform this feature inventory");
+  });
+});
+
+// ─── doGeneratePlan ─────────────────────────────────────────────────────────
+
+describe("doGeneratePlan", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dogen-"));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("calls generatePlan and returns the planPath", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_PLAN);
+    const log = () => {};
+
+    const planPath = await doGeneratePlan(inventoryPath, "", outputDir, log, () => agent);
+
+    expect(planPath).toMatch(/plan-[0-9a-f]{6}\.md$/);
+    const written = readFileSync(planPath, "utf-8");
+    expect(written).toContain("## Group: Auth");
+  });
+
+  it("kills the agent even if generatePlan throws", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+    const outputDir = join(tmpDir, ".orch");
+    const killed: boolean[] = [];
+    const badAgent: AgentProcess = {
+      ...mockAgent("not a plan"),
+      kill: () => { killed.push(true); },
+    };
+    const log = () => {};
+
+    await expect(doGeneratePlan(inventoryPath, "", outputDir, log, () => badAgent)).rejects.toThrow();
+    expect(killed).toHaveLength(1);
   });
 });

@@ -61,6 +61,19 @@ export const parsePlanText = (text: string, source = "<text>"): readonly Group[]
     throw new Error(`No groups found in plan: ${source}`);
   }
 
+  // Validate globally unique slice numbers
+  const seen = new Set<number>();
+  for (const group of groups) {
+    for (const slice of group.slices) {
+      if (seen.has(slice.number)) {
+        throw new Error(
+          `Duplicate slice number ${slice.number} in plan: ${source}. Slice numbers must be globally unique across all groups.`,
+        );
+      }
+      seen.add(slice.number);
+    }
+  }
+
   return groups;
 };
 
