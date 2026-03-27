@@ -184,6 +184,16 @@ describe("state", () => {
     await expect(loadState(testPath)).rejects.toThrow("worktree");
   });
 
+  it("throws when worktree.branch is empty string", async () => {
+    await writeFile(testPath, JSON.stringify({ worktree: { path: "/tmp/wt", branch: "", baseSha: "abc" } }));
+    await expect(loadState(testPath)).rejects.toThrow("worktree");
+  });
+
+  it("throws when worktree.baseSha is empty string", async () => {
+    await writeFile(testPath, JSON.stringify({ worktree: { path: "/tmp/wt", branch: "b", baseSha: "" } }));
+    await expect(loadState(testPath)).rejects.toThrow("worktree");
+  });
+
   it("throws when worktree is missing required fields", async () => {
     await writeFile(testPath, JSON.stringify({ worktree: { path: "/tmp/wt" } }));
     await expect(loadState(testPath)).rejects.toThrow("worktree");

@@ -98,10 +98,10 @@ Before concluding, answer this: if a project manager read the plan slice and the
 - Are there orphaned setup steps (directories created, config added, types defined) that nothing actually uses?
 A feature that exists but isn't wired in is not delivered.`;
 
-export const buildReviewPrompt = (sliceContent: string, baseSha: string): string =>
+export const buildReviewPrompt = (sliceContent: string, baseSha: string, priorFindings?: string): string =>
   `Review the code changed since commit ${baseSha}. Judge the code on its own merits — correctness, types, structure — not just whether it matches the plan.
 
-${buildReviewPreamble(baseSha)}
+${priorFindings ? `## Prior review findings\nYour previous review flagged these issues — verify each one was addressed. If any were ignored or only partially fixed, re-flag them:\n\n${priorFindings}\n\n` : ""}${buildReviewPreamble(baseSha)}
 
 ## What to look for
 - Bugs: incorrect runtime behavior, off-by-one, swallowed errors, race conditions

@@ -19,4 +19,8 @@ describe("parseBranchFlag", () => {
   it("returns undefined when --branch not present", () => {
     expect(parseBranchFlag(["--work", "plan.md"], "abc123")).toBeUndefined();
   });
+
+  it("auto-generates when --branch value is empty string", () => {
+    expect(parseBranchFlag(["--branch", ""], "abc123")).toBe("orch/abc123");
+  });
 });
