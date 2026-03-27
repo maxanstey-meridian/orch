@@ -1,7 +1,8 @@
 import { randomBytes, createHash } from "crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
-import { PlanSchema } from "./plan-schema.js";
+import { PlanSchema, parsePlanJson } from "./plan-schema.js";
+import type { Group } from "./plan-parser.js";
 import type { AgentProcess } from "../agent/agent.js";
 import { a, type LogFn } from "../ui/display.js";
 
@@ -109,6 +110,19 @@ export const extractJson = (text: string): string => {
   return text;
 };
 
+// ─── Summary ────────────────────────────────────────────────────────────────
+
+export const formatPlanSummary = (groups: readonly Group[]): string[] => {
+  const totalSlices = groups.reduce((sum, g) => sum + g.slices.length, 0);
+  const lines: string[] = [`${a.bold}Plan: ${groups.length} groups, ${totalSlices} slices${a.reset}`];
+  for (const g of groups) {
+    const n = g.slices.length;
+    const titles = g.slices.map((s) => `#${s.number} ${s.title}`).join(", ");
+    lines.push(`  ${a.cyan}${g.name}${a.reset} (${n} slice${n === 1 ? "" : "s"}) — ${titles}`);
+  }
+  return lines;
+};
+
 // ─── Plan generation ────────────────────────────────────────────────────────
 
 export type GeneratePlanResult = { planPath: string; planId: string };
@@ -184,6 +198,11 @@ export const doGeneratePlan = async (
       outputDir,
     );
     log(`${a.green}Plan written to ${planPath}${a.reset}`);
+    const json = readFileSync(planPath, "utf-8");
+    const groups = parsePlanJson(json, planPath);
+    for (const line of formatPlanSummary(groups)) {
+      log(line);
+    }
     return planPath;
   } finally {
     planAgent.kill();

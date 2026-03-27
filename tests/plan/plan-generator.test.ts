@@ -3,8 +3,8 @@ import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { extractJson, generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../../src/plan/plan-generator.js";
-import { PlanSchema } from "../../src/plan/plan-schema.js";
+import { extractJson, formatPlanSummary, generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../../src/plan/plan-generator.js";
+import { PlanSchema, parsePlanJson } from "../../src/plan/plan-schema.js";
 import type { AgentProcess, AgentResult } from "../../src/agent/agent.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -473,6 +473,30 @@ describe("generatePlan", () => {
   });
 });
 
+// ─── formatPlanSummary ──────────────────────────────────────────────────────
+
+describe("formatPlanSummary", () => {
+  const groups = parsePlanJson(VALID_PLAN);
+
+  it("returns a line with total group and slice counts", () => {
+    const lines = formatPlanSummary(groups);
+    expect(lines[0]).toContain("2 groups");
+    expect(lines[0]).toContain("3 slices");
+  });
+
+  it("lists each group with name, slice count, and titles", () => {
+    const lines = formatPlanSummary(groups);
+    const joined = lines.join("\n");
+    expect(joined).toContain("Auth");
+    expect(joined).toContain("2 slices");
+    expect(joined).toContain("User login");
+    expect(joined).toContain("Token refresh");
+    expect(joined).toContain("Dashboard");
+    expect(joined).toContain("1 slice");
+    expect(joined).toContain("Widget rendering");
+  });
+});
+
 // ─── doGeneratePlan ─────────────────────────────────────────────────────────
 
 describe("doGeneratePlan", () => {
@@ -498,6 +522,37 @@ describe("doGeneratePlan", () => {
     expect(planPath).toMatch(/plan-[0-9a-f]{6}\.json$/);
     const written = readFileSync(planPath, "utf-8");
     expect(written).toContain('"Auth"');
+  });
+
+  it("logs group names and slice titles", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_PLAN);
+    const logged: string[] = [];
+    const log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+
+    await doGeneratePlan(inventoryPath, "", outputDir, log, () => agent);
+
+    const all = logged.join("\n");
+    expect(all).toContain("Auth");
+    expect(all).toContain("Widget rendering");
+    expect(all).toContain("3 slices");
+  });
+
+  it("summary slice count matches input", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_PLAN);
+    const logged: string[] = [];
+    const log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+
+    await doGeneratePlan(inventoryPath, "", outputDir, log, () => agent);
+
+    const all = logged.join("\n");
+    expect(all).toContain("2 groups");
+    expect(all).toContain("3 slices");
   });
 
   it("kills the agent even if generatePlan throws", async () => {
