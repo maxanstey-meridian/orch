@@ -1,7 +1,7 @@
 import type { AgentProcess, AgentResult, AgentStyle } from "./agent.js";
 import type { Hud, WriteFn } from "./hud.js";
 import type { OrchestratorState } from "./state.js";
-import { a, ts, BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL, printSliceSummary } from "./display.js";
+import { a, ts, BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL, printSliceIntro, printSliceSummary } from "./display.js";
 import { shouldReview, type DiffStats } from "./review-threshold.js";
 import type { Group, Slice } from "./plan-parser.js";
 import { parseVerifyResult } from "./verify.js";
@@ -55,6 +55,13 @@ export type PlanThenExecuteResult = {
   readonly replan?: boolean;
 };
 
+export type RunDeps = {
+  readonly planThenExecute: (deps: PlanThenExecuteDeps) => Promise<PlanThenExecuteResult>;
+  readonly spawnPlanWithSkill: () => AgentProcess;
+  readonly spawnGap: () => AgentProcess;
+  readonly spawnFinal: () => AgentProcess;
+};
+
 export class CreditExhaustedError extends Error {
   readonly kind: CreditSignal["kind"];
   constructor(message: string, kind: CreditSignal["kind"]) {
@@ -77,20 +84,12 @@ export class Orchestrator {
   slicesCompleted = 0;
   activityShowing = false;
 
-  planThenExecute: (deps: PlanThenExecuteDeps) => Promise<PlanThenExecuteResult> = () => {
-    throw new Error("planThenExecute not wired");
-  };
-  spawnPlanWithSkill: () => AgentProcess = () => {
-    throw new Error("spawnPlanWithSkill not wired");
-  };
-  spawnGap: () => AgentProcess = () => {
-    throw new Error("spawnGap not wired");
-  };
-  spawnFinal: () => AgentProcess = () => {
-    throw new Error("spawnFinal not wired");
-  };
-
   private readonly hudWriter: WriteFn;
+
+  planThenExecute: (deps: PlanThenExecuteDeps) => Promise<PlanThenExecuteResult>;
+  spawnPlanWithSkill: () => AgentProcess;
+  spawnGap: () => AgentProcess;
+  spawnFinal: () => AgentProcess;
 
   constructor(
     readonly config: OrchestratorConfig,
@@ -107,11 +106,16 @@ export class Orchestrator {
     private readonly _isCleanReview: (text: string) => boolean,
     private readonly spawnVerify: () => Promise<AgentProcess>,
     private readonly _measureDiff: (cwd: string, since: string) => Promise<DiffStats>,
+    runDeps?: RunDeps,
   ) {
     this.state = initialState;
     this.tddAgent = tddAgent;
     this.reviewAgent = reviewAgent;
     this.hudWriter = hud.createWriter();
+    this.planThenExecute = runDeps?.planThenExecute ?? (() => { throw new Error("planThenExecute not wired"); });
+    this.spawnPlanWithSkill = runDeps?.spawnPlanWithSkill ?? (() => { throw new Error("spawnPlanWithSkill not wired"); });
+    this.spawnGap = runDeps?.spawnGap ?? (() => { throw new Error("spawnGap not wired"); });
+    this.spawnFinal = runDeps?.spawnFinal ?? (() => { throw new Error("spawnFinal not wired"); });
   }
 
   streamer(style: AgentStyle): Streamer {
@@ -487,23 +491,51 @@ export class Orchestrator {
           continue;
         }
 
+        printSliceIntro(this.log, slice);
+
         const verifyBaseSha = await this.git.captureRef(this.config.cwd);
 
-        const pteResult = await this.planThenExecute({
-          sliceContent: slice.content,
-          planAgent: this.spawnPlanWithSkill(),
-          tddAgent: this.tddAgent,
-          brief: this.tddIsFirst ? this.config.brief : "",
-          makePlanStreamer: () => this.streamer(BOT_PLAN),
-          makeExecuteStreamer: () => this.streamer(BOT_TDD),
-          withInterrupt: (agent, fn) => this.withInterrupt(agent, fn),
-          isSkipped: () => this.sliceSkipFlag,
-          isHardInterrupted: () => this.hardInterruptPending,
-          onToolUse: (s) => this.onToolUse(s),
-          log: this.log,
-          noInteraction: this.config.noInteraction,
-          askUser: this.config.noInteraction ? undefined : this.hud.askUser,
-        });
+        // Plan-then-execute with replan loop
+        const MAX_REPLANS = 2;
+        let replanAttempts = 0;
+        let pteResult: PlanThenExecuteResult;
+        do {
+          pteResult = await this.planThenExecute({
+            sliceContent: slice.content,
+            planAgent: this.spawnPlanWithSkill(),
+            tddAgent: this.tddAgent,
+            brief: this.tddIsFirst ? this.config.brief : "",
+            makePlanStreamer: () => this.streamer(BOT_PLAN),
+            makeExecuteStreamer: () => this.streamer(BOT_TDD),
+            withInterrupt: (agent, fn) => this.withInterrupt(agent, fn),
+            isSkipped: () => this.sliceSkipFlag,
+            isHardInterrupted: () => this.hardInterruptPending,
+            onToolUse: (s) => this.onToolUse(s),
+            log: this.log,
+            noInteraction: this.config.noInteraction,
+            askUser: this.config.noInteraction ? undefined : this.hud.askUser,
+          });
+          replanAttempts++;
+        } while (pteResult.replan && replanAttempts < MAX_REPLANS);
+
+        // After max replans, auto-accept
+        if (pteResult.replan) {
+          this.log(`${ts()} ${a.yellow}Max replans reached — auto-accepting plan${a.reset}`);
+          pteResult = await this.planThenExecute({
+            sliceContent: slice.content,
+            planAgent: this.spawnPlanWithSkill(),
+            tddAgent: this.tddAgent,
+            brief: this.tddIsFirst ? this.config.brief : "",
+            makePlanStreamer: () => this.streamer(BOT_PLAN),
+            makeExecuteStreamer: () => this.streamer(BOT_TDD),
+            withInterrupt: (agent, fn) => this.withInterrupt(agent, fn),
+            isSkipped: () => this.sliceSkipFlag,
+            isHardInterrupted: () => this.hardInterruptPending,
+            onToolUse: (s) => this.onToolUse(s),
+            log: this.log,
+            noInteraction: true,
+          });
+        }
 
         if (pteResult.skipped) {
           this.sliceSkipFlag = false;
@@ -514,7 +546,21 @@ export class Orchestrator {
           continue;
         }
 
-        const tddResult = pteResult.tddResult;
+        let tddResult = pteResult.tddResult;
+
+        // Hard interrupt: agent was killed during plan or execute phase
+        if (pteResult.hardInterrupt) {
+          const guidance = pteResult.hardInterrupt;
+          this.hardInterruptPending = null;
+          this.log(`${ts()} ${a.yellow}⚡ Respawning TDD agent with guidance...${a.reset}`);
+          await this.respawnTdd();
+          const s = this.streamer(BOT_TDD);
+          tddResult = await this.withInterrupt(this.tddAgent, () =>
+            this.tddAgent.send(withBrief(guidance, this.config.brief), s, (sm) => this.onToolUse(sm)),
+          );
+          s.flush();
+        }
+
         this.tddIsFirst = false;
 
         await this.checkCredit(tddResult, this.tddAgent);
@@ -586,7 +632,13 @@ export class Orchestrator {
 
     const gapText = gapResult.assistantText ?? "";
 
-    if (gapText.includes("NO_GAPS_FOUND") || gapResult.exitCode !== 0) {
+    if (gapResult.exitCode !== 0) {
+      this.log(`${ts()} ${a.yellow}⚠ Gap analysis agent failed (exit ${gapResult.exitCode}) — skipping${a.reset}`);
+      gapAgent.kill();
+      return;
+    }
+
+    if (gapText.includes("NO_GAPS_FOUND")) {
       this.log(`${ts()} ${a.green}✓ No coverage gaps found${a.reset}`);
       gapAgent.kill();
       return;

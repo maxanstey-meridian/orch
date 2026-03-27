@@ -40,10 +40,9 @@ import {
   BOT_PLAN,
   logSection,
 } from "./display.js";
-import type { Streamer } from "./streamer.js";
-import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
+import { Orchestrator, CreditExhaustedError, type OrchestratorConfig, type PlanThenExecuteDeps, type PlanThenExecuteResult, type RunDeps } from "./orchestrator.js";
 import { runInit, profileToMarkdown, createAsk } from "./init.js";
-import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
+import { createAgent, type AgentProcess, type AgentStyle } from "./agent.js";
 import { captureRef, hasChanges, getStatus, hasDirtyTree, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
 import { isCleanReview } from "./review-check.js";
@@ -153,30 +152,6 @@ ${sliceContent}
 1. Read the relevant files to understand current state.
 2. Output numbered RED→GREEN cycles. Each cycle: one failing test, then minimal code to pass.
 3. Do NOT write any code — plan only.`;
-
-type PlanThenExecuteDeps = {
-  sliceContent: string;
-  planAgent: AgentProcess;
-  tddAgent: AgentProcess;
-  brief: string;
-  makePlanStreamer: () => Streamer;
-  makeExecuteStreamer: () => Streamer;
-  withInterrupt: <T>(agent: AgentProcess, fn: () => Promise<T>) => Promise<T>;
-  isSkipped: () => boolean;
-  isHardInterrupted: () => string | null;
-  onToolUse?: (summary: string) => void;
-  log: (...args: unknown[]) => void;
-  noInteraction?: boolean;
-  askUser?: (prompt: string) => Promise<string>;
-  onPlanReady?: () => void;
-};
-
-type PlanThenExecuteResult = {
-  tddResult: AgentResult;
-  skipped: boolean;
-  hardInterrupt?: string;
-  replan?: boolean;
-};
 
 export const planThenExecute = async (
   deps: PlanThenExecuteDeps,
@@ -542,12 +517,13 @@ const main = async () => {
     isCleanReview,
     async () => spawnAgent(BOT_VERIFY, verifySkill),
     measureDiff,
+    {
+      planThenExecute,
+      spawnPlanWithSkill: () => spawnPlanAgentWithSkill(),
+      spawnGap: () => spawnAgent(BOT_GAP),
+      spawnFinal: () => spawnAgent(BOT_FINAL),
+    },
   );
-  // Wire additional deps for run()
-  _orch.planThenExecute = planThenExecute;
-  _orch.spawnPlanWithSkill = () => spawnPlanAgentWithSkill();
-  _orch.spawnGap = () => spawnAgent(BOT_GAP);
-  _orch.spawnFinal = () => spawnAgent(BOT_FINAL);
   if (interactive) _orch.setupKeyboardHandlers();
 
   // 10. Run the orchestrator
