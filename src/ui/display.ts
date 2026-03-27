@@ -63,10 +63,7 @@ export const logSection = (log: LogFn, title: string) => {
 
 export const printSliceIntro = (log: LogFn, slice: Slice) => {
   log(`\n${a.bold}${a.white}┌─ Slice ${slice.number}: ${slice.title}${a.reset}`);
-  const introLine = slice.content
-    .split("\n")
-    .find((l: string) => l.trim() && !l.startsWith("#") && !l.startsWith("---"));
-  if (introLine) log(`${a.dim}│  ${introLine.trim()}${a.reset}`);
+  if (slice.why) log(`${a.dim}│  ${slice.why.trim()}${a.reset}`);
   log(`${a.dim}└──${a.reset}\n`);
 };
 

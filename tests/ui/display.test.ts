@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { printStartupBanner } from "../../src/ui/display.js";
+import { printStartupBanner, printSliceIntro } from "../../src/ui/display.js";
 
 const collect = () => {
   const lines: string[] = [];
@@ -20,8 +20,8 @@ describe("printStartupBanner", () => {
     tddSessionId: "sess-tdd-12345678",
     reviewSessionId: "sess-rev-87654321",
     groups: [
-      { name: "Auth", slices: [{ number: 1, title: "Login", content: "" }] },
-      { name: "Dashboard", slices: [{ number: 2, title: "Widgets", content: "" }, { number: 3, title: "Charts", content: "" }] },
+      { name: "Auth", slices: [{ number: 1, title: "Login", content: "", why: "Auth needed", files: [{ path: "src/auth.ts", action: "new" as const }], details: "", tests: "" }] },
+      { name: "Dashboard", slices: [{ number: 2, title: "Widgets", content: "", why: "", files: [{ path: "src/dash.ts", action: "new" as const }], details: "", tests: "" }, { number: 3, title: "Charts", content: "", why: "", files: [{ path: "src/charts.ts", action: "new" as const }], details: "", tests: "" }] },
     ],
   };
 
@@ -123,5 +123,43 @@ describe("printStartupBanner", () => {
     printStartupBanner(log, baseOpts);
     const text = strip(lines.join("\n"));
     expect(text).not.toContain("Worktree");
+  });
+});
+
+describe("printSliceIntro", () => {
+  const makeSlice = (overrides: Partial<{ number: number; title: string; why: string; content: string }> = {}) => ({
+    number: 1,
+    title: "User login",
+    content: "",
+    why: "Users need authentication before accessing resources",
+    files: [{ path: "src/auth.ts", action: "new" as const }],
+    details: "Implement login flow.",
+    tests: "Login works.",
+    ...overrides,
+  });
+
+  it("shows slice.why as the intro line", () => {
+    const { lines, log } = collect();
+    printSliceIntro(log, makeSlice());
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Users need authentication before accessing resources");
+  });
+
+  it("omits intro line when why is empty", () => {
+    const { lines, log } = collect();
+    printSliceIntro(log, makeSlice({ why: "" }));
+    const stripped = lines.map(strip);
+    // Should only have header and footer, no │ middle line
+    expect(stripped).toHaveLength(2); // header and footer only
+    expect(stripped.join("\n")).not.toContain("│  ");
+  });
+
+  it("formats intro line with dim ANSI codes", () => {
+    const { lines, log } = collect();
+    printSliceIntro(log, makeSlice({ why: "Test reason" }));
+    const middleLine = lines.find((l) => l.includes("│  Test reason"));
+    expect(middleLine).toBeDefined();
+    expect(middleLine).toContain("\x1b[2m");  // dim
+    expect(middleLine).toContain("\x1b[0m");  // reset
   });
 });
