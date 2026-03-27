@@ -57,15 +57,15 @@ ${autonomy}`;
 };
 
 export const buildCommitSweepPrompt = (groupName: string): string =>
-  `There are uncommitted changes in the working tree. Review them, commit anything that belongs to the "${groupName}" group's work, and discard or stash anything that doesn't.
+  `There are uncommitted changes in the working tree. Review them and commit ONLY files that belong to the "${groupName}" group's work.
 
 ## Group
 ${groupName}
 
 ## Instructions
 1. Run \`git status\` and \`git diff\` to see what changed.
-2. Stage and commit files that belong to this group's work with a descriptive message.
-3. Discard or stash anything unrelated.`;
+2. Stage and commit ONLY files that clearly belong to this group's work with a descriptive message. Use \`git add <specific files>\` — never \`git add .\` or \`git add -A\`.
+3. **Leave everything else alone.** Do not stash, discard, revert, or touch unrelated files. They belong to the operator.`;
 
 export const buildReviewPreamble = (baseSha: string): string =>
   `## How to review

@@ -38,7 +38,7 @@ import {
 } from "./display.js";
 import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
 import { runInit, profileToMarkdown } from "./init.js";
-import { spawnAgent, spawnPlanAgentWithSkill, TDD_RULES_REMINDER, REVIEW_RULES_REMINDER } from "./agent-factory.js";
+import { spawnPlanAgentWithSkill } from "./agent-factory.js";
 import { getStatus, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
 
@@ -236,21 +236,15 @@ const main = async () => {
   // 5. Load per-plan state
   let state: OrchestratorState = await loadState(stateFile);
 
-  // 6. Spawn persistent agents with skill system prompts (spawned here, rules reminder awaited after banner)
-  const tddAgent = spawnAgent(BOT_TDD, tddSkill);
-  const reviewAgent = spawnAgent(BOT_REVIEW, reviewSkill);
-
   const interactive = !noInteraction && isTTY;
 
-  // 7. Signal handlers + cleanup (delegates to orchestrator after it's constructed)
+  // 6. Signal handlers + cleanup (delegates to orchestrator after it's constructed)
   let _orch: Orchestrator | null = null;
   const cleanup = () => {
     if (_orch) {
       _orch.cleanup();
     } else {
       hud.teardown();
-      tddAgent.kill();
-      reviewAgent.kill();
     }
   };
   process.on("SIGINT", () => {
@@ -262,7 +256,7 @@ const main = async () => {
     process.exit(143);
   });
 
-  // 8. Startup banner
+  // 7. Startup banner (pre-create)
   log(
     `\n${a.bold}🚀 Orchestrator${a.reset} ${a.dim}${new Date().toISOString().slice(0, 16)}${a.reset}`,
   );
@@ -273,19 +267,11 @@ const main = async () => {
   log(
     `   ${a.dim}Mode${a.reset}    ${groupFilter ? `start from "${groupFilter}"` : auto ? "automatic" : "interactive"}`,
   );
-  log(`   ${BOT_TDD.badge} ${a.dim}persistent (${tddAgent.sessionId.slice(0, 8)})${a.reset}`);
-  log(`   ${BOT_REVIEW.badge} ${a.dim}persistent (${reviewAgent.sessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
   if (interactive)
     log(`   ${a.dim}Press${a.reset} ${a.bold}S${a.reset} ${a.dim}to skip current slice${a.reset}`);
 
-  // Send rules reminders (awaited after banner so UI isn't blocked)
-  await Promise.all([
-    tddAgent.sendQuiet(TDD_RULES_REMINDER),
-    reviewAgent.sendQuiet(REVIEW_RULES_REMINDER),
-  ]);
-
-  // 9. Group list with start marker
+  // 8. Group list with start marker
   const startIdx = groupFilter
     ? groups.findIndex((g) => g.name.toLowerCase() === groupFilter.toLowerCase())
     : 0;
@@ -314,7 +300,7 @@ const main = async () => {
 
   const planContent = await readFile(planPath, "utf-8");
 
-  // 9b. Construct Orchestrator (scaffold — run() not called yet)
+  // 9. Construct Orchestrator — spawns + reminds agents internally
   const orchConfig: OrchestratorConfig = {
     cwd,
     planPath,
@@ -329,14 +315,9 @@ const main = async () => {
     reviewSkill,
     verifySkill,
   };
-  _orch = new Orchestrator(
-    orchConfig,
-    state,
-    hud,
-    log,
-    tddAgent,
-    reviewAgent,
-  );
+  _orch = await Orchestrator.create(orchConfig, state, hud, log);
+  log(`   ${BOT_TDD.badge} ${a.dim}persistent (${_orch.tddAgent.sessionId.slice(0, 8)})${a.reset}`);
+  log(`   ${BOT_REVIEW.badge} ${a.dim}persistent (${_orch.reviewAgent.sessionId.slice(0, 8)})${a.reset}`);
   if (interactive) _orch.setupKeyboardHandlers();
 
   // 10. Run the orchestrator

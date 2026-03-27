@@ -60,7 +60,26 @@ export class Orchestrator {
 
   private readonly hudWriter: WriteFn;
 
-  constructor(
+  static async create(
+    config: OrchestratorConfig,
+    initialState: OrchestratorState,
+    hud: Hud,
+    log: LogFn,
+    agents?: { tdd: AgentProcess; review: AgentProcess },
+  ): Promise<Orchestrator> {
+    if (agents) {
+      return new Orchestrator(config, initialState, hud, log, agents.tdd, agents.review);
+    }
+    const tddAgent = spawnAgentFactory(BOT_TDD, config.tddSkill);
+    const reviewAgent = spawnAgentFactory(BOT_REVIEW, config.reviewSkill);
+    await Promise.all([
+      tddAgent.sendQuiet(TDD_RULES_REMINDER),
+      reviewAgent.sendQuiet(REVIEW_RULES_REMINDER),
+    ]);
+    return new Orchestrator(config, initialState, hud, log, tddAgent, reviewAgent);
+  }
+
+  private constructor(
     readonly config: OrchestratorConfig,
     initialState: OrchestratorState,
     readonly hud: Hud,
