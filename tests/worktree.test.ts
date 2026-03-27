@@ -3,7 +3,7 @@ import { mkdtemp, rm, stat } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync } from "child_process";
-import { createWorktree, removeWorktree } from "../src/worktree.js";
+import { createWorktree, removeWorktree, verifyWorktree } from "../src/worktree.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
@@ -49,5 +49,25 @@ describe("worktree", () => {
     await expect(stat(path)).rejects.toThrow();
     const list = exec("git worktree list", repoDir);
     expect(list).not.toContain(path);
+  });
+
+  describe("verifyWorktree", () => {
+    it("returns missing when path does not exist", async () => {
+      const result = await verifyWorktree("/tmp/does-not-exist-" + Date.now(), "any-branch");
+      expect(result).toEqual({ ok: false, reason: "missing", detail: expect.stringContaining("does not exist") });
+    });
+
+    it("returns ok when worktree exists on expected branch", async () => {
+      const path = await createWorktree(repoDir, "verify-ok", "orch/verify-ok");
+      const result = await verifyWorktree(path, "orch/verify-ok");
+      expect(result).toEqual({ ok: true });
+    });
+
+    it("returns wrong-branch when worktree is on a different branch", async () => {
+      const path = await createWorktree(repoDir, "verify-br", "orch/verify-br");
+      exec("git checkout -b other", path);
+      const result = await verifyWorktree(path, "orch/verify-br");
+      expect(result).toEqual({ ok: false, reason: "wrong-branch", detail: expect.stringContaining("other") });
+    });
   });
 });
