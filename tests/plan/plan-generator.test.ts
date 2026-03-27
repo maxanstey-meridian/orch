@@ -247,6 +247,10 @@ describe("generatePlan", () => {
 
     expect(result.planId).toMatch(/^[0-9a-f]{6}$/);
     expect(result.planPath).toBe(join(outputDir, `plan-${result.planId}.json`));
+    expect(result.groups).toHaveLength(2);
+    expect(result.groups[0].name).toBe("Auth");
+    expect(result.groups[0].slices).toHaveLength(2);
+    expect(result.groups[1].name).toBe("Dashboard");
     const written = readFileSync(result.planPath, "utf-8");
     expect(written).toContain('"Auth"');
     expect(written).toContain('"User login"');

@@ -1,7 +1,7 @@
 import { randomBytes, createHash } from "crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
-import { PlanSchema, parsePlanJson } from "./plan-schema.js";
+import { parsePlanJson } from "./plan-schema.js";
 import type { Group } from "./plan-parser.js";
 import type { AgentProcess } from "../agent/agent.js";
 import { a, type LogFn } from "../ui/display.js";
@@ -125,7 +125,7 @@ export const formatPlanSummary = (groups: readonly Group[]): string[] => {
 
 // ─── Plan generation ────────────────────────────────────────────────────────
 
-export type GeneratePlanResult = { planPath: string; planId: string };
+export type GeneratePlanResult = { planPath: string; planId: string; groups: readonly Group[] };
 
 export const generatePlan = async (
   inventoryPath: string,
@@ -156,21 +156,12 @@ export const generatePlan = async (
     );
   }
 
-  // Parse and validate via Zod
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(planText);
-  } catch (e) {
-    throw new Error(`Invalid JSON in generated plan — ${(e as Error).message}`);
-  }
-  const validation = PlanSchema.safeParse(parsed);
-  if (!validation.success) {
-    const issues = validation.error.issues.map((i: { path: (string | number)[]; message: string }) =>
-      `  ${i.path.join(".")}: ${i.message}`).join("\n");
-    throw new Error(`Invalid plan (generated plan):\n${issues}`);
-  }
+  // Parse, validate via Zod, and map to Group[]
+  // parsePlanJson throws with descriptive errors on invalid JSON or schema violations
+  const groups = parsePlanJson(planText, "generated plan");
 
-  const formatted = JSON.stringify(validation.data, null, 2);
+  // Pretty-print the validated JSON for disk
+  const formatted = JSON.stringify(JSON.parse(planText), null, 2);
   const planId = generatePlanId();
 
   // Write to disk
@@ -178,7 +169,7 @@ export const generatePlan = async (
   const outPath = join(outputDir, planFileName(planId));
   writeFileSync(outPath, formatted);
 
-  return { planPath: outPath, planId };
+  return { planPath: outPath, planId, groups };
 };
 
 export const doGeneratePlan = async (
@@ -191,15 +182,13 @@ export const doGeneratePlan = async (
   log(`${a.bold}Generating plan from inventory...${a.reset}`);
   const planAgent = spawnPlanAgent();
   try {
-    const { planPath } = await generatePlan(
+    const { planPath, groups } = await generatePlan(
       inventoryPath,
       briefContent,
       planAgent,
       outputDir,
     );
     log(`${a.green}Plan written to ${planPath}${a.reset}`);
-    const json = readFileSync(planPath, "utf-8");
-    const groups = parsePlanJson(json, planPath);
     for (const line of formatPlanSummary(groups)) {
       log(line);
     }
