@@ -205,6 +205,20 @@ describe("statePathForPlan", () => {
     expect(result).not.toContain("plan-");
   });
 
+  it("lastCompletedSlice is advanced and saved after a skip (round-trip)", async () => {
+    const skipPath = join(tmpdir(), `orch-state-skip-${process.pid}.json`);
+    await saveState(skipPath, { lastCompletedSlice: 2 });
+
+    const state = await loadState(skipPath);
+    const updated = { ...state, lastCompletedSlice: 3 };
+    await saveState(skipPath, updated);
+
+    const resumed = await loadState(skipPath);
+    expect(resumed.lastCompletedSlice).toBe(3);
+
+    await rm(skipPath, { force: true });
+  });
+
   it("state saved for plan A does not affect state loaded for plan B", async () => {
     const orchDir = join(tmpdir(), `orch-state-isolation-${process.pid}`);
     const stateDir = join(orchDir, "state");
