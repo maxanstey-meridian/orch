@@ -230,6 +230,33 @@ describe("Orchestrator.create", () => {
     expect(review.sendQuiet).not.toHaveBeenCalled();
   });
 
+  it("keeps tddIsFirst and reviewIsFirst true on fresh start", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    const orch = await Orchestrator.create(makeConfig(), {}, fakeHud().hud, vi.fn());
+
+    expect(orch.tddIsFirst).toBe(true);
+    expect(orch.reviewIsFirst).toBe(true);
+  });
+
+  it("sets tddIsFirst and reviewIsFirst to false when resuming with session IDs", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    const orch = await Orchestrator.create(
+      makeConfig(),
+      { tddSessionId: "tdd-sess-1", reviewSessionId: "rev-sess-1" },
+      fakeHud().hud,
+      vi.fn(),
+    );
+
+    expect(orch.tddIsFirst).toBe(false);
+    expect(orch.reviewIsFirst).toBe(false);
+  });
+
   it("uses provided agents when given, skipping spawn but still sending reminders", async () => {
     const tdd = fakeAgent();
     const review = fakeAgent();
@@ -2110,6 +2137,42 @@ describe("Orchestrator.planThenExecute (method)", () => {
     const askIdx = callOrder.indexOf("askUser");
     expect(updateIdx).toBeGreaterThanOrEqual(0);
     expect(askIdx).toBeGreaterThan(updateIdx);
+  });
+
+  it("respawns TDD agent and retries when agent dies during execute", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+
+    const tdd = fakeAgent();
+    // First send: agent dies (exitCode 1, alive becomes false)
+    let sendCount = 0;
+    (tdd.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      sendCount++;
+      if (sendCount === 1) {
+        (tdd as { alive: boolean }).alive = false;
+        return { exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+      }
+      return { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
+    });
+
+    const freshTdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(freshTdd);
+
+    const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+
+    const result = await orch.planThenExecute("slice");
+
+    // Should have respawned: the orchestrator's tddAgent should now be the fresh one
+    expect(orch.tddAgent).toBe(freshTdd);
+    // Fresh agent should have received rules reminder
+    expect(freshTdd.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("RUN TESTS WITH BASH"));
+    // Fresh agent should have been sent the execute prompt
+    expect(freshTdd.send).toHaveBeenCalledOnce();
+    // Result should be from the fresh agent
+    expect(result.tddResult.exitCode).toBe(0);
   });
 });
 

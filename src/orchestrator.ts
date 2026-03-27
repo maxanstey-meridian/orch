@@ -109,7 +109,12 @@ export class Orchestrator {
         reviewAgent.sendQuiet(REVIEW_RULES_REMINDER),
       ]);
     }
-    return new Orchestrator(config, initialState, hud, log, tddAgent, reviewAgent);
+    const orch = new Orchestrator(config, initialState, hud, log, tddAgent, reviewAgent);
+    if (resuming) {
+      orch.tddIsFirst = false;
+      orch.reviewIsFirst = false;
+    }
+    return orch;
   }
 
   private constructor(
@@ -394,6 +399,23 @@ export class Orchestrator {
       "tdd-execute",
     );
     es.flush();
+
+    // Dead session fallback: if the TDD agent died (e.g. expired resumed session),
+    // respawn fresh and retry the execute send once
+    if (!this.tddAgent.alive) {
+      this.log(`${ts()} ⚠ TDD agent died during execute — respawning fresh agent`);
+      await this.respawnTdd();
+      const retryEs = this.streamer(BOT_TDD);
+      const retryResult = await this.withRetry(
+        () => this.withInterrupt(this.tddAgent, () =>
+          this.tddAgent.send(executePrompt, retryEs, (s) => this.onToolUse(s)),
+        ),
+        this.tddAgent,
+        "tdd-execute-retry",
+      );
+      retryEs.flush();
+      return { tddResult: retryResult, skipped: false, planText: plan };
+    }
 
     if (this.sliceSkipFlag) {
       return { tddResult, skipped: true, planText: plan };
