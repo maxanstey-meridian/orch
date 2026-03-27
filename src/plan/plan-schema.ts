@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Group, Slice } from "./plan-parser.js";
 
 export const FileActionSchema = z.object({
   path: z.string().min(1),
@@ -42,3 +43,37 @@ export type FileAction = z.infer<typeof FileActionSchema>;
 export type PlanSliceJson = z.infer<typeof PlanSliceSchema>;
 export type PlanGroupJson = z.infer<typeof PlanGroupSchema>;
 export type PlanJson = z.infer<typeof PlanSchema>;
+
+const formatFiles = (files: FileAction[]): string =>
+  files.map((f) => `\`${f.path}\` (${f.action})`).join(", ");
+
+const buildContent = (s: PlanSliceJson): string =>
+  `### Slice ${s.number}: ${s.title}\n\n**Why:** ${s.why}\n\n**Files:** ${formatFiles(s.files)}\n\n${s.details}\n\n**Tests:** ${s.tests}`;
+
+export const parsePlanJson = (json: string, source = "<json>"): readonly Group[] => {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch (e) {
+    throw new Error(`Invalid JSON in plan: ${source} — ${(e as Error).message}`);
+  }
+
+  const result = PlanSchema.safeParse(raw);
+  if (!result.success) {
+    const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
+    throw new Error(`Invalid plan (${source}):\n${issues}`);
+  }
+
+  return result.data.groups.map((g) => ({
+    name: g.name,
+    slices: g.slices.map((s): Slice => ({
+      number: s.number,
+      title: s.title,
+      content: buildContent(s),
+      why: s.why,
+      files: s.files,
+      details: s.details,
+      tests: s.tests,
+    })),
+  }));
+};

@@ -1,9 +1,14 @@
 import { readFile } from "fs/promises";
+import type { FileAction } from "./plan-schema.js";
 
 export type Slice = {
   readonly number: number;
   readonly title: string;
   readonly content: string;
+  readonly why?: string;
+  readonly files?: readonly FileAction[];
+  readonly details?: string;
+  readonly tests?: string;
 };
 
 export type Group = {

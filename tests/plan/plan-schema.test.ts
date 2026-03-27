@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PlanSchema } from "@/plan/plan-schema.js";
+import { PlanSchema, parsePlanJson } from "@/plan/plan-schema.js";
 
 describe("PlanSchema", () => {
   const validSlice = (number: number) => ({
@@ -129,5 +129,107 @@ describe("PlanSchema", () => {
       expect(result.data.groups[0].description).toBe("First group");
       expect(result.data.groups[1].description).toBeUndefined();
     }
+  });
+});
+
+describe("parsePlanJson", () => {
+  const makeJson = (obj: unknown) => JSON.stringify(obj);
+
+  const validSlice = (number: number) => ({
+    number,
+    title: `Slice ${number}`,
+    why: "Needed for feature X",
+    files: [{ path: "src/foo.ts", action: "new" as const }],
+    details: "Implement the thing",
+    tests: "Test the thing",
+  });
+
+  const validGroup = (name: string, slices: ReturnType<typeof validSlice>[]) => ({
+    name,
+    slices,
+  });
+
+  it("returns slices with structured fields", () => {
+    const input = { groups: [validGroup("Core", [validSlice(1)])] };
+    const groups = parsePlanJson(makeJson(input));
+    const slice = groups[0].slices[0];
+    expect(slice.why).toBe("Needed for feature X");
+    expect(slice.files).toEqual([{ path: "src/foo.ts", action: "new" }]);
+    expect(slice.details).toBe("Implement the thing");
+    expect(slice.tests).toBe("Test the thing");
+    expect(slice.number).toBe(1);
+    expect(slice.title).toBe("Slice 1");
+  });
+
+  it("computes content from structured fields", () => {
+    const input = {
+      groups: [validGroup("Core", [{
+        number: 2,
+        title: "Add logging",
+        why: "Observability",
+        files: [
+          { path: "src/log.ts", action: "new" as const },
+          { path: "src/app.ts", action: "edit" as const },
+        ],
+        details: "Create a logger module",
+        tests: "Unit test the logger",
+      }])],
+    };
+    const groups = parsePlanJson(makeJson(input));
+    const content = groups[0].slices[0].content;
+    expect(content).toContain("### Slice 2: Add logging");
+    expect(content).toContain("**Why:** Observability");
+    expect(content).toContain("`src/log.ts` (new)");
+    expect(content).toContain("`src/app.ts` (edit)");
+    expect(content).toContain("Create a logger module");
+    expect(content).toContain("**Tests:** Unit test the logger");
+  });
+
+  it("handles multi-group plan with correct structure", () => {
+    const input = {
+      groups: [
+        validGroup("Backend", [validSlice(1), validSlice(2)]),
+        validGroup("Frontend", [validSlice(3), validSlice(4)]),
+      ],
+    };
+    const groups = parsePlanJson(makeJson(input));
+    expect(groups).toHaveLength(2);
+    expect(groups[0].name).toBe("Backend");
+    expect(groups[0].slices).toHaveLength(2);
+    expect(groups[0].slices[0].number).toBe(1);
+    expect(groups[0].slices[1].number).toBe(2);
+    expect(groups[1].name).toBe("Frontend");
+    expect(groups[1].slices).toHaveLength(2);
+    expect(groups[1].slices[0].number).toBe(3);
+    expect(groups[1].slices[1].number).toBe(4);
+  });
+
+  it("throws on invalid JSON with source identifier", () => {
+    expect(() => parsePlanJson("{bad", "my-plan.json")).toThrow("my-plan.json");
+  });
+
+  it("throws on empty string", () => {
+    expect(() => parsePlanJson("")).toThrow();
+  });
+
+  it("surfaces Zod field path on validation error", () => {
+    const input = {
+      groups: [{
+        name: "G",
+        slices: [{ number: 1, title: "S", files: [{ path: "a.ts", action: "new" }], details: "d", tests: "t" }],
+      }],
+    };
+    // missing "why" field
+    expect(() => parsePlanJson(makeJson(input))).toThrow("why");
+  });
+
+  it("rejects duplicate slice numbers", () => {
+    const input = {
+      groups: [
+        validGroup("A", [validSlice(1)]),
+        validGroup("B", [validSlice(1)]),
+      ],
+    };
+    expect(() => parsePlanJson(makeJson(input))).toThrow(/unique|duplicate/i);
   });
 });
