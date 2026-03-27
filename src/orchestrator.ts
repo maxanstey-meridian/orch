@@ -771,6 +771,7 @@ export class Orchestrator {
       return;
     }
     if (this.hardInterruptPending) {
+      this.hardInterruptPending = null;
       this.log(`${ts()} ${a.yellow}⚠ Gap analysis interrupted — skipping${a.reset}`);
       gapAgent.kill();
       return;
@@ -813,6 +814,7 @@ export class Orchestrator {
       return;
     }
     if (this.hardInterruptPending) {
+      this.hardInterruptPending = null;
       this.log(`${ts()} ${a.yellow}⚠ Gap analysis interrupted — skipping${a.reset}`);
       gapAgent.kill();
       return;

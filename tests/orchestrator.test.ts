@@ -1214,6 +1214,7 @@ describe("gapAnalysis()", () => {
 
     expect(gapAgent.kill).toHaveBeenCalled();
     expect(reviewFixSpy).not.toHaveBeenCalled();
+    expect(orch.hardInterruptPending).toBeNull();
   });
 
   it("returns cleanly when sliceSkipFlag set during gap agent phase", async () => {
@@ -1261,6 +1262,7 @@ describe("gapAnalysis()", () => {
     expect(allLogs).not.toContain("failed");
     expect(gapAgent.kill).toHaveBeenCalled();
     expect(tdd.send).not.toHaveBeenCalled();
+    expect(orch.hardInterruptPending).toBeNull();
   });
 
   it("sets activeAgent to GAP during gap scan", async () => {
