@@ -8,12 +8,16 @@ import { BOT_PLAN } from "../ui/display.js";
 const BASE_FLAGS = ["--dangerously-skip-permissions"] as const;
 const PLAN_FLAGS = ["--permission-mode", "plan"] as const;
 
-export const spawnAgent = (style: AgentStyle, systemPrompt?: string): AgentProcess =>
+export const spawnAgent = (
+  style: AgentStyle,
+  systemPrompt?: string,
+  resumeSessionId?: string,
+): AgentProcess =>
   createAgent({
     command: "claude",
     args: [
       ...BASE_FLAGS,
-      "-p",
+      ...(resumeSessionId ? ["--resume", resumeSessionId] : ["-p"]),
       "--input-format",
       "stream-json",
       "--output-format",
@@ -22,6 +26,7 @@ export const spawnAgent = (style: AgentStyle, systemPrompt?: string): AgentProce
       ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
     ],
     style,
+    ...(resumeSessionId ? { sessionId: resumeSessionId } : {}),
   });
 
 export const spawnPlanAgent = (style: AgentStyle, systemPrompt?: string): AgentProcess =>

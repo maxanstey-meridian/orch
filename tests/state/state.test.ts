@@ -215,6 +215,35 @@ describe("state", () => {
     const loaded = await loadState(testPath);
     expect(loaded).toEqual(state);
   });
+
+  it("persists tddSessionId and reviewSessionId", async () => {
+    const state = {
+      lastCompletedSlice: 1,
+      tddSessionId: "abc-123",
+      reviewSessionId: "def-456",
+    };
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+    expect(loaded.tddSessionId).toBe("abc-123");
+    expect(loaded.reviewSessionId).toBe("def-456");
+  });
+
+  it("throws when tddSessionId is empty string", async () => {
+    await writeFile(testPath, JSON.stringify({ tddSessionId: "" }));
+    await expect(loadState(testPath)).rejects.toThrow("tddSessionId");
+  });
+
+  it("throws when reviewSessionId is empty string", async () => {
+    await writeFile(testPath, JSON.stringify({ reviewSessionId: "" }));
+    await expect(loadState(testPath)).rejects.toThrow("reviewSessionId");
+  });
+
+  it("loads state without session IDs (backwards compat)", async () => {
+    await writeFile(testPath, JSON.stringify({ lastCompletedSlice: 5 }));
+    const loaded = await loadState(testPath);
+    expect(loaded.tddSessionId).toBeUndefined();
+    expect(loaded.reviewSessionId).toBeUndefined();
+  });
 });
 
 describe("saveState without parent directory", () => {

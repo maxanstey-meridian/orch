@@ -91,12 +91,19 @@ export class Orchestrator {
     log: LogFn,
     agents?: { tdd: AgentProcess; review: AgentProcess },
   ): Promise<Orchestrator> {
-    const tddAgent = agents?.tdd ?? spawnAgentFactory(BOT_TDD, config.tddSkill);
-    const reviewAgent = agents?.review ?? spawnAgentFactory(BOT_REVIEW, config.reviewSkill);
-    await Promise.all([
-      tddAgent.sendQuiet(TDD_RULES_REMINDER),
-      reviewAgent.sendQuiet(REVIEW_RULES_REMINDER),
-    ]);
+    const resuming = !agents && (initialState.tddSessionId || initialState.reviewSessionId);
+    const tddAgent =
+      agents?.tdd ??
+      spawnAgentFactory(BOT_TDD, config.tddSkill, initialState.tddSessionId);
+    const reviewAgent =
+      agents?.review ??
+      spawnAgentFactory(BOT_REVIEW, config.reviewSkill, initialState.reviewSessionId);
+    if (!resuming) {
+      await Promise.all([
+        tddAgent.sendQuiet(TDD_RULES_REMINDER),
+        reviewAgent.sendQuiet(REVIEW_RULES_REMINDER),
+      ]);
+    }
     return new Orchestrator(config, initialState, hud, log, tddAgent, reviewAgent);
   }
 
@@ -119,7 +126,7 @@ export class Orchestrator {
     const wrapped = (text: string) => {
       if (this.activityShowing) {
         this.activityShowing = false;
-        this.hud.setActivity("");
+        this.hud.setActivity("thinking...");
       }
       base(text);
     };
@@ -537,6 +544,12 @@ export class Orchestrator {
     this.reviewAgent = await this.spawnReviewAgent();
     this.tddIsFirst = true;
     this.reviewIsFirst = true;
+    this.state = {
+      ...this.state,
+      tddSessionId: this.tddAgent.sessionId,
+      reviewSessionId: this.reviewAgent.sessionId,
+    };
+    await saveState(this.config.stateFile, this.state);
   }
 
   async run(groups: readonly Group[], startIdx: number): Promise<void> {
@@ -562,6 +575,12 @@ export class Orchestrator {
         groupSliceCount: group.slices.length,
         groupCompleted: 0,
       });
+      this.state = {
+        ...this.state,
+        tddSessionId: this.tddAgent.sessionId,
+        reviewSessionId: this.reviewAgent.sessionId,
+      };
+      await saveState(this.config.stateFile, this.state);
       const groupBaseSha = await captureRef(this.config.cwd);
       let reviewBase = groupBaseSha;
       let groupCompleted = 0;
@@ -823,5 +842,7 @@ export class Orchestrator {
     this.tddAgent.kill();
     this.tddAgent = await this.spawnTddAgent();
     this.tddIsFirst = true;
+    this.state = { ...this.state, tddSessionId: this.tddAgent.sessionId };
+    await saveState(this.config.stateFile, this.state);
   }
 }

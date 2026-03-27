@@ -118,6 +118,47 @@ describe("spawnPlanAgentWithSkill", () => {
   });
 });
 
+describe("spawnAgent resume mode", () => {
+  beforeEach(() => {
+    mockedCreateAgent.mockClear();
+  });
+
+  it("uses --resume <id> instead of -p when resumeSessionId is provided", async () => {
+    const { spawnAgent } = await loadModule();
+
+    spawnAgent({ label: "TDD", color: "", badge: "" }, undefined, "session-abc");
+
+    expect(mockedCreateAgent).toHaveBeenCalledOnce();
+    const callArgs = mockedCreateAgent.mock.calls[0][0];
+    const args: string[] = callArgs.args;
+
+    expect(args).toContain("--resume");
+    expect(args[args.indexOf("--resume") + 1]).toBe("session-abc");
+    expect(args).not.toContain("-p");
+  });
+
+  it("passes resumeSessionId as sessionId to createAgent", async () => {
+    const { spawnAgent } = await loadModule();
+
+    spawnAgent({ label: "TDD", color: "", badge: "" }, undefined, "session-abc");
+
+    const callArgs = mockedCreateAgent.mock.calls[0][0];
+    expect(callArgs.sessionId).toBe("session-abc");
+  });
+
+  it("uses -p when no resumeSessionId is provided", async () => {
+    const { spawnAgent } = await loadModule();
+
+    spawnAgent({ label: "TDD", color: "", badge: "" });
+
+    const callArgs = mockedCreateAgent.mock.calls[0][0];
+    const args: string[] = callArgs.args;
+
+    expect(args).toContain("-p");
+    expect(args).not.toContain("--resume");
+  });
+});
+
 describe("rule constants", () => {
   it("TDD_RULES_REMINDER contains 'RUN TESTS WITH BASH'", async () => {
     const { TDD_RULES_REMINDER } = await loadModule();

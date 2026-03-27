@@ -8,6 +8,8 @@ const stateSchema = z
     lastCompletedGroup: z.string().min(1).optional(),
     lastSliceImplemented: z.number().int().nonnegative().optional(),
     reviewBaseSha: z.string().min(1).optional(),
+    tddSessionId: z.string().min(1).optional(),
+    reviewSessionId: z.string().min(1).optional(),
     worktree: z
       .object({
         path: z.string().min(1),
