@@ -758,11 +758,23 @@ export class Orchestrator {
     const gapPrompt = withBrief(buildGapPrompt(groupContent, groupBaseSha), this.config.brief);
     const onTool = (s: string) => this.onToolUse(s);
     const gs = this.streamer(BOT_GAP);
+    this.hud.update({ activeAgent: "GAP", activeAgentActivity: "scanning for gaps..." });
     const gapResult = await this.withInterrupt(gapAgent, () =>
       gapAgent.send(gapPrompt, gs, onTool),
     );
     gs.flush();
     await this.checkCredit(gapResult, gapAgent);
+
+    if (this.sliceSkipFlag) {
+      this.sliceSkipFlag = false;
+      gapAgent.kill();
+      return;
+    }
+    if (this.hardInterruptPending) {
+      this.log(`${ts()} ${a.yellow}⚠ Gap analysis interrupted — skipping${a.reset}`);
+      gapAgent.kill();
+      return;
+    }
 
     const gapText = gapResult.assistantText ?? "";
 
@@ -794,6 +806,17 @@ export class Orchestrator {
     ts2.flush();
     this.tddIsFirst = false;
     await this.checkCredit(fixResult, this.tddAgent);
+
+    if (this.sliceSkipFlag) {
+      this.sliceSkipFlag = false;
+      gapAgent.kill();
+      return;
+    }
+    if (this.hardInterruptPending) {
+      this.log(`${ts()} ${a.yellow}⚠ Gap analysis interrupted — skipping${a.reset}`);
+      gapAgent.kill();
+      return;
+    }
 
     if (fixResult.needsInput) {
       await this.followUp(fixResult, this.tddAgent);
