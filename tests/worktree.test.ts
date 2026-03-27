@@ -26,7 +26,7 @@ afterEach(async () => {
 describe("checkWorktreeResume", () => {
   it("errors when no --branch but state has worktree", async () => {
     const state = { worktree: { path: "/fake", branch: "orch/x", baseSha: "abc123" } };
-    const result = await checkWorktreeResume(undefined, state, "/tmp");
+    const result = await checkWorktreeResume(undefined, state);
     expect(result).toEqual({
       ok: false,
       message: expect.stringContaining("Previous run used --branch"),
@@ -36,7 +36,7 @@ describe("checkWorktreeResume", () => {
 
   it("errors when --branch but previous run was in-place with progress", async () => {
     const state = { lastCompletedSlice: 3 };
-    const result = await checkWorktreeResume("orch/new", state, "/tmp");
+    const result = await checkWorktreeResume("orch/new", state);
     expect(result).toEqual({
       ok: false,
       message: expect.stringContaining("Previous run was in-place"),
@@ -48,8 +48,8 @@ describe("checkWorktreeResume", () => {
     const treePath = await createWorktree(repoDir, "plan-resume", "orch/plan-resume");
     const baseSha = exec("git rev-parse HEAD", treePath);
     const state = { worktree: { path: treePath, branch: "orch/plan-resume", baseSha } };
-    const result = await checkWorktreeResume("orch/plan-resume", state, repoDir);
-    expect(result).toEqual({ ok: true, cwd: treePath });
+    const result = await checkWorktreeResume("orch/plan-resume", state);
+    expect(result).toEqual({ ok: true });
   });
 
   it("errors when worktree is on wrong branch", async () => {
@@ -57,7 +57,7 @@ describe("checkWorktreeResume", () => {
     exec("git checkout -b other", treePath);
     const baseSha = exec("git rev-parse HEAD", treePath);
     const state = { worktree: { path: treePath, branch: "orch/plan-br", baseSha } };
-    const result = await checkWorktreeResume("orch/plan-br", state, repoDir);
+    const result = await checkWorktreeResume("orch/plan-br", state);
     expect(result).toEqual({
       ok: false,
       message: expect.stringContaining("is on branch"),
@@ -74,7 +74,7 @@ describe("checkWorktreeResume", () => {
       worktree: { path: treePath, branch: "orch/plan-stale", baseSha },
       lastCompletedSlice: 2,
     };
-    const result = await checkWorktreeResume("orch/plan-stale", state, repoDir);
+    const result = await checkWorktreeResume("orch/plan-stale", state);
     expect(result).toEqual({
       ok: false,
       message: expect.stringContaining("Commits missing"),
@@ -83,7 +83,7 @@ describe("checkWorktreeResume", () => {
 
   it("errors when state worktree path is missing", async () => {
     const state = { worktree: { path: "/tmp/gone-" + Date.now(), branch: "orch/x", baseSha: "abc" } };
-    const result = await checkWorktreeResume("orch/x", state, repoDir);
+    const result = await checkWorktreeResume("orch/x", state);
     expect(result).toEqual({
       ok: false,
       message: expect.stringContaining("Worktree missing"),
@@ -92,8 +92,8 @@ describe("checkWorktreeResume", () => {
   });
 
   it("returns ok with repo root when no worktree state and no branch flag", async () => {
-    const result = await checkWorktreeResume(undefined, {}, "/some/repo");
-    expect(result).toEqual({ ok: true, cwd: "/some/repo" });
+    const result = await checkWorktreeResume(undefined, {});
+    expect(result).toEqual({ ok: true });
   });
 });
 

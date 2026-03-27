@@ -3,6 +3,7 @@ import { stat, access } from "fs/promises";
 import { promisify } from "util";
 import { resolve } from "path";
 import { captureRef } from "./git.js";
+import { type OrchestratorState } from "./state.js";
 
 const run = promisify(execFile);
 
@@ -48,13 +49,12 @@ export const verifyWorktree = async (
 };
 
 export type ResumeCheck =
-  | { readonly ok: true; readonly cwd: string }
+  | { readonly ok: true }
   | { readonly ok: false; readonly message: string };
 
 export const checkWorktreeResume = async (
   branchFlag: string | undefined,
-  state: { worktree?: { path: string; branch: string; baseSha: string }; lastCompletedSlice?: number; lastCompletedGroup?: string },
-  repoRoot: string,
+  state: OrchestratorState,
 ): Promise<ResumeCheck> => {
   if (!branchFlag && state.worktree) {
     return { ok: false, message: `Previous run used --branch ${state.worktree.branch}. Pass --branch again to resume, or --reset to start fresh.` };
@@ -71,7 +71,7 @@ export const checkWorktreeResume = async (
           return { ok: false, message: `Commits missing: HEAD is still at baseSha (${state.worktree.baseSha.slice(0, 8)}) but ${state.lastCompletedSlice} slice(s) are marked complete. Worktree may have been reset.` };
         }
       }
-      return { ok: true, cwd: state.worktree.path };
+      return { ok: true };
     }
     if (status.reason === "missing") {
       return { ok: false, message: `Worktree missing at ${state.worktree.path}. Use --reset to start fresh.` };
@@ -80,7 +80,7 @@ export const checkWorktreeResume = async (
       return { ok: false, message: `Worktree at ${state.worktree.path} is on branch ${status.actual}, expected ${state.worktree.branch}.` };
     }
   }
-  return { ok: true, cwd: repoRoot };
+  return { ok: true };
 };
 
 export const createWorktree = async (
