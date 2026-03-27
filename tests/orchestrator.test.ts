@@ -416,6 +416,26 @@ describe("setupKeyboardHandlers", () => {
     pressKey("c");
     expect(vi.mocked(printSliceIntro)).toHaveBeenCalledWith(orch.log, slice);
   });
+
+  it("key 'p' with no currentPlanText does not log", async () => {
+    const { orch, pressKey } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    expect(orch.currentPlanText).toBeNull();
+    const logSpy = vi.fn();
+    (orch as any).log = logSpy;
+    pressKey("p");
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+
+  it("key 'p' with currentPlanText logs plan", async () => {
+    const { orch, pressKey } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    orch.currentPlanText = "## Step 1\nDo the thing";
+    const logSpy = vi.fn();
+    (orch as any).log = logSpy;
+    pressKey("p");
+    expect(logSpy).toHaveBeenCalledWith("## Step 1\nDo the thing");
+  });
 });
 
 describe("onInterruptSubmit", () => {
@@ -1054,6 +1074,44 @@ describe("run()", () => {
     await orch.run([group], 0);
 
     expect(orch.currentSlice).toBeNull();
+  });
+
+  it("clears currentPlanText when slice is skipped", async () => {
+    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const group = { name: "G", slices: [slice] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: true, planText: "skip plan" });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = await makeOrch();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
+    vi.spyOn(orch as any, "respawnTdd").mockResolvedValue(undefined);
+
+    await orch.run([group], 0);
+
+    expect(orch.currentPlanText).toBeNull();
+  });
+
+  it("sets currentPlanText from planThenExecute result and clears after slice", async () => {
+    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const group = { name: "G", slices: [slice] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false, planText: "the plan" });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = await makeOrch();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    let capturedPlanText: unknown = "not-set";
+    vi.spyOn(orch, "runSlice").mockImplementation(async () => {
+      capturedPlanText = orch.currentPlanText;
+      return { reviewBase: "sha", skipped: false };
+    });
+
+    await orch.run([group], 0);
+
+    expect(capturedPlanText).toBe("the plan");
+    expect(orch.currentPlanText).toBeNull();
   });
 
   it("logs slice intro for non-skipped slices", async () => {
