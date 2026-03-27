@@ -20,12 +20,40 @@ export const planIdFromPath = (planPath: string): string => {
 
 const PLAN_INSTRUCTIONS = `Transform this feature inventory into a group-and-slice plan.
 
-Use \`## Group: <name>\` headings and \`### Slice <N>: <title>\` headings.
-Number slices sequentially from 1. Each slice needs: **Why**, **Files**,
-concrete implementation details, and **Tests**.
-Target 2-3 slices per group, max 4. Respect dependency ordering.
+**You are generating the HIGH-LEVEL plan structure, NOT per-cycle TDD plans.** Ignore the Cycle N format from your system prompt — that is for a different task.
 
-Output ONLY the plan markdown — no preamble, no commentary.`;
+## Required format
+
+Use exactly this heading structure:
+
+\`\`\`
+## Group: <group name>
+
+<optional group description>
+
+### Slice 1: <slice title>
+
+**Why:** <one sentence>
+
+**Files:** \`src/foo.ts\` (new), \`src/bar.ts\` (edit)
+
+<concrete implementation details — what to build, how it connects>
+
+**Tests:** <what to test, which file>
+
+### Slice 2: <slice title>
+
+...
+\`\`\`
+
+## Rules
+
+- Heading levels matter: \`##\` for groups, \`###\` for slices. Do not deviate.
+- **Slice numbers must be GLOBALLY unique and sequential across the entire plan.** Group 1 has Slices 1-3, Group 2 has Slices 4-6, etc. Do NOT restart numbering per group. The orchestrator tracks progress by slice number — duplicate numbers cause slices to be skipped.
+- Target 2-3 slices per group, max 4. Respect dependency ordering.
+- Each slice needs: **Why**, **Files**, concrete details, and **Tests**.
+- Output ONLY the plan markdown — no preamble, no commentary, no wrapping text.
+- Start your output with \`## Group:\` — the very first line must be a group heading.`;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

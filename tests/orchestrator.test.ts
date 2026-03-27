@@ -1,16 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { Orchestrator, CreditExhaustedError, type OrchestratorConfig, type RunDeps } from "../src/orchestrator.js";
+import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "../src/orchestrator.js";
 import type { AgentProcess, AgentResult, AgentStyle } from "../src/agent.js";
 import type { Hud, KeyHandler, InterruptSubmitHandler } from "../src/hud.js";
 import type { Slice } from "../src/plan-parser.js";
 import type { CreditSignal } from "../src/credit-detection.js";
 import type { DiffStats } from "../src/review-threshold.js";
 import { hasDirtyTree, captureRef, hasChanges } from "../src/git.js";
+import { spawnAgent, spawnPlanAgentWithSkill } from "../src/agent-factory.js";
 
 vi.mock("../src/git.js", () => ({
   hasDirtyTree: vi.fn().mockResolvedValue(false),
   captureRef: vi.fn().mockResolvedValue("abc123"),
   hasChanges: vi.fn().mockResolvedValue(true),
+}));
+
+vi.mock("../src/agent-factory.js", () => ({
+  spawnAgent: vi.fn(),
+  spawnPlanAgentWithSkill: vi.fn(),
 }));
 
 const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig => ({
@@ -62,13 +68,6 @@ const fakeHud = () => {
   };
 };
 
-const defaultRunDeps = (): RunDeps => ({
-  planThenExecute: vi.fn().mockResolvedValue({ tddResult: { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" }, skipped: false }),
-  spawnPlanWithSkill: () => fakeAgent(),
-  spawnGap: () => fakeAgent(),
-  spawnFinal: () => fakeAgent(),
-});
-
 const makeOrch = (overrides?: {
   config?: Partial<OrchestratorConfig>;
   tddAgent?: AgentProcess;
@@ -81,7 +80,6 @@ const makeOrch = (overrides?: {
   isCleanReview?: (text: string) => boolean;
   spawnVerify?: () => Promise<AgentProcess>;
   measureDiff?: (cwd: string, since: string) => Promise<DiffStats>;
-  runDeps?: Partial<RunDeps>;
 }) => {
   const tdd = overrides?.tddAgent ?? fakeAgent();
   const review = overrides?.reviewAgent ?? fakeAgent();
@@ -100,7 +98,6 @@ const makeOrch = (overrides?: {
     overrides?.isCleanReview ?? (() => false),
     overrides?.spawnVerify ?? (() => Promise.resolve(fakeAgent())),
     overrides?.measureDiff ?? vi.fn().mockResolvedValue({ linesAdded: 100, linesRemoved: 10, total: 110 }),
-    { ...defaultRunDeps(), ...overrides?.runDeps },
   );
   return { orch, tdd, review, ...hudHelper };
 };
@@ -109,6 +106,8 @@ beforeEach(() => {
   vi.mocked(hasDirtyTree).mockReset().mockResolvedValue(false);
   vi.mocked(captureRef).mockReset().mockResolvedValue("abc123");
   vi.mocked(hasChanges).mockReset().mockResolvedValue(true);
+  vi.mocked(spawnAgent).mockReset().mockReturnValue(fakeAgent());
+  vi.mocked(spawnPlanAgentWithSkill).mockReset().mockReturnValue(fakeAgent());
 });
 
 describe("OrchestratorConfig", () => {
@@ -131,6 +130,26 @@ describe("Orchestrator constructor", () => {
     expect(orch.sliceSkipFlag).toBe(false);
     expect(orch.hardInterruptPending).toBeNull();
     expect(orch.slicesCompleted).toBe(0);
+  });
+
+  it("constructs with 13 args (no RunDeps)", () => {
+    const hud = fakeHud();
+    const orch = new Orchestrator(
+      makeConfig(),
+      {},
+      hud.hud,
+      vi.fn(),
+      fakeAgent(),
+      fakeAgent(),
+      () => Promise.resolve(fakeAgent()),
+      () => Promise.resolve(fakeAgent()),
+      () => null,
+      vi.fn().mockResolvedValue(undefined),
+      () => false,
+      () => Promise.resolve(fakeAgent()),
+      vi.fn().mockResolvedValue({ linesAdded: 100, linesRemoved: 10, total: 110 }),
+    );
+    expect(orch).toBeDefined();
   });
 });
 
@@ -776,8 +795,7 @@ describe("run()", () => {
     const pte = vi.fn().mockResolvedValue({ tddResult: { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" }, skipped: false });
     vi.mocked(hasChanges).mockResolvedValue(false);
     const { orch } = makeOrch();
-    orch.planThenExecute = pte;
-    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
     orch.state = { lastCompletedSlice: 1 };
@@ -792,7 +810,8 @@ describe("run()", () => {
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
     vi.mocked(hasChanges).mockResolvedValue(false);
     const logFn = vi.fn();
-    const { orch } = makeOrch({ runDeps: { planThenExecute: pte } });
+    const { orch } = makeOrch();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
     (orch as any).log = logFn;
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
@@ -816,8 +835,7 @@ describe("run()", () => {
     const review = fakeAgent();
     (review.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "LGTM", resultText: "", needsInput: false, sessionId: "s" });
     const { orch } = makeOrch({ tddAgent: tdd, reviewAgent: review, persistState, measureDiff, isCleanReview: () => true });
-    orch.planThenExecute = pte;
-    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
 
     const commitSweepSpy = vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     const runSliceSpy = vi.spyOn(orch, "runSlice");
@@ -834,8 +852,7 @@ describe("run()", () => {
     const persistState = vi.fn().mockResolvedValue(undefined);
     vi.mocked(hasChanges).mockResolvedValue(false);
     const { orch } = makeOrch({ persistState });
-    orch.planThenExecute = pte;
-    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
 
     const respawnTddSpy = vi.spyOn(orch, "respawnTdd").mockResolvedValue(undefined);
     const runSliceSpy = vi.spyOn(orch, "runSlice");
@@ -856,8 +873,7 @@ describe("run()", () => {
     vi.mocked(captureRef).mockResolvedValue("sha1");
     vi.mocked(hasChanges).mockResolvedValue(false);
     const { orch } = makeOrch({ persistState, config: { auto: true } });
-    orch.planThenExecute = pte;
-    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha1", skipped: false });
     const respawnBothSpy = vi.spyOn(orch, "respawnBoth").mockResolvedValue(undefined);
@@ -877,8 +893,7 @@ describe("run()", () => {
       .mockResolvedValueOnce({ tddResult: okResult, skipped: false });
     vi.mocked(hasChanges).mockResolvedValue(false);
     const { orch } = makeOrch();
-    orch.planThenExecute = pte;
-    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
 
@@ -886,9 +901,9 @@ describe("run()", () => {
 
     // 2 replan attempts + 1 auto-accept = 3 total calls
     expect(pte).toHaveBeenCalledTimes(3);
-    // The third call should have noInteraction: true (auto-accept)
-    const thirdCallDeps = pte.mock.calls[2][0];
-    expect(thirdCallDeps.noInteraction).toBe(true);
+    // The third call should have forceAccept: true (auto-accept)
+    const thirdCallForceAccept = pte.mock.calls[2][1];
+    expect(thirdCallForceAccept).toBe(true);
   });
 
   it("handles hardInterrupt by respawning TDD with guidance", async () => {
@@ -899,8 +914,7 @@ describe("run()", () => {
     const newTdd = fakeAgent();
     const spawnTdd = vi.fn().mockResolvedValue(newTdd);
     const { orch } = makeOrch({ spawnTdd });
-    orch.planThenExecute = pte;
-    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
 
@@ -923,8 +937,7 @@ describe("run()", () => {
     vi.mocked(captureRef).mockResolvedValue("sha1");
     vi.mocked(hasChanges).mockResolvedValue(false);
     const { orch } = makeOrch({ persistState, config: { auto: true } });
-    orch.planThenExecute = pte;
-    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha1", skipped: false });
 
@@ -938,27 +951,25 @@ describe("run()", () => {
 
 describe("gapAnalysis()", () => {
   it("skips when sliceSkipFlag is true", async () => {
-    const spawnGap = vi.fn().mockReturnValue(fakeAgent());
+    vi.mocked(spawnAgent).mockReset();
     const { orch } = makeOrch();
-    orch.spawnGap = spawnGap;
     orch.sliceSkipFlag = true;
 
     await (orch as any).gapAnalysis({ name: "G", slices: [] }, "sha");
 
-    expect(spawnGap).not.toHaveBeenCalled();
+    expect(spawnAgent).not.toHaveBeenCalled();
     expect(orch.sliceSkipFlag).toBe(false);
   });
 
   it("skips when no changes since group base", async () => {
     vi.mocked(hasChanges).mockResolvedValue(false);
-    const spawnGap = vi.fn().mockReturnValue(fakeAgent());
+    vi.mocked(spawnAgent).mockReset();
     const { orch } = makeOrch();
-    orch.spawnGap = spawnGap;
 
     await (orch as any).gapAnalysis({ name: "G", slices: [] }, "sha");
 
     expect(hasChanges).toHaveBeenCalledWith("/tmp", "sha");
-    expect(spawnGap).not.toHaveBeenCalled();
+    expect(spawnAgent).not.toHaveBeenCalled();
   });
 
   it("runs gap agent and sends findings to TDD for fixes", async () => {
@@ -966,8 +977,8 @@ describe("gapAnalysis()", () => {
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing edge case tests for auth", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     vi.mocked(captureRef).mockResolvedValue("gapsha");
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
     const { orch } = makeOrch({ tddAgent: tdd });
-    orch.spawnGap = () => gapAgent;
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
     const group = { name: "G", slices: [{ number: 1, title: "a", content: "slice content" }] };
@@ -984,9 +995,9 @@ describe("gapAnalysis()", () => {
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     const logFn = vi.fn();
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
     const { orch } = makeOrch({ tddAgent: tdd });
     (orch as any).log = logFn;
-    orch.spawnGap = () => gapAgent;
 
     await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
 
@@ -1001,8 +1012,8 @@ describe("gapAnalysis()", () => {
     const gapAgent = fakeAgent();
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
     const { orch } = makeOrch({ tddAgent: tdd });
-    orch.spawnGap = () => gapAgent;
 
     await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
 
@@ -1016,22 +1027,21 @@ describe("gapAnalysis()", () => {
 describe("finalPasses()", () => {
   it("returns early when no changes since run base", async () => {
     vi.mocked(hasChanges).mockResolvedValue(false);
-    const spawnFinal = vi.fn().mockReturnValue(fakeAgent());
+    vi.mocked(spawnAgent).mockReset();
     const { orch } = makeOrch();
-    orch.spawnFinal = spawnFinal;
 
     await (orch as any).finalPasses("runbasesha");
 
     expect(hasChanges).toHaveBeenCalledWith("/tmp", "runbasesha");
-    expect(spawnFinal).not.toHaveBeenCalled();
+    expect(spawnAgent).not.toHaveBeenCalled();
   });
 
   it("skips fix cycle when pass returns NO_ISSUES_FOUND", async () => {
     const finalAgent = fakeAgent();
     (finalAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_ISSUES_FOUND", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(finalAgent);
     const { orch } = makeOrch({ tddAgent: tdd });
-    orch.spawnFinal = () => finalAgent;
 
     await (orch as any).finalPasses("sha");
 
@@ -1044,8 +1054,8 @@ describe("finalPasses()", () => {
     (finalAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Found type issues in auth.ts", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     vi.mocked(captureRef).mockResolvedValue("fixsha");
+    vi.mocked(spawnAgent).mockReturnValue(finalAgent);
     const { orch } = makeOrch({ tddAgent: tdd });
-    orch.spawnFinal = () => finalAgent;
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
     await (orch as any).finalPasses("sha");
@@ -1065,8 +1075,7 @@ describe("run() full lifecycle", () => {
     vi.mocked(captureRef).mockResolvedValue("sha1");
     const persistState = vi.fn().mockResolvedValue(undefined);
     const { orch } = makeOrch({ persistState, config: { auto: true } });
-    orch.planThenExecute = pte;
-    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
     const commitSweepSpy = vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     const runSliceSpy = vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha1", skipped: false });
     const gapSpy = vi.spyOn(orch, "gapAnalysis").mockResolvedValue(undefined);
@@ -1093,8 +1102,7 @@ describe("run() full lifecycle", () => {
     const hudHelper = fakeHud();
     (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("y");
     const { orch } = makeOrch({ persistState, hud: hudHelper, config: { auto: false, noInteraction: false } });
-    orch.planThenExecute = pte;
-    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha1", skipped: false });
     vi.spyOn(orch, "respawnBoth").mockResolvedValue(undefined);
@@ -1116,8 +1124,7 @@ describe("run() full lifecycle", () => {
     const hudHelper = fakeHud();
     (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("n");
     const { orch } = makeOrch({ persistState, hud: hudHelper, config: { auto: false, noInteraction: false } });
-    orch.planThenExecute = pte;
-    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha1", skipped: false });
     vi.spyOn(orch, "respawnBoth").mockResolvedValue(undefined);
@@ -1133,52 +1140,47 @@ describe("run() full lifecycle", () => {
 describe("finalPasses() gap coverage", () => {
   it("skips to next pass when agent exits with non-zero exitCode", async () => {
     let callCount = 0;
-    const spawnFinal = () => {
+    vi.mocked(spawnAgent).mockImplementation(() => {
       const agent = fakeAgent();
       callCount++;
       if (callCount === 1) {
-        // First pass: agent fails
         (agent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
       } else {
-        // Subsequent passes: clean
         (agent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_ISSUES_FOUND", resultText: "", needsInput: false, sessionId: "s" });
       }
       return agent;
-    };
+    });
     const tdd = fakeAgent();
     const logFn = vi.fn();
     const { orch } = makeOrch({ tddAgent: tdd });
     (orch as any).log = logFn;
-    orch.spawnFinal = spawnFinal;
 
     await (orch as any).finalPasses("sha");
 
-    // First pass logged as failed, subsequent passes still ran
     const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
     expect(allLogs).toContain("agent failed");
-    expect(callCount).toBeGreaterThan(1); // continued to next passes
-    expect(tdd.send).not.toHaveBeenCalled(); // no fix cycle for failed agent
+    expect(callCount).toBeGreaterThan(1);
+    expect(tdd.send).not.toHaveBeenCalled();
   });
 
   it("skips reviewFix when TDD fix produces no changes", async () => {
     const finalAgent = fakeAgent();
     (finalAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Found issues", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
-    // hasChanges returns true for the initial check, false for the post-fix check
     vi.mocked(hasChanges)
       .mockReset()
-      .mockResolvedValueOnce(true)  // initial: there are changes to review
-      .mockResolvedValueOnce(false) // post-fix: TDD made no changes
-      .mockResolvedValue(false);    // subsequent passes: no changes
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(false);
     vi.mocked(captureRef).mockResolvedValue("fixsha");
+    vi.mocked(spawnAgent).mockReturnValue(finalAgent);
     const { orch } = makeOrch({ tddAgent: tdd });
-    orch.spawnFinal = () => finalAgent;
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
     await (orch as any).finalPasses("sha");
 
-    expect(tdd.send).toHaveBeenCalled(); // fix was attempted
-    expect(reviewFixSpy).not.toHaveBeenCalled(); // no review since no changes
+    expect(tdd.send).toHaveBeenCalled();
+    expect(reviewFixSpy).not.toHaveBeenCalled();
   });
 
   it("calls followUp when TDD fix result needs input", async () => {
@@ -1187,10 +1189,10 @@ describe("finalPasses() gap coverage", () => {
     const tdd = fakeAgent();
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: true, sessionId: "s" });
     vi.mocked(captureRef).mockResolvedValue("sha");
+    vi.mocked(spawnAgent).mockReturnValue(finalAgent);
     const hudHelper = fakeHud();
     (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("");
     const { orch } = makeOrch({ tddAgent: tdd, hud: hudHelper });
-    orch.spawnFinal = () => finalAgent;
     vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
     await (orch as any).finalPasses("sha");
@@ -1204,19 +1206,18 @@ describe("gapAnalysis() gap coverage", () => {
     const gapAgent = fakeAgent();
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing tests for X", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
-    // hasChanges: true for initial gap check, false for post-fix check
     vi.mocked(hasChanges)
-      .mockResolvedValueOnce(true)   // initial: changes exist
-      .mockResolvedValueOnce(false); // post-fix: no changes from TDD
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
     vi.mocked(captureRef).mockResolvedValue("gapsha");
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
     const { orch } = makeOrch({ tddAgent: tdd });
-    orch.spawnGap = () => gapAgent;
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
     await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
 
-    expect(tdd.send).toHaveBeenCalled(); // TDD attempted fix
-    expect(reviewFixSpy).not.toHaveBeenCalled(); // no review since no diff
+    expect(tdd.send).toHaveBeenCalled();
+    expect(reviewFixSpy).not.toHaveBeenCalled();
   });
 
   it("calls followUp when TDD gap-fix result needs input", async () => {
@@ -1225,10 +1226,10 @@ describe("gapAnalysis() gap coverage", () => {
     const tdd = fakeAgent();
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: true, sessionId: "s" });
     vi.mocked(captureRef).mockResolvedValue("sha");
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
     const hudHelper = fakeHud();
     (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("");
     const { orch } = makeOrch({ tddAgent: tdd, hud: hudHelper });
-    orch.spawnGap = () => gapAgent;
     vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
     await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
@@ -1338,8 +1339,7 @@ describe("run() gap coverage", () => {
       persistState,
       detectCredit: () => ({ kind: "rejected" as const, message: "Out" }),
     });
-    orch.planThenExecute = pte;
-    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
 
     await expect(orch.run([group], 0)).rejects.toThrow(CreditExhaustedError);
   });
@@ -1356,8 +1356,7 @@ describe("run() gap coverage", () => {
     // First call from PTE (mocked), second from followUp
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
     const { orch } = makeOrch({ tddAgent: tdd, hud: hudHelper });
-    orch.planThenExecute = pte;
-    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
 
@@ -1365,5 +1364,317 @@ describe("run() gap coverage", () => {
 
     // followUp was called (askUser is the observable side-effect)
     expect(hudHelper.hud.askUser).toHaveBeenCalled();
+  });
+});
+
+// ─── planThenExecute() as Orchestrator method ─────────────────────────────────
+
+describe("Orchestrator.planThenExecute (method)", () => {
+  it("asks user to confirm plan when interactive", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const hudHelper = fakeHud();
+    (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("y");
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: false }, hud: hudHelper });
+
+    await orch.planThenExecute("slice");
+
+    expect(hudHelper.hud.askUser).toHaveBeenCalledWith(expect.stringContaining("Accept plan?"));
+  });
+
+  it("returns replan when user answers 'r'", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const hudHelper = fakeHud();
+    (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("r");
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: false }, hud: hudHelper });
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(result.replan).toBe(true);
+  });
+
+  it("sends plan to TDD agent for execution", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(tdd.send).toHaveBeenCalledOnce();
+    const tddPrompt = (tdd.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(tddPrompt).toContain("Execute this plan");
+    expect(tddPrompt).toContain("the plan");
+    expect(result.skipped).toBe(false);
+  });
+
+  it("sends plan prompt to a plan agent and kills it", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: true } });
+
+    await orch.planThenExecute("slice text");
+
+    const planPrompt = (planAgent.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(planPrompt).toContain("slice text");
+    expect(planAgent.kill).toHaveBeenCalled();
+  });
+
+  it("spawns plan agent via spawnPlanAgentWithSkill import", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "plan", planText: "plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: true } });
+
+    await orch.planThenExecute("slice");
+
+    expect(spawnPlanAgentWithSkill).toHaveBeenCalled();
+  });
+
+  it("falls back to assistantText when planText is undefined", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "Fallback plan", planText: undefined, resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+
+    await orch.planThenExecute("slice");
+
+    const tddPrompt = (tdd.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(tddPrompt).toContain("Fallback plan");
+  });
+
+  it("returns skipped=true when skip flag is set during plan phase", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "plan", planText: "plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+    orch.sliceSkipFlag = true;
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(result.skipped).toBe(true);
+    expect(tdd.send).not.toHaveBeenCalled();
+  });
+
+  it("returns hardInterrupt when set during plan phase", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "plan", planText: "plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+    orch.hardInterruptPending = "Fix the tests first";
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(result.hardInterrupt).toBe("Fix the tests first");
+    expect(tdd.send).not.toHaveBeenCalled();
+  });
+
+  it("returns hardInterrupt when set during execute phase", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "plan", planText: "plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    let tddCallCount = 0;
+    (tdd.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      tddCallCount++;
+      return { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+    // Set hard interrupt after plan phase completes but checked after execute
+    const origWithInterrupt = orch.withInterrupt.bind(orch);
+    vi.spyOn(orch, "withInterrupt").mockImplementation(async (agent, fn) => {
+      const result = await origWithInterrupt(agent, fn);
+      if (agent === tdd) orch.hardInterruptPending = "Redirect";
+      return result;
+    });
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(result.hardInterrupt).toBe("Redirect");
+    expect(tdd.send).toHaveBeenCalled();
+  });
+
+  it("returns skipped=true when skip flag set during execute phase", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "plan", planText: "plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    (tdd.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      return { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+    // Set skip after plan phase checked but before execute check
+    const origWithInterrupt = orch.withInterrupt.bind(orch);
+    vi.spyOn(orch, "withInterrupt").mockImplementation(async (agent, fn) => {
+      const result = await origWithInterrupt(agent, fn);
+      if (agent === tdd) orch.sliceSkipFlag = true;
+      return result;
+    });
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(result.skipped).toBe(true);
+    expect(tdd.send).toHaveBeenCalled();
+  });
+
+  it("prepends brief to plan and execute prompts when tddIsFirst", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: true, brief: "Project context info" }, tddAgent: tdd });
+
+    await orch.planThenExecute("slice");
+
+    const planPrompt = (planAgent.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    const tddPrompt = (tdd.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(planPrompt).toContain("Project context");
+    expect(tddPrompt).toContain("Project context");
+  });
+
+  it("does not prepend brief when tddIsFirst is false", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: true, brief: "Project context" }, tddAgent: tdd });
+    orch.tddIsFirst = false;
+
+    await orch.planThenExecute("slice");
+
+    const planPrompt = (planAgent.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    const tddPrompt = (tdd.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(planPrompt).not.toContain("Project context");
+    expect(tddPrompt).not.toContain("Project context");
+  });
+
+  it("logs truncated plan preview before asking in interactive mode", async () => {
+    const lines = Array.from({ length: 50 }, (_, i) => `Step ${i + 1}`);
+    const planText = lines.join("\n");
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: planText, planText, resultText: "", needsInput: false, sessionId: "s",
+    });
+    const hudHelper = fakeHud();
+    (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("y");
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const logFn = vi.fn();
+    const { orch } = makeOrch({ config: { noInteraction: false }, hud: hudHelper });
+    (orch as any).log = logFn;
+
+    await orch.planThenExecute("slice");
+
+    const loggedText = logFn.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+    expect(loggedText).toContain("Step 1");
+    expect(loggedText).not.toContain("Step 50");
+    expect(loggedText).toContain("truncated");
+    expect(loggedText).toContain("50 lines");
+  });
+
+  it("asks for guidance on 'e' and prepends to execute prompt", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan text", planText: "the plan text", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    const hudHelper = fakeHud();
+    (hudHelper.hud.askUser as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce("e")
+      .mockResolvedValueOnce("Focus on error handling");
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: false }, tddAgent: tdd, hud: hudHelper });
+
+    await orch.planThenExecute("slice");
+
+    expect(hudHelper.hud.askUser).toHaveBeenCalledTimes(2);
+    const tddPrompt = (tdd.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(tddPrompt).toContain("Focus on error handling");
+    expect(tddPrompt).toContain("the plan text");
+  });
+
+  it("fires onPlanReady (hud.update) before askUser in interactive mode", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const callOrder: string[] = [];
+    const hudHelper = fakeHud();
+    (hudHelper.hud.update as ReturnType<typeof vi.fn>).mockImplementation(() => { callOrder.push("update"); });
+    (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      callOrder.push("askUser");
+      return "y";
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = makeOrch({ config: { noInteraction: false }, hud: hudHelper });
+
+    await orch.planThenExecute("slice");
+
+    // hud.update (onPlanReady equivalent) should be called before askUser
+    const updateIdx = callOrder.indexOf("update");
+    const askIdx = callOrder.indexOf("askUser");
+    expect(updateIdx).toBeGreaterThanOrEqual(0);
+    expect(askIdx).toBeGreaterThan(updateIdx);
+  });
+});
+
+describe("gapAnalysis uses imported spawnAgent", () => {
+  it("spawns gap agent via spawnAgent(BOT_GAP)", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s",
+    });
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    const { orch } = makeOrch();
+
+    await orch.gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    expect(spawnAgent).toHaveBeenCalled();
+  });
+});
+
+describe("finalPasses uses imported spawnAgent", () => {
+  it("spawns final agent via spawnAgent(BOT_FINAL)", async () => {
+    const finalAgent = fakeAgent();
+    (finalAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "NO_ISSUES_FOUND", resultText: "", needsInput: false, sessionId: "s",
+    });
+    vi.mocked(spawnAgent).mockReturnValue(finalAgent);
+    const { orch } = makeOrch();
+
+    await orch.finalPasses("sha");
+
+    expect(spawnAgent).toHaveBeenCalled();
   });
 });
