@@ -28,6 +28,9 @@ import { runInit, profileToMarkdown } from "./init.js";
 import { spawnPlanAgentWithSkill } from "./agent-factory.js";
 import { getStatus, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
+import { parseBranchFlag } from "./cli-args.js";
+import { resolveWorktree } from "./worktree-setup.js";
+import { checkWorktreeResume, runCleanup } from "./worktree.js";
 import { createHud } from "./hud.js";
 
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
@@ -61,6 +64,7 @@ const main = async () => {
   const skipFingerprint = args.includes("--skip-fingerprint");
   const noInteraction = args.includes("--no-interaction");
   const resetState = args.includes("--reset");
+  const cleanupMode = args.includes("--cleanup");
   const groupFilter = getArg("--group");
   const initMode = args.includes("--init");
   const rawThreshold = getArg("--review-threshold");
@@ -81,6 +85,10 @@ const main = async () => {
   }
   if (workMode && !workPath) {
     console.error("--work requires a plan path. Usage: --work <plan.md>");
+    process.exit(1);
+  }
+  if (cleanupMode && !workMode) {
+    console.error("--cleanup requires --work <plan>.");
     process.exit(1);
   }
   if (!inventoryPath && !workMode) {
@@ -141,12 +149,21 @@ const main = async () => {
 
   // 4. Derive per-plan state path
   const activePlanId = ensureCanonicalPlan(planPath, orchDir);
+  const branchName = parseBranchFlag(args, activePlanId);
   const stateFile = statePathForPlan(orchDir, activePlanId);
   mkdirSync(resolve(orchDir, "state"), { recursive: true });
 
   if (resetState) {
     await clearState(stateFile);
     log(`${a.dim}State cleared.${a.reset}`);
+  }
+
+  if (cleanupMode) {
+    const state = await loadState(stateFile);
+    const message = await runCleanup(stateFile, state, cwd);
+    for (const line of earlyLog) origLog(line);
+    origLog(message);
+    process.exit(0);
   }
 
   // Generate-only mode: --plan without --work
@@ -166,8 +183,26 @@ const main = async () => {
   log = hud.wrapLog(origLog);
   for (const line of earlyLog) log(line);
 
-  // 6. Load per-plan state
+  // 6. Load per-plan state + resume mismatch guard + resolve worktree
   const state: OrchestratorState = await loadState(stateFile);
+  const resumeCheck = await checkWorktreeResume(branchName, state);
+  if (!resumeCheck.ok) {
+    origLog(resumeCheck.message);
+    process.exit(1);
+  }
+  const {
+    cwd: effectiveCwd,
+    worktreeInfo,
+    skipStash,
+    updatedState,
+  } = await resolveWorktree({
+    branchName,
+    cwd,
+    activePlanId,
+    state,
+    stateFile,
+    log,
+  });
   const interactive = !noInteraction && isTTY;
 
   // 7. Signal handlers + cleanup
@@ -181,8 +216,14 @@ const main = async () => {
       hud.teardown();
     }
   };
-  process.on("SIGINT", () => { cleanup(); process.exit(130); });
-  process.on("SIGTERM", () => { cleanup(); process.exit(143); });
+  process.on("SIGINT", () => {
+    cleanup();
+    process.exit(130);
+  });
+  process.on("SIGTERM", () => {
+    cleanup();
+    process.exit(143);
+  });
 
   // 8. Validate group filter
   const startIdx = groupFilter
@@ -195,23 +236,43 @@ const main = async () => {
     process.exit(1);
   }
 
-  // Stash unrelated working tree changes
-  const didStash = await stashBackup(cwd);
+  // Stash unrelated working tree changes (skip if using worktree — it's clean by definition)
+  const didStash = skipStash ? false : await stashBackup(cwd);
   if (didStash) log(`${ts()} ${a.dim}Backed up working tree to git stash${a.reset}`);
 
   const planContent = await readFile(planPath, "utf-8");
 
   // 9. Construct Orchestrator — spawns + reminds agents internally
   _orch = await Orchestrator.create(
-    { cwd, planPath, planContent, brief, noInteraction, auto, reviewThreshold, maxReviewCycles: 3, stateFile, tddSkill, reviewSkill, verifySkill } satisfies OrchestratorConfig,
-    state, hud, log,
+    {
+      cwd: effectiveCwd,
+      planPath,
+      planContent,
+      brief,
+      noInteraction,
+      auto,
+      reviewThreshold,
+      maxReviewCycles: 3,
+      stateFile,
+      tddSkill,
+      reviewSkill,
+      verifySkill,
+    } satisfies OrchestratorConfig,
+    updatedState,
+    hud,
+    log,
   );
   if (interactive) _orch.setupKeyboardHandlers();
 
   // 10. Banner + group list
   const remaining = groups.slice(startIdx);
   printStartupBanner(log, {
-    planPath, brief, auto, interactive, groupFilter,
+    planPath,
+    brief,
+    auto,
+    interactive,
+    groupFilter,
+    worktree: worktreeInfo,
     tddSessionId: _orch.tddAgent.sessionId,
     reviewSessionId: _orch.reviewAgent.sessionId,
     groups: remaining,
@@ -231,7 +292,7 @@ const main = async () => {
 
   // 12. Cleanup
   logSection(log, `${a.green}✅ All groups complete + final review done${a.reset}`);
-  const status = await getStatus(cwd);
+  const status = await getStatus(effectiveCwd);
   log(`\n${status}`);
   cleanup();
   await clearState(stateFile);

@@ -106,4 +106,22 @@ describe("printStartupBanner", () => {
     const text = strip(lines.join("\n"));
     expect(text).not.toContain("skip current slice");
   });
+
+  it("shows worktree branch and path when worktree is provided", () => {
+    const { lines, log } = collect();
+    printStartupBanner(log, {
+      ...baseOpts,
+      worktree: { path: "/repo/.orch/trees/abc", branch: "orch/abc" },
+    });
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("orch/abc");
+    expect(text).toContain("Worktree");
+  });
+
+  it("does not show Worktree line when worktree is undefined", () => {
+    const { lines, log } = collect();
+    printStartupBanner(log, baseOpts);
+    const text = strip(lines.join("\n"));
+    expect(text).not.toContain("Worktree");
+  });
 });

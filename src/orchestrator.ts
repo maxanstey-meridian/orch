@@ -424,6 +424,7 @@ export class Orchestrator {
 
   async reviewFix(content: string, baseSha: string): Promise<void> {
     let reviewSha = baseSha;
+    let priorFindings: string | undefined;
 
     for (let cycle = 1; cycle <= this.config.maxReviewCycles; cycle++) {
       if (this.sliceSkipFlag) break;
@@ -437,8 +438,8 @@ export class Orchestrator {
 
       this.hud.update({ activeAgent: "REV", activeAgentActivity: `reviewing (cycle ${cycle})...` });
       const reviewPrompt = this.reviewIsFirst
-        ? withBrief(buildReviewPrompt(content, reviewSha), this.config.brief)
-        : buildReviewPrompt(content, reviewSha);
+        ? withBrief(buildReviewPrompt(content, reviewSha, priorFindings), this.config.brief)
+        : buildReviewPrompt(content, reviewSha, priorFindings);
       const onToolUse = (summary: string) => {
         this.activityShowing = true;
         this.hud.setActivity(summary);
@@ -457,6 +458,7 @@ export class Orchestrator {
         break;
       }
 
+      priorFindings = reviewText;
       this.hud.update({ activeAgent: "TDD", activeAgentActivity: "fixing review feedback..." });
       this.log(`${ts()} ${BOT_TDD.badge} fixing review feedback...`);
       const preFixSha = await captureRef(this.config.cwd);
@@ -550,21 +552,34 @@ export class Orchestrator {
         group.slices.every((s) => s.number <= this.state.lastCompletedSlice!);
       if (allSlicesDone) {
         this.slicesCompleted += group.slices.length;
+        this.hud.update({ completedSlices: this.slicesCompleted });
         continue;
       }
 
       // ── Slice loop ──
+      this.hud.update({
+        groupName: group.name,
+        groupSliceCount: group.slices.length,
+        groupCompleted: 0,
+      });
       const groupBaseSha = await captureRef(this.config.cwd);
       let reviewBase = groupBaseSha;
+      let groupCompleted = 0;
       for (const slice of group.slices) {
         if (
           this.state.lastCompletedSlice !== undefined &&
           slice.number <= this.state.lastCompletedSlice
         ) {
           this.slicesCompleted++;
+          groupCompleted++;
+          this.hud.update({ completedSlices: this.slicesCompleted, groupCompleted });
           continue;
         }
 
+        this.hud.update({
+          currentSlice: { number: slice.number },
+          completedSlices: this.slicesCompleted,
+        });
         printSliceIntro(this.log, slice);
 
         const verifyBaseSha = await captureRef(this.config.cwd);
@@ -590,6 +605,8 @@ export class Orchestrator {
           await saveState(this.config.stateFile, this.state);
           await this.respawnTdd();
           this.slicesCompleted++;
+          groupCompleted++;
+          this.hud.update({ completedSlices: this.slicesCompleted, groupCompleted });
           continue;
         }
 
@@ -624,7 +641,8 @@ export class Orchestrator {
         const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
         reviewBase = sliceResult.reviewBase;
         if (!sliceResult.skipped) {
-          // slicesCompleted already incremented inside runSlice
+          groupCompleted++;
+          this.hud.update({ completedSlices: this.slicesCompleted, groupCompleted });
         }
       }
 
