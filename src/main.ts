@@ -35,14 +35,12 @@ import {
   BOT_TDD,
   BOT_REVIEW,
   BOT_GAP,
-  BOT_FINAL,
   BOT_VERIFY,
   logSection,
 } from "./display.js";
 import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
 import { runInit, profileToMarkdown } from "./init.js";
 import { spawnAgent, spawnTddAgent, spawnReviewAgent, spawnPlanAgentWithSkill, TDD_RULES_REMINDER, REVIEW_RULES_REMINDER } from "./agent-factory.js";
-import { planThenExecute } from "./plan-executor.js";
 import { getStatus, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
 import { isCleanReview } from "./review-check.js";
@@ -349,12 +347,6 @@ const main = async () => {
     isCleanReview,
     async () => spawnAgent(BOT_VERIFY, verifySkill),
     measureDiff,
-    {
-      planThenExecute,
-      spawnPlanWithSkill: () => spawnPlanAgentWithSkill(),
-      spawnGap: () => spawnAgent(BOT_GAP),
-      spawnFinal: () => spawnAgent(BOT_FINAL),
-    },
   );
   if (interactive) _orch.setupKeyboardHandlers();
 

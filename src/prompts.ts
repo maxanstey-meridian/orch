@@ -5,6 +5,17 @@ export const withBrief = (prompt: string, brief: string): string => {
   return `${wrapBrief(brief)}\n\n${prompt}`;
 };
 
+export const buildPlanPrompt = (sliceContent: string): string =>
+  `You are a planning agent. Explore the codebase and produce a step-by-step TDD execution plan for the following slice.
+
+## Plan Slice
+${sliceContent}
+
+## Instructions
+1. Read the relevant files to understand current state.
+2. Output numbered RED→GREEN cycles. Each cycle: one failing test, then minimal code to pass.
+3. Do NOT write any code — plan only.`;
+
 export const buildTddPrompt = (sliceContent: string, fixInstructions?: string): string => {
   const integration = `## Integration
 Before writing any code for this slice, read the existing codebase to understand how this capability is currently implemented (if at all). Check for existing utilities, scripts, patterns, and external files referenced in the plan or brief that should be reused. Your implementation must integrate with the real system, not exist in isolation.`;

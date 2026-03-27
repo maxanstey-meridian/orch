@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { withBrief, buildTddPrompt, buildReviewPreamble, buildReviewPrompt, buildGapPrompt, buildFinalPasses, buildCommitSweepPrompt } from "../src/prompts.js";
+import { withBrief, buildTddPrompt, buildReviewPreamble, buildReviewPrompt, buildGapPrompt, buildFinalPasses, buildCommitSweepPrompt, buildPlanPrompt } from "../src/prompts.js";
 
 describe("withBrief", () => {
   it("returns prompt unchanged when brief is empty", () => {
@@ -69,6 +69,15 @@ describe("buildFinalPasses", () => {
     expect(names).toContain("Type fidelity");
     expect(names).toContain("Plan completeness");
     expect(names).toContain("Cross-cutting integration");
+  });
+});
+
+describe("buildPlanPrompt", () => {
+  it("produces expected prompt with slice content and planning instructions", () => {
+    const result = buildPlanPrompt("slice content here");
+    expect(result).toContain("You are a planning agent");
+    expect(result).toContain("slice content here");
+    expect(result).toContain("Do NOT write any code");
   });
 });
 
