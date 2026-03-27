@@ -52,7 +52,8 @@ export const TDD_RULES_REMINDER = `[ORCHESTRATOR] Non-negotiable rules for your 
 
 1. RUN TESTS WITH BASH. Use your Bash tool to execute tests. Read the actual output. Do not narrate "RED confirmed" or "GREEN" without executing. No exceptions.
 2. COMMIT WHEN DONE. After all behaviours are GREEN, run the full test suite, then git add + git commit. Uncommitted work is invisible to the review agent.
-3. STAY IN SCOPE. Only modify files relevant to your current task. Do not touch, revert, or "clean up" unrelated files. Use git add with specific filenames, never git add . or git add -A.`;
+3. STAY IN SCOPE. Only modify files relevant to your current task. Do not touch, revert, or "clean up" unrelated files. Use git add with specific filenames, never git add . or git add -A.
+4. USE CLASSES FOR STATEFUL SERVICES. Do not create standalone functions with deps bags or parameter objects. If something holds state or coordinates multiple operations, make it a class with constructor injection. Methods access dependencies via \`this\`, not via passed-in params objects.`;
 
 export const REVIEW_RULES_REMINDER = `[ORCHESTRATOR] Non-negotiable rules for your operation. Acknowledge silently — do not respond to this message.
 
