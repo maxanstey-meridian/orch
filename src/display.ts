@@ -1,5 +1,5 @@
 import { type AgentStyle } from "./agent.js";
-import { type Slice } from "./plan-parser.js";
+import { type Slice, type Group } from "./plan-parser.js";
 
 export type LogFn = (...args: unknown[]) => void;
 
@@ -82,4 +82,44 @@ export const printSliceSummary = (log: LogFn, sliceNumber: number, summary: stri
     log(formatted);
   }
   log(`${a.bold}${a.green}└──────────────────────────────────────────────${a.reset}`);
+};
+
+export type BannerOpts = {
+  readonly planPath: string;
+  readonly brief: string;
+  readonly auto: boolean;
+  readonly interactive: boolean;
+  readonly groupFilter?: string;
+  readonly tddSessionId: string;
+  readonly reviewSessionId: string;
+  readonly groups: readonly Group[];
+};
+
+export const printStartupBanner = (log: LogFn, opts: BannerOpts): void => {
+  log(
+    `\n${a.bold}🚀 Orchestrator${a.reset} ${a.dim}${new Date().toISOString().slice(0, 16)}${a.reset}`,
+  );
+  log(`   ${a.dim}Plan${a.reset}    ${opts.planPath}`);
+  log(
+    `   ${a.dim}Brief${a.reset}   ${opts.brief ? `${a.green}✓${a.reset} .orch/brief.md` : `${a.dim}none${a.reset}`}`,
+  );
+  log(
+    `   ${a.dim}Mode${a.reset}    ${opts.groupFilter ? `start from "${opts.groupFilter}"` : opts.auto ? "automatic" : "interactive"}`,
+  );
+  log(`   ${BOT_TDD.badge} ${a.dim}persistent (${opts.tddSessionId.slice(0, 8)})${a.reset}`);
+  log(`   ${BOT_REVIEW.badge} ${a.dim}persistent (${opts.reviewSessionId.slice(0, 8)})${a.reset}`);
+  log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
+  if (opts.interactive)
+    log(`   ${a.dim}Press${a.reset} ${a.bold}S${a.reset} ${a.dim}to skip current slice${a.reset}`);
+
+  log("");
+  for (let g = 0; g < opts.groups.length; g++) {
+    const grp = opts.groups[g];
+    const slices = grp.slices.map((s) => `${s.number}`).join(", ");
+    const marker = g === 0 ? `${a.bold}▸${a.reset}` : " ";
+    log(
+      `   ${marker} ${a.dim}${String(g + 1).padStart(2)}.${a.reset} ${g === 0 ? a.bold : a.dim}${grp.name}${a.reset} ${a.dim}(${slices})${a.reset}`,
+    );
+  }
+  log("");
 };
