@@ -131,7 +131,7 @@ describe("Orchestrator constructor", () => {
 });
 
 describe("respawnTdd", () => {
-  it("kills old agent, spawns fresh, resets both first-message flags", async () => {
+  it("kills old agent, spawns fresh, resets tddIsFirst but not reviewIsFirst", async () => {
     const oldTdd = fakeAgent();
     const newTdd = fakeAgent();
     const spawnTdd = vi.fn().mockResolvedValue(newTdd);
@@ -144,7 +144,8 @@ describe("respawnTdd", () => {
     expect(oldTdd.kill).toHaveBeenCalled();
     expect(orch.tddAgent).toBe(newTdd);
     expect(orch.tddIsFirst).toBe(true);
-    expect(orch.reviewIsFirst).toBe(true);
+    // review agent was NOT respawned — it retains its context and brief
+    expect(orch.reviewIsFirst).toBe(false);
   });
 });
 
