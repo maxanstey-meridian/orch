@@ -45,11 +45,32 @@ describe("checkWorktreeResume", () => {
     expect((result as { message: string }).message).toContain("--reset");
   });
 
+  it("errors when --branch but previous run was in-place with only lastCompletedGroup progress", async () => {
+    const state = { lastCompletedGroup: "Auth" };
+    const result = await checkWorktreeResume("orch/new", state);
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining("Previous run was in-place"),
+    });
+    expect((result as { message: string }).message).toContain("--reset");
+  });
+
   it("returns ok when state worktree exists and is valid", async () => {
     const treePath = await createWorktree(repoDir, "plan-resume", "orch/plan-resume");
     const baseSha = exec("git rev-parse HEAD", treePath);
     const state = { worktree: { path: treePath, branch: "orch/plan-resume", baseSha } };
     const result = await checkWorktreeResume("orch/plan-resume", state);
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("returns ok when worktree is valid and lastCompletedSlice is 0 (fresh start)", async () => {
+    const treePath = await createWorktree(repoDir, "plan-fresh", "orch/plan-fresh");
+    const baseSha = exec("git rev-parse HEAD", treePath);
+    const state = {
+      worktree: { path: treePath, branch: "orch/plan-fresh", baseSha },
+      lastCompletedSlice: 0,
+    };
+    const result = await checkWorktreeResume("orch/plan-fresh", state);
     expect(result).toEqual({ ok: true });
   });
 
@@ -92,8 +113,13 @@ describe("checkWorktreeResume", () => {
     expect((result as { message: string }).message).toContain("--reset");
   });
 
-  it("returns ok with repo root when no worktree state and no branch flag", async () => {
+  it("returns ok with no worktree state and no branch flag", async () => {
     const result = await checkWorktreeResume(undefined, {});
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("returns ok for fresh start with --branch and empty state", async () => {
+    const result = await checkWorktreeResume("orch/new", {});
     expect(result).toEqual({ ok: true });
   });
 });
@@ -125,6 +151,22 @@ describe("runCleanup", () => {
 
     await expect(stat(stateFile)).rejects.toThrow();
     expect(message).toContain("No worktree to clean up");
+  });
+
+  it("tolerates already-removed worktree and still clears state", async () => {
+    const treePath = await createWorktree(repoDir, "plan-gone", "orch/plan-gone");
+    const baseSha = exec("git rev-parse HEAD", treePath);
+    const stateFile = join(repoDir, ".orch/state/plan-gone.json");
+    const state = { worktree: { path: treePath, branch: "orch/plan-gone", baseSha } };
+    await mkdir(join(repoDir, ".orch/state"), { recursive: true });
+    await saveState(stateFile, state);
+    // Manually remove the worktree before cleanup
+    await removeWorktree(treePath);
+
+    const message = await runCleanup(stateFile, state);
+
+    await expect(stat(stateFile)).rejects.toThrow();
+    expect(message).toContain("State cleared");
   });
 
   it("succeeds when state file does not exist", async () => {

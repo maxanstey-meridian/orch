@@ -84,12 +84,18 @@ export const checkWorktreeResume = async (
 };
 
 export const runCleanup = async (stateFile: string, state: OrchestratorState): Promise<string> => {
+  let removedWorktree = false;
   if (state.worktree) {
-    await removeWorktree(state.worktree.path);
+    try {
+      await removeWorktree(state.worktree.path);
+      removedWorktree = true;
+    } catch {
+      // Worktree already removed or missing — proceed with state cleanup
+    }
   }
   await clearState(stateFile);
-  return state.worktree
-    ? `Removed worktree at ${state.worktree.path}. State cleared.`
+  return removedWorktree
+    ? `Removed worktree at ${state.worktree!.path}. State cleared.`
     : "No worktree to clean up. State cleared.";
 };
 

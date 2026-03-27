@@ -556,17 +556,22 @@ export class Orchestrator {
       }
 
       // ── Slice loop ──
+      this.hud.update({ groupName: group.name, groupSliceCount: group.slices.length, groupCompleted: 0 });
       const groupBaseSha = await captureRef(this.config.cwd);
       let reviewBase = groupBaseSha;
+      let groupCompleted = 0;
       for (const slice of group.slices) {
         if (
           this.state.lastCompletedSlice !== undefined &&
           slice.number <= this.state.lastCompletedSlice
         ) {
           this.slicesCompleted++;
+          groupCompleted++;
+          this.hud.update({ completedSlices: this.slicesCompleted, groupCompleted });
           continue;
         }
 
+        this.hud.update({ currentSlice: { number: slice.number }, completedSlices: this.slicesCompleted });
         printSliceIntro(this.log, slice);
 
         const verifyBaseSha = await captureRef(this.config.cwd);
@@ -592,6 +597,8 @@ export class Orchestrator {
           await saveState(this.config.stateFile, this.state);
           await this.respawnTdd();
           this.slicesCompleted++;
+          groupCompleted++;
+          this.hud.update({ completedSlices: this.slicesCompleted, groupCompleted });
           continue;
         }
 
@@ -626,7 +633,8 @@ export class Orchestrator {
         const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
         reviewBase = sliceResult.reviewBase;
         if (!sliceResult.skipped) {
-          // slicesCompleted already incremented inside runSlice
+          groupCompleted++;
+          this.hud.update({ completedSlices: this.slicesCompleted, groupCompleted });
         }
       }
 
