@@ -96,24 +96,21 @@ export class Orchestrator {
     log: LogFn,
     agents?: { tdd: AgentProcess; review: AgentProcess },
   ): Promise<Orchestrator> {
-    const resuming = !agents && (initialState.tddSessionId || initialState.reviewSessionId);
+    const tddResuming = !agents && !!initialState.tddSessionId;
+    const reviewResuming = !agents && !!initialState.reviewSessionId;
     const tddAgent =
       agents?.tdd ??
       spawnAgentFactory(BOT_TDD, config.tddSkill, initialState.tddSessionId, config.cwd);
     const reviewAgent =
       agents?.review ??
       spawnAgentFactory(BOT_REVIEW, config.reviewSkill, initialState.reviewSessionId, config.cwd);
-    if (!resuming) {
-      await Promise.all([
-        tddAgent.sendQuiet(TDD_RULES_REMINDER),
-        reviewAgent.sendQuiet(REVIEW_RULES_REMINDER),
-      ]);
-    }
+    const reminders: Promise<string>[] = [];
+    if (!tddResuming) reminders.push(tddAgent.sendQuiet(TDD_RULES_REMINDER));
+    if (!reviewResuming) reminders.push(reviewAgent.sendQuiet(REVIEW_RULES_REMINDER));
+    await Promise.all(reminders);
     const orch = new Orchestrator(config, initialState, hud, log, tddAgent, reviewAgent);
-    if (resuming) {
-      orch.tddIsFirst = false;
-      orch.reviewIsFirst = false;
-    }
+    if (tddResuming) orch.tddIsFirst = false;
+    if (reviewResuming) orch.reviewIsFirst = false;
     return orch;
   }
 

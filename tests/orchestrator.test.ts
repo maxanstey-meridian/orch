@@ -230,6 +230,48 @@ describe("Orchestrator.create", () => {
     expect(review.sendQuiet).not.toHaveBeenCalled();
   });
 
+  it("sends review rules when only tddSessionId is present (partial resume)", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    const orch = await Orchestrator.create(
+      makeConfig(),
+      { tddSessionId: "tdd-sess-1" },
+      fakeHud().hud,
+      vi.fn(),
+    );
+
+    // TDD is resuming — no rules reminder
+    expect(tdd.sendQuiet).not.toHaveBeenCalled();
+    // Review is fresh — needs rules reminder
+    expect(review.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("ONLY REVIEW THE DIFF"));
+    // Only TDD should have isFirst false
+    expect(orch.tddIsFirst).toBe(false);
+    expect(orch.reviewIsFirst).toBe(true);
+  });
+
+  it("sends TDD rules when only reviewSessionId is present (partial resume)", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    const orch = await Orchestrator.create(
+      makeConfig(),
+      { reviewSessionId: "rev-sess-1" },
+      fakeHud().hud,
+      vi.fn(),
+    );
+
+    // TDD is fresh — needs rules reminder
+    expect(tdd.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("RUN TESTS WITH BASH"));
+    // Review is resuming — no rules reminder
+    expect(review.sendQuiet).not.toHaveBeenCalled();
+    // Only review should have isFirst false
+    expect(orch.tddIsFirst).toBe(true);
+    expect(orch.reviewIsFirst).toBe(false);
+  });
+
   it("keeps tddIsFirst and reviewIsFirst true on fresh start", async () => {
     const tdd = fakeAgent();
     const review = fakeAgent();

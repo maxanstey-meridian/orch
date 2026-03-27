@@ -238,6 +238,32 @@ describe("state", () => {
     await expect(loadState(testPath)).rejects.toThrow("reviewSessionId");
   });
 
+  it("round-trips state with only tddSessionId (no reviewSessionId)", async () => {
+    const state = { tddSessionId: "abc-123" };
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+    expect(loaded.tddSessionId).toBe("abc-123");
+    expect(loaded.reviewSessionId).toBeUndefined();
+  });
+
+  it("round-trips state with only reviewSessionId (no tddSessionId)", async () => {
+    const state = { reviewSessionId: "def-456" };
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+    expect(loaded.reviewSessionId).toBe("def-456");
+    expect(loaded.tddSessionId).toBeUndefined();
+  });
+
+  it("throws when tddSessionId is a number", async () => {
+    await writeFile(testPath, JSON.stringify({ tddSessionId: 123 }));
+    await expect(loadState(testPath)).rejects.toThrow("tddSessionId");
+  });
+
+  it("throws when reviewSessionId is a boolean", async () => {
+    await writeFile(testPath, JSON.stringify({ reviewSessionId: true }));
+    await expect(loadState(testPath)).rejects.toThrow("reviewSessionId");
+  });
+
   it("loads state without session IDs (backwards compat)", async () => {
     await writeFile(testPath, JSON.stringify({ lastCompletedSlice: 5 }));
     const loaded = await loadState(testPath);
