@@ -1,18 +1,42 @@
 import type { AgentProcess, AgentResult, AgentStyle } from "./agent.js";
 import type { Hud, WriteFn } from "./hud.js";
 import type { OrchestratorState } from "./state.js";
-import { a, ts, BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL, printSliceIntro, printSliceSummary } from "./display.js";
+import {
+  a,
+  ts,
+  BOT_TDD,
+  BOT_REVIEW,
+  BOT_VERIFY,
+  BOT_PLAN,
+  BOT_GAP,
+  BOT_FINAL,
+  printSliceIntro,
+  printSliceSummary,
+} from "./display.js";
 import { shouldReview, measureDiff } from "./review-threshold.js";
 import type { Group, Slice } from "./plan-parser.js";
 import { parseVerifyResult } from "./verify.js";
 import type { LogFn } from "./display.js";
-import { buildCommitSweepPrompt, buildFinalPasses, buildGapPrompt, buildPlanPrompt, buildReviewPrompt, buildTddPrompt, withBrief } from "./prompts.js";
+import {
+  buildCommitSweepPrompt,
+  buildFinalPasses,
+  buildGapPrompt,
+  buildPlanPrompt,
+  buildReviewPrompt,
+  buildTddPrompt,
+  withBrief,
+} from "./prompts.js";
 import { detectCreditExhaustion, type CreditSignal } from "./credit-detection.js";
 import { saveState } from "./state.js";
 import { isCleanReview } from "./review-check.js";
 import { makeStreamer, type Streamer } from "./streamer.js";
 import { hasDirtyTree, captureRef, hasChanges } from "./git.js";
-import { spawnAgent as spawnAgentFactory, spawnPlanAgentWithSkill, TDD_RULES_REMINDER, REVIEW_RULES_REMINDER } from "./agent-factory.js";
+import {
+  spawnAgent as spawnAgentFactory,
+  spawnPlanAgentWithSkill,
+  TDD_RULES_REMINDER,
+  REVIEW_RULES_REMINDER,
+} from "./agent-factory.js";
 
 export type OrchestratorConfig = {
   readonly cwd: string;
@@ -67,11 +91,8 @@ export class Orchestrator {
     log: LogFn,
     agents?: { tdd: AgentProcess; review: AgentProcess },
   ): Promise<Orchestrator> {
-    if (agents) {
-      return new Orchestrator(config, initialState, hud, log, agents.tdd, agents.review);
-    }
-    const tddAgent = spawnAgentFactory(BOT_TDD, config.tddSkill);
-    const reviewAgent = spawnAgentFactory(BOT_REVIEW, config.reviewSkill);
+    const tddAgent = agents?.tdd ?? spawnAgentFactory(BOT_TDD, config.tddSkill);
+    const reviewAgent = agents?.review ?? spawnAgentFactory(BOT_REVIEW, config.reviewSkill);
     await Promise.all([
       tddAgent.sendQuiet(TDD_RULES_REMINDER),
       reviewAgent.sendQuiet(REVIEW_RULES_REMINDER),
@@ -536,7 +557,10 @@ export class Orchestrator {
       const groupBaseSha = await captureRef(this.config.cwd);
       let reviewBase = groupBaseSha;
       for (const slice of group.slices) {
-        if (this.state.lastCompletedSlice !== undefined && slice.number <= this.state.lastCompletedSlice) {
+        if (
+          this.state.lastCompletedSlice !== undefined &&
+          slice.number <= this.state.lastCompletedSlice
+        ) {
           this.slicesCompleted++;
           continue;
         }
@@ -579,7 +603,9 @@ export class Orchestrator {
           await this.respawnTdd();
           const s = this.streamer(BOT_TDD);
           tddResult = await this.withInterrupt(this.tddAgent, () =>
-            this.tddAgent.send(withBrief(guidance, this.config.brief), s, (sm) => this.onToolUse(sm)),
+            this.tddAgent.send(withBrief(guidance, this.config.brief), s, (sm) =>
+              this.onToolUse(sm),
+            ),
           );
           s.flush();
         }
@@ -649,14 +675,18 @@ export class Orchestrator {
     const gapPrompt = withBrief(buildGapPrompt(groupContent, groupBaseSha), this.config.brief);
     const onTool = (s: string) => this.onToolUse(s);
     const gs = this.streamer(BOT_GAP);
-    const gapResult = await this.withInterrupt(gapAgent, () => gapAgent.send(gapPrompt, gs, onTool));
+    const gapResult = await this.withInterrupt(gapAgent, () =>
+      gapAgent.send(gapPrompt, gs, onTool),
+    );
     gs.flush();
     await this.checkCredit(gapResult, gapAgent);
 
     const gapText = gapResult.assistantText ?? "";
 
     if (gapResult.exitCode !== 0) {
-      this.log(`${ts()} ${a.yellow}⚠ Gap analysis agent failed (exit ${gapResult.exitCode}) — skipping${a.reset}`);
+      this.log(
+        `${ts()} ${a.yellow}⚠ Gap analysis agent failed (exit ${gapResult.exitCode}) — skipping${a.reset}`,
+      );
       gapAgent.kill();
       return;
     }

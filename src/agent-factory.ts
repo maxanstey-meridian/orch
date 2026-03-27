@@ -1,8 +1,7 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { createAgent, type AgentProcess, type AgentStyle } from "./agent.js";
-import { BOT_PLAN, BOT_TDD, BOT_REVIEW } from "./display.js";
-
+import { BOT_PLAN } from "./display.js";
 
 // ─── Agent helpers ───────────────────────────────────────────────────────────
 
@@ -60,4 +59,3 @@ export const REVIEW_RULES_REMINDER = `[ORCHESTRATOR] Non-negotiable rules for yo
 1. ONLY REVIEW THE DIFF. Review files changed in the diff. Ignore unrelated uncommitted changes in the working tree — they belong to the operator.
 2. DO NOT SUGGEST REVERTING unrelated files (skill files, config, HUD changes) that weren't part of the slice.
 3. If the diff is empty and HEAD hasn't moved, respond with REVIEW_CLEAN. Do not claim work is missing if it was committed in prior commits.`;
-

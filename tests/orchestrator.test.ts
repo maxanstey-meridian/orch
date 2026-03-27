@@ -155,7 +155,7 @@ describe("Orchestrator.create", () => {
     expect(review.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("ONLY REVIEW THE DIFF"));
   });
 
-  it("uses provided agents when given, skipping spawn", async () => {
+  it("uses provided agents when given, skipping spawn but still sending reminders", async () => {
     const tdd = fakeAgent();
     const review = fakeAgent();
 
@@ -165,6 +165,8 @@ describe("Orchestrator.create", () => {
     expect(spawnAgent).not.toHaveBeenCalled();
     expect(result.tddAgent).toBe(tdd);
     expect(result.reviewAgent).toBe(review);
+    expect(tdd.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("RUN TESTS WITH BASH"));
+    expect(review.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("ONLY REVIEW THE DIFF"));
   });
 });
 

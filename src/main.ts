@@ -21,27 +21,14 @@ import { readFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { readFile } from "fs/promises";
 import { parsePlan } from "./plan-parser.js";
 import { generatePlan, isPlanFormat, planFileName, planIdFromPath } from "./plan-generator.js";
-import {
-  loadState,
-  clearState,
-  statePathForPlan,
-  type OrchestratorState,
-} from "./state.js";
+import { loadState, clearState, statePathForPlan, type OrchestratorState } from "./state.js";
 import { runFingerprint } from "./fingerprint.js";
-import {
-  a,
-  ts,
-  BOT_TDD,
-  BOT_REVIEW,
-  BOT_GAP,
-  logSection,
-} from "./display.js";
+import { a, ts, BOT_TDD, BOT_REVIEW, BOT_GAP, logSection } from "./display.js";
 import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
 import { runInit, profileToMarkdown } from "./init.js";
 import { spawnPlanAgentWithSkill } from "./agent-factory.js";
 import { getStatus, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
-
 
 import { createHud } from "./hud.js";
 
@@ -239,6 +226,8 @@ const main = async () => {
   const interactive = !noInteraction && isTTY;
 
   // 6. Signal handlers + cleanup (delegates to orchestrator after it's constructed)
+  // If SIGINT arrives during create(), _orch is null and spawned agents aren't
+  // tracked here. process.exit() follows immediately, which reaps child processes.
   let _orch: Orchestrator | null = null;
   const cleanup = () => {
     if (_orch) {
@@ -256,22 +245,7 @@ const main = async () => {
     process.exit(143);
   });
 
-  // 7. Startup banner (pre-create)
-  log(
-    `\n${a.bold}🚀 Orchestrator${a.reset} ${a.dim}${new Date().toISOString().slice(0, 16)}${a.reset}`,
-  );
-  log(`   ${a.dim}Plan${a.reset}    ${planPath}`);
-  log(
-    `   ${a.dim}Brief${a.reset}   ${brief ? `${a.green}✓${a.reset} .orch/brief.md` : `${a.dim}none${a.reset}`}`,
-  );
-  log(
-    `   ${a.dim}Mode${a.reset}    ${groupFilter ? `start from "${groupFilter}"` : auto ? "automatic" : "interactive"}`,
-  );
-  log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
-  if (interactive)
-    log(`   ${a.dim}Press${a.reset} ${a.bold}S${a.reset} ${a.dim}to skip current slice${a.reset}`);
-
-  // 8. Group list with start marker
+  // 7. Validate group filter early (before spending time on create)
   const startIdx = groupFilter
     ? groups.findIndex((g) => g.name.toLowerCase() === groupFilter.toLowerCase())
     : 0;
@@ -282,25 +256,13 @@ const main = async () => {
     process.exit(1);
   }
 
-  const remaining = groups.slice(startIdx);
-  log("");
-  for (let g = 0; g < remaining.length; g++) {
-    const grp = remaining[g];
-    const slices = grp.slices.map((s) => `${s.number}`).join(", ");
-    const marker = g === 0 ? `${a.bold}▸${a.reset}` : " ";
-    log(
-      `   ${marker} ${a.dim}${String(g + 1).padStart(2)}.${a.reset} ${g === 0 ? a.bold : a.dim}${grp.name}${a.reset} ${a.dim}(${slices})${a.reset}`,
-    );
-  }
-  log("");
-
   // Stash any unrelated working tree changes to protect them from the TDD bot
   const didStash = await stashBackup(cwd);
   if (didStash) log(`${ts()} ${a.dim}Backed up working tree to git stash${a.reset}`);
 
   const planContent = await readFile(planPath, "utf-8");
 
-  // 9. Construct Orchestrator — spawns + reminds agents internally
+  // 8. Construct Orchestrator — spawns + reminds agents internally
   const orchConfig: OrchestratorConfig = {
     cwd,
     planPath,
@@ -316,9 +278,39 @@ const main = async () => {
     verifySkill,
   };
   _orch = await Orchestrator.create(orchConfig, state, hud, log);
-  log(`   ${BOT_TDD.badge} ${a.dim}persistent (${_orch.tddAgent.sessionId.slice(0, 8)})${a.reset}`);
-  log(`   ${BOT_REVIEW.badge} ${a.dim}persistent (${_orch.reviewAgent.sessionId.slice(0, 8)})${a.reset}`);
   if (interactive) _orch.setupKeyboardHandlers();
+
+  // 9. Startup banner
+  log(
+    `\n${a.bold}🚀 Orchestrator${a.reset} ${a.dim}${new Date().toISOString().slice(0, 16)}${a.reset}`,
+  );
+  log(`   ${a.dim}Plan${a.reset}    ${planPath}`);
+  log(
+    `   ${a.dim}Brief${a.reset}   ${brief ? `${a.green}✓${a.reset} .orch/brief.md` : `${a.dim}none${a.reset}`}`,
+  );
+  log(
+    `   ${a.dim}Mode${a.reset}    ${groupFilter ? `start from "${groupFilter}"` : auto ? "automatic" : "interactive"}`,
+  );
+  log(`   ${BOT_TDD.badge} ${a.dim}persistent (${_orch.tddAgent.sessionId.slice(0, 8)})${a.reset}`);
+  log(
+    `   ${BOT_REVIEW.badge} ${a.dim}persistent (${_orch.reviewAgent.sessionId.slice(0, 8)})${a.reset}`,
+  );
+  log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
+  if (interactive)
+    log(`   ${a.dim}Press${a.reset} ${a.bold}S${a.reset} ${a.dim}to skip current slice${a.reset}`);
+
+  // 10. Group list
+  const remaining = groups.slice(startIdx);
+  log("");
+  for (let g = 0; g < remaining.length; g++) {
+    const grp = remaining[g];
+    const slices = grp.slices.map((s) => `${s.number}`).join(", ");
+    const marker = g === 0 ? `${a.bold}▸${a.reset}` : " ";
+    log(
+      `   ${marker} ${a.dim}${String(g + 1).padStart(2)}.${a.reset} ${g === 0 ? a.bold : a.dim}${grp.name}${a.reset} ${a.dim}(${slices})${a.reset}`,
+    );
+  }
+  log("");
 
   // 10. Run the orchestrator
   try {
