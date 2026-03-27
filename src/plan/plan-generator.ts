@@ -88,7 +88,7 @@ Output valid JSON matching this schema:
 
 - **Slice numbers must be GLOBALLY unique and sequential across the entire plan.** Group 1 has Slices 1-3, Group 2 has Slices 4-6, etc. Do NOT restart numbering per group. The orchestrator tracks progress by slice number — duplicate numbers cause slices to be skipped.
 - Target 2-3 slices per group, max 4. Respect dependency ordering.
-- Output ONLY the JSON object — no preamble, no commentary, no wrapping text.`;
+- Output ONLY the raw JSON object. No markdown code fences, no \`\`\`json blocks, no preamble, no commentary, no explanation before or after. The very first character of your response must be \`{\` and the very last must be \`}\`.`;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -106,8 +106,18 @@ export const isPlanFormat = (content: string): boolean => {
 export const extractJson = (text: string): string => {
   const jsonStart = text.indexOf("{");
   const jsonEnd = text.lastIndexOf("}");
-  if (jsonStart >= 0 && jsonEnd > jsonStart) return text.slice(jsonStart, jsonEnd + 1);
-  return text;
+  if (jsonStart < 0 || jsonEnd <= jsonStart) return text;
+  // Try the full span first, then shrink from the end to find valid JSON
+  for (let end = jsonEnd; end > jsonStart; end = text.lastIndexOf("}", end - 1)) {
+    const candidate = text.slice(jsonStart, end + 1);
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      // keep shrinking
+    }
+  }
+  return text.slice(jsonStart, jsonEnd + 1);
 };
 
 // ─── Summary ────────────────────────────────────────────────────────────────
