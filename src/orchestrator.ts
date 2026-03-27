@@ -40,11 +40,7 @@ export class CreditExhaustedError extends Error {
 }
 
 export class Orchestrator {
-  readonly config: OrchestratorConfig;
   state: OrchestratorState;
-  readonly hud: Hud;
-  readonly log: LogFn;
-
   tddAgent: AgentProcess;
   reviewAgent: AgentProcess;
   tddIsFirst = true;
@@ -57,47 +53,28 @@ export class Orchestrator {
   slicesCompleted = 0;
   activityShowing = false;
 
-  private readonly spawnTdd: () => Promise<AgentProcess>;
-  private readonly spawnReview: () => Promise<AgentProcess>;
-  private readonly spawnVerify: () => Promise<AgentProcess>;
-  private readonly _measureDiff: (cwd: string, since: string) => Promise<DiffStats>;
   private readonly hudWriter: WriteFn;
-  readonly git: GitPort;
-  private readonly detectCredit: (result: AgentResult, stderr: string) => CreditSignal | null;
-  private readonly persistState: (path: string, state: OrchestratorState) => Promise<void>;
-  private readonly _isCleanReview: (text: string) => boolean;
 
   constructor(
-    config: OrchestratorConfig,
+    readonly config: OrchestratorConfig,
     initialState: OrchestratorState,
-    hud: Hud,
-    log: LogFn,
+    readonly hud: Hud,
+    readonly log: LogFn,
     tddAgent: AgentProcess,
     reviewAgent: AgentProcess,
-    spawnTdd: () => Promise<AgentProcess>,
-    spawnReview: () => Promise<AgentProcess>,
-    git: GitPort,
-    detectCredit: (result: AgentResult, stderr: string) => CreditSignal | null,
-    persistState: (path: string, state: OrchestratorState) => Promise<void>,
-    isCleanReview: (text: string) => boolean,
-    spawnVerify: () => Promise<AgentProcess>,
-    measureDiff: (cwd: string, since: string) => Promise<DiffStats>,
+    private readonly spawnTdd: () => Promise<AgentProcess>,
+    private readonly spawnReview: () => Promise<AgentProcess>,
+    readonly git: GitPort,
+    private readonly detectCredit: (result: AgentResult, stderr: string) => CreditSignal | null,
+    private readonly persistState: (path: string, state: OrchestratorState) => Promise<void>,
+    private readonly _isCleanReview: (text: string) => boolean,
+    private readonly spawnVerify: () => Promise<AgentProcess>,
+    private readonly _measureDiff: (cwd: string, since: string) => Promise<DiffStats>,
   ) {
-    this.config = config;
     this.state = initialState;
-    this.hud = hud;
-    this.log = log;
     this.tddAgent = tddAgent;
     this.reviewAgent = reviewAgent;
-    this.spawnTdd = spawnTdd;
-    this.spawnReview = spawnReview;
     this.hudWriter = hud.createWriter();
-    this.git = git;
-    this.detectCredit = detectCredit;
-    this.persistState = persistState;
-    this._isCleanReview = isCleanReview;
-    this.spawnVerify = spawnVerify;
-    this._measureDiff = measureDiff;
   }
 
   streamer(style: AgentStyle): Streamer {
@@ -212,7 +189,11 @@ export class Orchestrator {
       return { reviewBase, skipped: true };
     }
 
-    this.state = { ...this.state, lastSliceImplemented: slice.number, reviewBaseSha: verifyBaseSha };
+    this.state = {
+      ...this.state,
+      lastSliceImplemented: slice.number,
+      reviewBaseSha: verifyBaseSha,
+    };
     await this.persistState(this.config.stateFile, this.state);
 
     // Review-fix loop — gated on minimum diff threshold
@@ -280,9 +261,7 @@ export class Orchestrator {
           : "Verification checks failed. Run the test/lint/typecheck pipeline and fix any failures.";
       const retryPrompt = `Verification found new failures after your implementation. Fix them:\n\n${failureContext}`;
       const rs = this.streamer(BOT_TDD);
-      await this.withInterrupt(this.tddAgent, () =>
-        this.tddAgent.send(retryPrompt, rs, onTool),
-      );
+      await this.withInterrupt(this.tddAgent, () => this.tddAgent.send(retryPrompt, rs, onTool));
       rs.flush();
 
       this.hud.update({ activeAgent: "VFY", activeAgentActivity: "re-verifying..." });
@@ -300,8 +279,7 @@ export class Orchestrator {
 
       if (!parsed.passed) {
         verifyAgent.kill();
-        const failSummary =
-          parsed.newFailures.join("\n") || "Checks still failing after retry.";
+        const failSummary = parsed.newFailures.join("\n") || "Checks still failing after retry.";
         this.log(`${ts()} ✗ Verification still failing after retry on Slice ${slice.number}`);
         const answer = await this.hud.askUser(
           `Slice ${slice.number} verification failed:\n${failSummary}\n\n(r)etry / (s)kip / s(t)op? `,
