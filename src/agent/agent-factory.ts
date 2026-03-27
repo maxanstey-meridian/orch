@@ -12,6 +12,7 @@ export const spawnAgent = (
   style: AgentStyle,
   systemPrompt?: string,
   resumeSessionId?: string,
+  cwd?: string,
 ): AgentProcess =>
   createAgent({
     command: "claude",
@@ -27,9 +28,10 @@ export const spawnAgent = (
     ],
     style,
     ...(resumeSessionId ? { sessionId: resumeSessionId } : {}),
+    cwd,
   });
 
-export const spawnPlanAgent = (style: AgentStyle, systemPrompt?: string): AgentProcess =>
+export const spawnPlanAgent = (style: AgentStyle, systemPrompt?: string, cwd?: string): AgentProcess =>
   createAgent({
     command: "claude",
     args: [
@@ -43,6 +45,7 @@ export const spawnPlanAgent = (style: AgentStyle, systemPrompt?: string): AgentP
       ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
     ],
     style,
+    cwd,
   });
 
 const planSkillContent = readFileSync(
@@ -50,8 +53,8 @@ const planSkillContent = readFileSync(
   "utf-8",
 );
 
-export const spawnPlanAgentWithSkill = (): AgentProcess =>
-  spawnPlanAgent(BOT_PLAN, planSkillContent);
+export const spawnPlanAgentWithSkill = (cwd?: string): AgentProcess =>
+  spawnPlanAgent(BOT_PLAN, planSkillContent, cwd);
 
 export const TDD_RULES_REMINDER = `[ORCHESTRATOR] Non-negotiable rules for your operation. Acknowledge silently — do not respond to this message.
 

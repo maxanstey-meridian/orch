@@ -94,10 +94,10 @@ export class Orchestrator {
     const resuming = !agents && (initialState.tddSessionId || initialState.reviewSessionId);
     const tddAgent =
       agents?.tdd ??
-      spawnAgentFactory(BOT_TDD, config.tddSkill, initialState.tddSessionId);
+      spawnAgentFactory(BOT_TDD, config.tddSkill, initialState.tddSessionId, config.cwd);
     const reviewAgent =
       agents?.review ??
-      spawnAgentFactory(BOT_REVIEW, config.reviewSkill, initialState.reviewSessionId);
+      spawnAgentFactory(BOT_REVIEW, config.reviewSkill, initialState.reviewSessionId, config.cwd);
     if (!resuming) {
       await Promise.all([
         tddAgent.sendQuiet(TDD_RULES_REMINDER),
@@ -286,7 +286,7 @@ export class Orchestrator {
     const planPrompt = withBrief(buildPlanPrompt(sliceContent), this.config.brief);
     // TDD agent is persistent — only needs brief on first message
     const tddBrief = this.tddIsFirst ? this.config.brief : "";
-    const planAgent = spawnPlanAgentWithSkill();
+    const planAgent = spawnPlanAgentWithSkill(this.config.cwd);
     const ps = this.streamer(BOT_PLAN);
     const planResult = await this.withInterrupt(planAgent, () =>
       planAgent.send(planPrompt, ps, (s) => this.onToolUse(s)),
@@ -708,7 +708,7 @@ export class Orchestrator {
 
     this.log(`${ts()} ${BOT_GAP.badge} scanning for coverage gaps across group...`);
     const groupContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
-    const gapAgent = spawnAgentFactory(BOT_GAP);
+    const gapAgent = spawnAgentFactory(BOT_GAP, undefined, undefined, this.config.cwd);
     const gapPrompt = withBrief(buildGapPrompt(groupContent, groupBaseSha), this.config.brief);
     const onTool = (s: string) => this.onToolUse(s);
     const gs = this.streamer(BOT_GAP);
@@ -773,7 +773,7 @@ export class Orchestrator {
     for (const pass of passes) {
       this.log(`${ts()} ${BOT_FINAL.badge} ${pass.name}...`);
 
-      const finalAgent = spawnAgentFactory(BOT_FINAL);
+      const finalAgent = spawnAgentFactory(BOT_FINAL, undefined, undefined, this.config.cwd);
       const finalPrompt = withBrief(pass.prompt, this.config.brief);
       const fs = this.streamer(BOT_FINAL);
       const finalResult = await this.withInterrupt(finalAgent, () =>
@@ -823,19 +823,19 @@ export class Orchestrator {
   }
 
   private async spawnTddAgent(): Promise<AgentProcess> {
-    const agent = spawnAgentFactory(BOT_TDD, this.config.tddSkill);
+    const agent = spawnAgentFactory(BOT_TDD, this.config.tddSkill, undefined, this.config.cwd);
     await agent.sendQuiet(TDD_RULES_REMINDER);
     return agent;
   }
 
   private async spawnReviewAgent(): Promise<AgentProcess> {
-    const agent = spawnAgentFactory(BOT_REVIEW, this.config.reviewSkill);
+    const agent = spawnAgentFactory(BOT_REVIEW, this.config.reviewSkill, undefined, this.config.cwd);
     await agent.sendQuiet(REVIEW_RULES_REMINDER);
     return agent;
   }
 
   private async spawnVerifyAgent(): Promise<AgentProcess> {
-    return spawnAgentFactory(BOT_VERIFY, this.config.verifySkill);
+    return spawnAgentFactory(BOT_VERIFY, this.config.verifySkill, undefined, this.config.cwd);
   }
 
   async respawnTdd(): Promise<void> {
