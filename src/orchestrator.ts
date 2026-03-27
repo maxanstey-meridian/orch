@@ -83,6 +83,7 @@ export class Orchestrator {
   slicesCompleted = 0;
   activityShowing = false;
   retryDelayMs = 5_000;
+  currentSlice: Slice | null = null;
 
   private readonly hudWriter: WriteFn;
 
@@ -145,6 +146,8 @@ export class Orchestrator {
       } else if (key === "s" && this.sliceSkippable) {
         this.sliceSkipFlag = !this.sliceSkipFlag;
         this.hud.setSkipping(this.sliceSkipFlag);
+      } else if (key === "c" && this.currentSlice) {
+        printSliceIntro(this.log, this.currentSlice);
       } else if (key === "q" || key === "\x03") {
         this.cleanup();
         process.exit(130);
@@ -645,6 +648,7 @@ export class Orchestrator {
           currentSlice: { number: slice.number },
           completedSlices: this.slicesCompleted,
         });
+        this.currentSlice = slice;
         printSliceIntro(this.log, slice);
 
         const verifyBaseSha = await captureRef(this.config.cwd);
@@ -666,6 +670,7 @@ export class Orchestrator {
 
         if (pteResult.skipped) {
           this.sliceSkipFlag = false;
+          this.currentSlice = null;
           this.state = { ...this.state, lastCompletedSlice: slice.number };
           await saveState(this.config.stateFile, this.state);
           await this.respawnTdd();
@@ -705,6 +710,7 @@ export class Orchestrator {
         // Post-TDD pipeline: verify → review → summary
         const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
         reviewBase = sliceResult.reviewBase;
+        this.currentSlice = null;
         if (!sliceResult.skipped) {
           groupCompleted++;
           this.hud.update({ completedSlices: this.slicesCompleted, groupCompleted });
