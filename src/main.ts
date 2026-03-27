@@ -34,12 +34,11 @@ import {
   BOT_TDD,
   BOT_REVIEW,
   BOT_GAP,
-  BOT_VERIFY,
   logSection,
 } from "./display.js";
 import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
 import { runInit, profileToMarkdown } from "./init.js";
-import { spawnAgent, spawnTddAgent, spawnReviewAgent, spawnPlanAgentWithSkill, TDD_RULES_REMINDER, REVIEW_RULES_REMINDER } from "./agent-factory.js";
+import { spawnAgent, spawnPlanAgentWithSkill, TDD_RULES_REMINDER, REVIEW_RULES_REMINDER } from "./agent-factory.js";
 import { getStatus, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
 
@@ -337,9 +336,6 @@ const main = async () => {
     log,
     tddAgent,
     reviewAgent,
-    async () => spawnTddAgent(tddSkill),
-    async () => spawnReviewAgent(reviewSkill),
-    async () => spawnAgent(BOT_VERIFY, verifySkill),
   );
   if (interactive) _orch.setupKeyboardHandlers();
 

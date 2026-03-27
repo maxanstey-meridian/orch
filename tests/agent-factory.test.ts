@@ -95,60 +95,6 @@ describe("spawnPlanAgent", () => {
   });
 });
 
-describe("spawnTddAgent", () => {
-  beforeEach(() => {
-    mockedCreateAgent.mockClear();
-  });
-
-  it("sends TDD_RULES_REMINDER via sendQuiet", async () => {
-    const { spawnTddAgent } = await loadModule();
-
-    const agent = await spawnTddAgent("tdd skill content");
-
-    expect(agent.sendQuiet).toHaveBeenCalledOnce();
-    const reminder = (agent.sendQuiet as Mock).mock.calls[0][0] as string;
-    expect(reminder).toContain("RUN TESTS WITH BASH");
-  });
-
-  it("passes skill as system prompt to spawnAgent", async () => {
-    const { spawnTddAgent } = await loadModule();
-
-    await spawnTddAgent("my-tdd-skill");
-
-    const callArgs = mockedCreateAgent.mock.calls[0][0];
-    const args: string[] = callArgs.args;
-    expect(args).toContain("--append-system-prompt");
-    expect(args[args.indexOf("--append-system-prompt") + 1]).toBe("my-tdd-skill");
-  });
-});
-
-describe("spawnReviewAgent", () => {
-  beforeEach(() => {
-    mockedCreateAgent.mockClear();
-  });
-
-  it("sends REVIEW_RULES_REMINDER via sendQuiet", async () => {
-    const { spawnReviewAgent } = await loadModule();
-
-    const agent = await spawnReviewAgent("review skill content");
-
-    expect(agent.sendQuiet).toHaveBeenCalledOnce();
-    const reminder = (agent.sendQuiet as Mock).mock.calls[0][0] as string;
-    expect(reminder).toContain("ONLY REVIEW THE DIFF");
-  });
-
-  it("passes skill as system prompt to spawnAgent", async () => {
-    const { spawnReviewAgent } = await loadModule();
-
-    await spawnReviewAgent("my-review-skill");
-
-    const callArgs = mockedCreateAgent.mock.calls[0][0];
-    const args: string[] = callArgs.args;
-    expect(args).toContain("--append-system-prompt");
-    expect(args[args.indexOf("--append-system-prompt") + 1]).toBe("my-review-skill");
-  });
-});
-
 describe("spawnPlanAgentWithSkill", () => {
   beforeEach(() => {
     mockedCreateAgent.mockClear();
