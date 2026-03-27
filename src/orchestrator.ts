@@ -27,7 +27,7 @@ export type OrchestratorConfig = {
   readonly verifySkill: string;
 };
 
-export type PlanThenExecuteResult = {
+type PlanThenExecuteResult = {
   readonly tddResult: AgentResult;
   readonly skipped: boolean;
   readonly hardInterrupt?: string;
@@ -240,8 +240,10 @@ export class Orchestrator {
 
   async planThenExecute(sliceContent: string, forceAccept = false): Promise<PlanThenExecuteResult> {
     // ── Plan phase ──
-    const brief = this.tddIsFirst ? this.config.brief : "";
-    const planPrompt = withBrief(buildPlanPrompt(sliceContent), brief);
+    // Plan agent is always fresh — always needs the brief
+    const planPrompt = withBrief(buildPlanPrompt(sliceContent), this.config.brief);
+    // TDD agent is persistent — only needs brief on first message
+    const tddBrief = this.tddIsFirst ? this.config.brief : "";
     const planAgent = spawnPlanAgentWithSkill();
     const ps = this.streamer(BOT_PLAN);
     const planResult = await this.withInterrupt(planAgent, () =>
@@ -291,7 +293,7 @@ export class Orchestrator {
     const rawExecutePrompt = operatorGuidance
       ? `Operator guidance: ${operatorGuidance}\n\nExecute this plan:\n\n${plan}`
       : `Execute this plan:\n\n${plan}`;
-    const executePrompt = withBrief(rawExecutePrompt, brief);
+    const executePrompt = withBrief(rawExecutePrompt, tddBrief);
     const es = this.streamer(BOT_TDD);
     const tddResult = await this.withInterrupt(this.tddAgent, () =>
       this.tddAgent.send(executePrompt, es, (s) => this.onToolUse(s)),

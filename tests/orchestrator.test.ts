@@ -132,7 +132,7 @@ describe("Orchestrator constructor", () => {
     expect(orch.slicesCompleted).toBe(0);
   });
 
-  it("constructs with 13 args (no RunDeps)", () => {
+  it("constructs with 13 args", () => {
     const hud = fakeHud();
     const orch = new Orchestrator(
       makeConfig(),
@@ -1562,7 +1562,7 @@ describe("Orchestrator.planThenExecute (method)", () => {
     expect(tddPrompt).toContain("Project context");
   });
 
-  it("does not prepend brief when tddIsFirst is false", async () => {
+  it("always prepends brief to plan prompt but not execute when tddIsFirst is false", async () => {
     const planAgent = fakeAgent();
     (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
       exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
@@ -1576,7 +1576,9 @@ describe("Orchestrator.planThenExecute (method)", () => {
 
     const planPrompt = (planAgent.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     const tddPrompt = (tdd.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(planPrompt).not.toContain("Project context");
+    // Plan agent is always fresh — it always needs the brief
+    expect(planPrompt).toContain("Project context");
+    // TDD agent already has the brief from a previous slice
     expect(tddPrompt).not.toContain("Project context");
   });
 
