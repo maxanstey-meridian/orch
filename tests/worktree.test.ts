@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, stat } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync } from "child_process";
-import { createWorktree, removeWorktree, verifyWorktree } from "../src/worktree.js";
+import { createWorktree, removeWorktree, verifyWorktree, checkWorktreeResume } from "../src/worktree.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
@@ -21,6 +21,80 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(repoDir, { recursive: true });
+});
+
+describe("checkWorktreeResume", () => {
+  it("errors when no --branch but state has worktree", async () => {
+    const state = { worktree: { path: "/fake", branch: "orch/x", baseSha: "abc123" } };
+    const result = await checkWorktreeResume(undefined, state, "/tmp");
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining("Previous run used --branch"),
+    });
+    expect((result as { message: string }).message).toContain("orch/x");
+  });
+
+  it("errors when --branch but previous run was in-place with progress", async () => {
+    const state = { lastCompletedSlice: 3 };
+    const result = await checkWorktreeResume("orch/new", state, "/tmp");
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining("Previous run was in-place"),
+    });
+    expect((result as { message: string }).message).toContain("--reset");
+  });
+
+  it("returns ok when state worktree exists and is valid", async () => {
+    const treePath = await createWorktree(repoDir, "plan-resume", "orch/plan-resume");
+    const baseSha = exec("git rev-parse HEAD", treePath);
+    const state = { worktree: { path: treePath, branch: "orch/plan-resume", baseSha } };
+    const result = await checkWorktreeResume("orch/plan-resume", state, repoDir);
+    expect(result).toEqual({ ok: true, cwd: treePath });
+  });
+
+  it("errors when worktree is on wrong branch", async () => {
+    const treePath = await createWorktree(repoDir, "plan-br", "orch/plan-br");
+    exec("git checkout -b other", treePath);
+    const baseSha = exec("git rev-parse HEAD", treePath);
+    const state = { worktree: { path: treePath, branch: "orch/plan-br", baseSha } };
+    const result = await checkWorktreeResume("orch/plan-br", state, repoDir);
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining("is on branch"),
+    });
+    const msg = (result as { message: string }).message;
+    expect(msg).toContain("other");
+    expect(msg).toContain("orch/plan-br");
+  });
+
+  it("errors when HEAD hasn't advanced but slices are marked complete", async () => {
+    const treePath = await createWorktree(repoDir, "plan-stale", "orch/plan-stale");
+    const baseSha = exec("git rev-parse HEAD", treePath);
+    const state = {
+      worktree: { path: treePath, branch: "orch/plan-stale", baseSha },
+      lastCompletedSlice: 2,
+    };
+    const result = await checkWorktreeResume("orch/plan-stale", state, repoDir);
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining("Commits missing"),
+    });
+  });
+
+  it("errors when state worktree path is missing", async () => {
+    const state = { worktree: { path: "/tmp/gone-" + Date.now(), branch: "orch/x", baseSha: "abc" } };
+    const result = await checkWorktreeResume("orch/x", state, repoDir);
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining("Worktree missing"),
+    });
+    expect((result as { message: string }).message).toContain("--reset");
+  });
+
+  it("returns ok with repo root when no worktree state and no branch flag", async () => {
+    const result = await checkWorktreeResume(undefined, {}, "/some/repo");
+    expect(result).toEqual({ ok: true, cwd: "/some/repo" });
+  });
 });
 
 describe("worktree", () => {
@@ -92,7 +166,7 @@ describe("worktree", () => {
       const path = await createWorktree(repoDir, "verify-br", "orch/verify-br");
       exec("git checkout -b other", path);
       const result = await verifyWorktree(path, "orch/verify-br");
-      expect(result).toEqual({ ok: false, reason: "wrong-branch", detail: expect.stringContaining("other") });
+      expect(result).toEqual({ ok: false, reason: "wrong-branch", detail: expect.stringContaining("other"), actual: "other" });
     });
   });
 });
