@@ -11,8 +11,8 @@
     "check": "npm run fmt:check && npm run lint && npm run test",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc -p tsconfig.build.json",
-    "bundle": "npm run build && rm -rf ~/.claude/orch && mkdir -p ~/.claude/orch/js ~/.claude/orch/skills && cp dist/*.js ~/.claude/orch/js/ && cp -r skills/* ~/.claude/orch/skills/ && ln -s $(pwd)/node_modules ~/.claude/orch/js/node_modules && echo 'Bundled to ~/.claude/orch/'"
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "bundle": "npm run build && rm -rf ~/.claude/orch && mkdir -p ~/.claude/orch/js ~/.claude/orch/skills && rsync -a --include='*/' --include='*.js' --exclude='*' dist/ ~/.claude/orch/js/ && cp -r skills/* ~/.claude/orch/skills/ && ln -s $(pwd)/node_modules ~/.claude/orch/js/node_modules && echo 'Bundled to ~/.claude/orch/'"
   },
   "dependencies": {
     "ink": "^6.8.0",

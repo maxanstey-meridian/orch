@@ -1,6 +1,6 @@
-import type { AgentProcess, AgentResult, AgentStyle } from "./agent.js";
-import type { Hud, WriteFn } from "./hud.js";
-import type { OrchestratorState } from "./state.js";
+import type { AgentProcess, AgentResult, AgentStyle } from "./agent/agent.js";
+import type { Hud, WriteFn } from "./ui/hud.js";
+import type { OrchestratorState } from "./state/state.js";
 import {
   a,
   ts,
@@ -12,11 +12,11 @@ import {
   BOT_FINAL,
   printSliceIntro,
   printSliceSummary,
-} from "./display.js";
-import { shouldReview, measureDiff } from "./review-threshold.js";
-import type { Group, Slice } from "./plan-parser.js";
-import { parseVerifyResult } from "./verify.js";
-import type { LogFn } from "./display.js";
+  type LogFn,
+} from "./ui/display.js";
+import { shouldReview, measureDiff } from "./cli/review-threshold.js";
+import type { Group, Slice } from "./plan/plan-parser.js";
+import { parseVerifyResult } from "./cli/verify.js";
 import {
   buildCommitSweepPrompt,
   buildFinalPasses,
@@ -25,18 +25,18 @@ import {
   buildReviewPrompt,
   buildTddPrompt,
   withBrief,
-} from "./prompts.js";
-import { detectCreditExhaustion, type CreditSignal } from "./credit-detection.js";
-import { saveState } from "./state.js";
-import { isCleanReview } from "./review-check.js";
-import { makeStreamer, type Streamer } from "./streamer.js";
-import { hasDirtyTree, captureRef, hasChanges } from "./git.js";
+} from "./plan/prompts.js";
+import { detectCreditExhaustion, type CreditSignal } from "./agent/credit-detection.js";
+import { saveState } from "./state/state.js";
+import { isCleanReview } from "./cli/review-check.js";
+import { makeStreamer, type Streamer } from "./agent/streamer.js";
+import { hasDirtyTree, captureRef, hasChanges } from "./git/git.js";
 import {
   spawnAgent as spawnAgentFactory,
   spawnPlanAgentWithSkill,
   TDD_RULES_REMINDER,
   REVIEW_RULES_REMINDER,
-} from "./agent-factory.js";
+} from "./agent/agent-factory.js";
 
 export type OrchestratorConfig = {
   readonly cwd: string;
@@ -736,6 +736,7 @@ export class Orchestrator {
 
     if (await hasChanges(this.config.cwd, gapBaseSha)) {
       await this.reviewFix(groupContent, gapBaseSha);
+      this.hud.update({ activeAgent: undefined, activeAgentActivity: undefined });
       this.log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
     }
 
@@ -796,6 +797,7 @@ export class Orchestrator {
 
       if (await hasChanges(this.config.cwd, preFixSha)) {
         await this.reviewFix(this.config.planContent, preFixSha);
+        this.hud.update({ activeAgent: undefined, activeAgentActivity: undefined });
         this.log(`${ts()} ${a.green}✓ ${pass.name}: resolved${a.reset}`);
       }
     }

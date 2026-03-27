@@ -18,20 +18,20 @@
 import { resolve } from "path";
 import { readFileSync, mkdirSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
-import { parsePlan } from "./plan-parser.js";
-import { isPlanFormat, ensureCanonicalPlan, doGeneratePlan } from "./plan-generator.js";
-import { loadState, clearState, statePathForPlan, type OrchestratorState } from "./state.js";
-import { runFingerprint } from "./fingerprint.js";
-import { a, ts, logSection, printStartupBanner } from "./display.js";
+import { parsePlan } from "./plan/plan-parser.js";
+import { isPlanFormat, ensureCanonicalPlan, doGeneratePlan } from "./plan/plan-generator.js";
+import { loadState, clearState, statePathForPlan, type OrchestratorState } from "./state/state.js";
+import { runFingerprint } from "./state/fingerprint.js";
+import { a, ts, logSection, printStartupBanner } from "./ui/display.js";
 import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
-import { runInit, profileToMarkdown } from "./init.js";
-import { spawnPlanAgentWithSkill } from "./agent-factory.js";
-import { getStatus, stashBackup } from "./git.js";
-import { assertGitRepo } from "./repo-check.js";
-import { parseBranchFlag } from "./cli-args.js";
-import { resolveWorktree } from "./worktree-setup.js";
-import { checkWorktreeResume, runCleanup } from "./worktree.js";
-import { createHud } from "./hud.js";
+import { runInit, profileToMarkdown } from "./ui/init.js";
+import { spawnPlanAgentWithSkill } from "./agent/agent-factory.js";
+import { getStatus, stashBackup } from "./git/git.js";
+import { assertGitRepo } from "./git/repo-check.js";
+import { parseBranchFlag } from "./cli/cli-args.js";
+import { resolveWorktree } from "./git/worktree-setup.js";
+import { checkWorktreeResume, runCleanup } from "./git/worktree.js";
+import { createHud } from "./ui/hud.js";
 
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
 
