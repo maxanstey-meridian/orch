@@ -166,49 +166,6 @@ const followUpIfNeeded = async (
   return current;
 };
 
-type CommitSweepDeps = {
-  groupName: string;
-  cwd: string;
-  agent: AgentProcess;
-  makeStreamer: () => Streamer;
-  exitOnCreditExhaustion: (result: AgentResult, agent: AgentProcess) => Promise<void>;
-  withInterrupt: <T>(agent: AgentProcess, fn: () => Promise<T>) => Promise<T>;
-  hasDirtyTree: (cwd: string) => Promise<boolean>;
-  log: (...args: unknown[]) => void;
-  followUpIfNeeded?: (result: AgentResult, agent: AgentProcess) => Promise<AgentResult>;
-  onToolUse?: (summary: string) => void;
-};
-
-export const commitSweep = async (deps: CommitSweepDeps): Promise<void> => {
-  const dirty = await deps.hasDirtyTree(deps.cwd);
-  if (!dirty) return;
-
-  if (!deps.agent.alive) {
-    deps.log(`${ts()} ${a.yellow}⚠ TDD agent not alive — skipping commit sweep${a.reset}`);
-    return;
-  }
-
-  deps.log(`${ts()} ${BOT_TDD.badge} uncommitted changes detected — asking TDD bot to commit`);
-  const prompt = buildCommitSweepPrompt(deps.groupName);
-  const s = deps.makeStreamer();
-  const result = await deps.withInterrupt(deps.agent, () =>
-    deps.agent.send(prompt, s, deps.onToolUse),
-  );
-  s.flush();
-  await deps.exitOnCreditExhaustion(result, deps.agent);
-  if (deps.followUpIfNeeded && result.needsInput) {
-    await deps.followUpIfNeeded(result, deps.agent);
-  }
-
-  if (result.exitCode === 0) {
-    deps.log(`${ts()} ${a.green}✓ commit sweep complete${a.reset}`);
-  } else {
-    deps.log(
-      `${ts()} ${a.yellow}⚠ commit sweep agent failed (exit ${result.exitCode}) — uncommitted changes may remain${a.reset}`,
-    );
-  }
-};
-
 // ─── Plan-then-execute ──────────────────────────────────────────────────────
 
 const buildPlanPrompt = (sliceContent: string): string =>
@@ -316,91 +273,6 @@ export const planThenExecute = async (
   }
 
   return { tddResult, skipped: false };
-};
-
-// ─── Review-fix loop ─────────────────────────────────────────────────────────
-
-const reviewFixLoop = async (
-  tddAgent: AgentProcess,
-  reviewAgent: AgentProcess,
-  content: string,
-  brief: string,
-  cwd: string,
-  noInteraction: boolean,
-  tddFirstMessage: { value: boolean },
-  reviewFirstMessage: { value: boolean },
-  exitOnCreditExhaustion: (result: AgentResult, agent: AgentProcess) => Promise<void>,
-  withInterrupt: <T>(agent: AgentProcess, fn: () => Promise<T>) => Promise<T>,
-  createStreamer: (style: AgentStyle) => Streamer,
-  toolUseHandler?: (summary: string) => void,
-  askUser?: (prompt: string) => Promise<string>,
-  baseSha?: string,
-  onStatusChange?: (agent: string, activity: string) => void,
-  shouldSkip?: () => boolean,
-): Promise<void> => {
-  let reviewSha = baseSha ?? (await captureRef(cwd));
-
-  for (let cycle = 1; cycle <= CONFIG.maxReviewCycles; cycle++) {
-    if (shouldSkip?.()) break;
-
-    log(
-      `\n${ts()} ${BOT_REVIEW.badge} ${a.magenta}review cycle ${cycle}/${CONFIG.maxReviewCycles}${a.reset}`,
-    );
-
-    if (!(await hasChanges(cwd, reviewSha))) {
-      log(`${ts()} ${a.dim}no diff — skipping review${a.reset}`);
-      break;
-    }
-
-    onStatusChange?.("REV", `reviewing (cycle ${cycle})...`);
-    const reviewPrompt = reviewFirstMessage.value
-      ? withBrief(buildReviewPrompt(content, reviewSha), brief)
-      : buildReviewPrompt(content, reviewSha);
-    let s = createStreamer(BOT_REVIEW);
-    const reviewResult = await withInterrupt(reviewAgent, () =>
-      reviewAgent.send(reviewPrompt, s, toolUseHandler),
-    );
-    s.flush();
-    await exitOnCreditExhaustion(reviewResult, reviewAgent);
-    reviewFirstMessage.value = false;
-    const reviewText = reviewResult.assistantText;
-
-    if (!reviewText || isCleanReview(reviewText)) {
-      log(`${ts()} ${a.green}✓ Review clean — no findings.${a.reset}`);
-      break;
-    }
-
-    onStatusChange?.("TDD", "fixing review feedback...");
-    log(`${ts()} ${BOT_TDD.badge} ${a.cyan}fixing review feedback...${a.reset}`);
-    const preFixSha = await captureRef(cwd);
-    const fixPrompt = buildTddPrompt(content, reviewText);
-    s = createStreamer(BOT_TDD);
-    const fixResult = await withInterrupt(tddAgent, () =>
-      tddAgent.send(
-        tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt,
-        s,
-        toolUseHandler,
-      ),
-    );
-    s.flush();
-    tddFirstMessage.value = false;
-    await followUpIfNeeded(
-      fixResult,
-      tddAgent,
-      noInteraction,
-      createStreamer,
-      toolUseHandler,
-      askUser,
-    );
-
-    if (!(await hasChanges(cwd, preFixSha))) {
-      log(`${ts()} ${a.dim}TDD bot made no changes — review cycle complete${a.reset}`);
-      break;
-    }
-
-    // Advance review base so next cycle only reviews the fix delta, not the entire original diff
-    reviewSha = await captureRef(cwd);
-  }
 };
 
 // ─── Plan generation helper ──────────────────────────────────────────────────
@@ -747,6 +619,7 @@ const main = async () => {
   const orchConfig: OrchestratorConfig = {
     cwd, planPath, planContent, brief,
     noInteraction, auto, reviewThreshold,
+    maxReviewCycles: CONFIG.maxReviewCycles,
     stateFile, tddSkill, reviewSkill, verifySkill,
   };
   const _orch = new Orchestrator(
@@ -754,10 +627,24 @@ const main = async () => {
     tddAgent, reviewAgent,
     async () => spawnAgent(BOT_TDD, tddSkill),
     async () => spawnAgent(BOT_REVIEW, reviewSkill),
+    { hasDirtyTree, captureRef, hasChanges },
+    detectCreditExhaustion,
+    saveState,
+    isCleanReview,
   );
-  // _orch.setupKeyboardHandlers() intentionally not called — inline handlers
-  // at lines 625-648 are still the active source of truth. Keyboard wiring
-  // moves to the orchestrator when the inline pipeline is replaced by run().
+  // Sync helpers — bridge inline mutable state with orchestrator fields until run() takes over
+  const syncToOrch = () => {
+    _orch.tddAgent = tddAgent;
+    _orch.reviewAgent = reviewAgent;
+    _orch.tddIsFirst = tddFirstMessage.value;
+    _orch.reviewIsFirst = reviewFirstMessage.value;
+    _orch.sliceSkipFlag = sliceSkipFlag;
+    _orch.state = state;
+  };
+  const syncFromOrch = () => {
+    tddFirstMessage.value = _orch.tddIsFirst;
+    reviewFirstMessage.value = _orch.reviewIsFirst;
+  };
 
   // 10. Group loop
   for (let i = 0; i < remaining.length; i++) {
@@ -940,19 +827,9 @@ const main = async () => {
         }
 
         // ── Commit sweep — ensure TDD bot's work is committed ────────────
-        await commitSweep({
-          groupName: `Slice ${slice.number}`,
-          cwd,
-          agent: tddAgent,
-          makeStreamer: () => boundMakeStreamer(BOT_TDD),
-          exitOnCreditExhaustion,
-          withInterrupt,
-          hasDirtyTree,
-          log,
-          followUpIfNeeded: (result, agent) =>
-            followUpIfNeeded(result, agent, noInteraction, boundMakeStreamer, onToolUse, hud.askUser),
-          onToolUse,
-        });
+        syncToOrch();
+        await _orch.commitSweep(`Slice ${slice.number}`);
+        syncFromOrch();
 
         // ── Already-implemented detection ────────────────────────────────
         const tddText = tddResult.assistantText ?? "";
@@ -1083,25 +960,9 @@ const main = async () => {
         continue;
       }
 
-      hud.update({ activeAgent: "REV", activeAgentActivity: "reviewing..." });
-      await reviewFixLoop(
-        tddAgent,
-        reviewAgent,
-        slice.content,
-        brief,
-        cwd,
-        noInteraction,
-        tddFirstMessage,
-        reviewFirstMessage,
-        exitOnCreditExhaustion,
-        withInterrupt,
-        boundMakeStreamer,
-        onToolUse,
-        hud.askUser,
-        reviewBase,
-        (agent, activity) => hud.update({ activeAgent: agent, activeAgentActivity: activity }),
-        () => sliceSkipFlag,
-      );
+      syncToOrch();
+      await _orch.reviewFix(slice.content, reviewBase);
+      syncFromOrch();
       reviewBase = await captureRef(cwd);
       if (sliceSkipFlag) {
         await doSkip();
@@ -1209,25 +1070,9 @@ Be concrete and specific. No filler.`,
             if (!(await hasChanges(cwd, gapBaseSha))) {
               log(`${ts()} ${a.dim}TDD bot made no changes for gaps${a.reset}`);
             } else {
-              await reviewFixLoop(
-                tddAgent,
-                reviewAgent,
-                groupContent,
-                brief,
-                cwd,
-                noInteraction,
-                tddFirstMessage,
-                reviewFirstMessage,
-                exitOnCreditExhaustion,
-                withInterrupt,
-                boundMakeStreamer,
-                onToolUse,
-                hud.askUser,
-                gapBaseSha,
-                (agent, activity) =>
-                  hud.update({ activeAgent: agent, activeAgentActivity: activity }),
-                () => sliceSkipFlag,
-              );
+              syncToOrch();
+              await _orch.reviewFix(groupContent, gapBaseSha);
+              syncFromOrch();
               log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
             }
           }
@@ -1245,19 +1090,9 @@ Be concrete and specific. No filler.`,
       sliceSkipFlag = false;
       hud.setSkipping(false);
     }
-    await commitSweep({
-      groupName: group.name,
-      cwd,
-      agent: tddAgent,
-      makeStreamer: () => boundMakeStreamer(BOT_TDD),
-      exitOnCreditExhaustion,
-      withInterrupt,
-      hasDirtyTree,
-      log,
-      followUpIfNeeded: (result, agent) =>
-        followUpIfNeeded(result, agent, noInteraction, boundMakeStreamer, onToolUse, hud.askUser),
-      onToolUse,
-    });
+    syncToOrch();
+    await _orch.commitSweep(group.name);
+    syncFromOrch();
 
     state = { ...state, lastCompletedGroup: group.name };
     await saveState(stateFile, state);
@@ -1359,23 +1194,9 @@ Be concrete and specific. No filler.`,
       }
 
       // Review cycle on the fixes
-      await reviewFixLoop(
-        tddAgent,
-        reviewAgent,
-        planContent,
-        brief,
-        cwd,
-        noInteraction,
-        tddFirstMessage,
-        reviewFirstMessage,
-        exitOnCreditExhaustion,
-        withInterrupt,
-        boundMakeStreamer,
-        onToolUse,
-        hud.askUser,
-        preFixSha,
-        (agent, activity) => hud.update({ activeAgent: agent, activeAgentActivity: activity }),
-      );
+      syncToOrch();
+      await _orch.reviewFix(planContent, preFixSha);
+      syncFromOrch();
       log(`${ts()} ${a.green}✓ ${pass.name}: resolved${a.reset}`);
     }
   }
