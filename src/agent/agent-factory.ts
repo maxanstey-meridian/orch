@@ -53,8 +53,16 @@ const planSkillContent = readFileSync(
   "utf-8",
 );
 
+const generatePlanSkillContent = readFileSync(
+  resolve(import.meta.dirname, "..", "..", "skills", "generate-plan.md"),
+  "utf-8",
+);
+
 export const spawnPlanAgentWithSkill = (cwd?: string): AgentProcess =>
   spawnPlanAgent(BOT_PLAN, planSkillContent, cwd);
+
+export const spawnGeneratePlanAgent = (cwd?: string): AgentProcess =>
+  spawnPlanAgent(BOT_PLAN, generatePlanSkillContent, cwd);
 
 export const TDD_RULES_REMINDER = `[ORCHESTRATOR] Non-negotiable rules for your operation. Acknowledge silently — do not respond to this message.
 
