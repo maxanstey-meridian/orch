@@ -1,4 +1,4 @@
-import { createWorktree, verifyWorktree } from "./worktree.js";
+import { createWorktree } from "./worktree.js";
 import { captureRef } from "./git.js";
 import { saveState, type OrchestratorState } from "./state.js";
 import type { LogFn } from "./display.js";
@@ -22,11 +22,8 @@ type ResolveWorktreeOpts = {
 export const resolveWorktree = async (opts: ResolveWorktreeOpts): Promise<WorktreeResult> => {
   const { branchName, cwd, activePlanId, state, stateFile, log } = opts;
 
+  // checkWorktreeResume already verified the worktree exists and is on the right branch
   if (state.worktree) {
-    const status = await verifyWorktree(state.worktree.path, state.worktree.branch);
-    if (!status.ok) {
-      throw new Error(`Worktree verification failed (${status.reason}): ${status.detail}`);
-    }
     return {
       cwd: state.worktree.path,
       worktreeInfo: { path: state.worktree.path, branch: state.worktree.branch },

@@ -552,11 +552,16 @@ export class Orchestrator {
         group.slices.every((s) => s.number <= this.state.lastCompletedSlice!);
       if (allSlicesDone) {
         this.slicesCompleted += group.slices.length;
+        this.hud.update({ completedSlices: this.slicesCompleted });
         continue;
       }
 
       // ── Slice loop ──
-      this.hud.update({ groupName: group.name, groupSliceCount: group.slices.length, groupCompleted: 0 });
+      this.hud.update({
+        groupName: group.name,
+        groupSliceCount: group.slices.length,
+        groupCompleted: 0,
+      });
       const groupBaseSha = await captureRef(this.config.cwd);
       let reviewBase = groupBaseSha;
       let groupCompleted = 0;
@@ -571,7 +576,10 @@ export class Orchestrator {
           continue;
         }
 
-        this.hud.update({ currentSlice: { number: slice.number }, completedSlices: this.slicesCompleted });
+        this.hud.update({
+          currentSlice: { number: slice.number },
+          completedSlices: this.slicesCompleted,
+        });
         printSliceIntro(this.log, slice);
 
         const verifyBaseSha = await captureRef(this.config.cwd);

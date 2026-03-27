@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../src/worktree.js", () => ({
   createWorktree: vi.fn(),
-  verifyWorktree: vi.fn(),
 }));
 
 vi.mock("../src/git.js", () => ({
@@ -14,7 +13,7 @@ vi.mock("../src/state.js", () => ({
 }));
 
 import { resolveWorktree } from "../src/worktree-setup.js";
-import { createWorktree, verifyWorktree } from "../src/worktree.js";
+import { createWorktree } from "../src/worktree.js";
 import { captureRef } from "../src/git.js";
 import { saveState } from "../src/state.js";
 
@@ -87,8 +86,7 @@ describe("resolveWorktree", () => {
     });
   });
 
-  it("verifies and reuses existing worktree from state on resume", async () => {
-    vi.mocked(verifyWorktree).mockResolvedValue({ ok: true });
+  it("reuses existing worktree from state on resume (checkWorktreeResume already verified)", async () => {
     const worktree = { path: "/repo/.orch/trees/abc123", branch: "orch/abc123", baseSha: "deadbeef" };
     const state = { lastCompletedSlice: 2, worktree };
 
@@ -101,35 +99,13 @@ describe("resolveWorktree", () => {
       log: noop,
     });
 
-    expect(verifyWorktree).toHaveBeenCalledWith("/repo/.orch/trees/abc123", "orch/abc123");
     expect(result.cwd).toBe("/repo/.orch/trees/abc123");
     expect(result.skipStash).toBe(true);
     expect(result.worktreeInfo).toEqual({ path: "/repo/.orch/trees/abc123", branch: "orch/abc123" });
     expect(createWorktree).not.toHaveBeenCalled();
   });
 
-  it("throws descriptive error when resume worktree verification fails", async () => {
-    vi.mocked(verifyWorktree).mockResolvedValue({
-      ok: false,
-      reason: "missing",
-      detail: "/repo/.orch/trees/abc123 does not exist",
-    });
-    const worktree = { path: "/repo/.orch/trees/abc123", branch: "orch/abc123", baseSha: "deadbeef" };
-
-    await expect(
-      resolveWorktree({
-        branchName: undefined,
-        cwd: "/repo",
-        activePlanId: "abc123",
-        state: { worktree },
-        stateFile: "/repo/.orch/state/plan-abc123.json",
-        log: noop,
-      }),
-    ).rejects.toThrow(/Worktree verification failed.*missing/);
-  });
-
   it("reuses existing worktree from state even when --branch is passed again", async () => {
-    vi.mocked(verifyWorktree).mockResolvedValue({ ok: true });
     const worktree = { path: "/repo/.orch/trees/abc123", branch: "orch/abc123", baseSha: "deadbeef" };
 
     const result = await resolveWorktree({
@@ -182,7 +158,6 @@ describe("resolveWorktree", () => {
   });
 
   it("reuses existing worktree even when --branch specifies a different branch name", async () => {
-    vi.mocked(verifyWorktree).mockResolvedValue({ ok: true });
     const worktree = { path: "/repo/.orch/trees/abc123", branch: "orch/abc123", baseSha: "deadbeef" };
 
     const result = await resolveWorktree({
