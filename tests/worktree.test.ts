@@ -50,6 +50,10 @@ describe("worktree", () => {
     await expect(createWorktree(repoDir, "plan-conflict", "orch/other")).rejects.toThrow(/already exists/);
   });
 
+  it("removeWorktree throws when path does not exist", async () => {
+    await expect(removeWorktree("/tmp/nonexistent-" + Date.now())).rejects.toThrow();
+  });
+
   it("removeWorktree removes the worktree directory", async () => {
     const path = await createWorktree(repoDir, "plan-rm", "orch/plan-rm");
     await removeWorktree(path);
@@ -69,6 +73,19 @@ describe("worktree", () => {
       const path = await createWorktree(repoDir, "verify-ok", "orch/verify-ok");
       const result = await verifyWorktree(path, "orch/verify-ok");
       expect(result).toEqual({ ok: true });
+    });
+
+    it("returns missing when path is a plain directory, not a git worktree", async () => {
+      const plainDir = join(repoDir, "not-a-worktree");
+      await mkdir(plainDir);
+      const result = await verifyWorktree(plainDir, "any-branch");
+      expect(result).toEqual({ ok: false, reason: "missing", detail: expect.stringContaining("not a git worktree") });
+    });
+
+    it("returns missing when path is a file, not a directory", async () => {
+      const filePath = join(repoDir, "file.txt");
+      const result = await verifyWorktree(filePath, "any-branch");
+      expect(result).toEqual({ ok: false, reason: "missing", detail: expect.stringContaining("not a git worktree") });
     });
 
     it("returns wrong-branch when worktree is on a different branch", async () => {
