@@ -352,7 +352,7 @@ export class Orchestrator {
 
     // ── Confirmation gate ──
     let operatorGuidance = "";
-    const noInteraction = forceAccept || this.config.noInteraction;
+    const noInteraction = forceAccept || this.config.noInteraction || this.config.auto;
     if (!noInteraction) {
       const planLines = plan.split("\n");
       const MAX_PREVIEW = 30;

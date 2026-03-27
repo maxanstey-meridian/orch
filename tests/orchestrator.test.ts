@@ -1674,6 +1674,22 @@ describe("Orchestrator.planThenExecute (method)", () => {
     expect(result.replan).toBe(true);
   });
 
+  it("auto-accepts plan without prompting when config.auto is true", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    const hudHelper = fakeHud();
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = await makeOrch({ config: { auto: true, noInteraction: false }, hud: hudHelper, tddAgent: tdd });
+
+    await orch.planThenExecute("slice");
+
+    expect(hudHelper.hud.askUser).not.toHaveBeenCalled();
+    expect(tdd.send).toHaveBeenCalledOnce();
+  });
+
   it("sends plan to TDD agent for execution", async () => {
     const planAgent = fakeAgent();
     (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
