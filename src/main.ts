@@ -29,6 +29,7 @@ import { spawnPlanAgentWithSkill } from "./agent-factory.js";
 import { getStatus, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
 import { parseBranchFlag } from "./cli-args.js";
+import { resolveWorktree } from "./worktree-setup.js";
 import { createHud } from "./hud.js";
 
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
@@ -168,8 +169,11 @@ const main = async () => {
   log = hud.wrapLog(origLog);
   for (const line of earlyLog) log(line);
 
-  // 6. Load per-plan state
+  // 6. Load per-plan state + resolve worktree
   const state: OrchestratorState = await loadState(stateFile);
+  const { cwd: effectiveCwd, worktreeInfo, skipStash, updatedState } = await resolveWorktree({
+    branchName, cwd, activePlanId, state, stateFile, log,
+  });
   const interactive = !noInteraction && isTTY;
 
   // 7. Signal handlers + cleanup
@@ -197,23 +201,23 @@ const main = async () => {
     process.exit(1);
   }
 
-  // Stash unrelated working tree changes
-  const didStash = await stashBackup(cwd);
+  // Stash unrelated working tree changes (skip if using worktree — it's clean by definition)
+  const didStash = skipStash ? false : await stashBackup(cwd);
   if (didStash) log(`${ts()} ${a.dim}Backed up working tree to git stash${a.reset}`);
 
   const planContent = await readFile(planPath, "utf-8");
 
   // 9. Construct Orchestrator — spawns + reminds agents internally
   _orch = await Orchestrator.create(
-    { cwd, planPath, planContent, brief, noInteraction, auto, reviewThreshold, maxReviewCycles: 3, stateFile, tddSkill, reviewSkill, verifySkill } satisfies OrchestratorConfig,
-    state, hud, log,
+    { cwd: effectiveCwd, planPath, planContent, brief, noInteraction, auto, reviewThreshold, maxReviewCycles: 3, stateFile, tddSkill, reviewSkill, verifySkill } satisfies OrchestratorConfig,
+    updatedState, hud, log,
   );
   if (interactive) _orch.setupKeyboardHandlers();
 
   // 10. Banner + group list
   const remaining = groups.slice(startIdx);
   printStartupBanner(log, {
-    planPath, brief, auto, interactive, groupFilter,
+    planPath, brief, auto, interactive, groupFilter, worktree: worktreeInfo,
     tddSessionId: _orch.tddAgent.sessionId,
     reviewSessionId: _orch.reviewAgent.sessionId,
     groups: remaining,
