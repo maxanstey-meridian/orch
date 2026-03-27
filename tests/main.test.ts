@@ -492,6 +492,43 @@ describeIntegration("CLI flag wiring", () => {
     expect(r.status).not.toBe(0);
   });
 
+  it("--review-threshold with non-numeric value exits with error", async () => {
+    initGitRepo(tempDir);
+
+    const r = runMain(
+      ["--work", join(tempDir, "plan.md"), "--review-threshold", "abc"],
+      tempDir,
+    );
+
+    const stderr = strip(r.stderr ?? "");
+    expect(stderr).toContain("Invalid --review-threshold value");
+    expect(stderr).toContain("abc");
+    expect(r.status).not.toBe(0);
+  });
+
+  it("--group as last flag with no value is silently ignored (starts from group 0)", async () => {
+    initGitRepo(tempDir);
+    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
+
+    // --group at the end with no value → getArg returns undefined → groupFilter is undefined
+    // → startIdx = 0 → all groups run from the beginning (no error)
+    const r = spawnSync("npx", [
+      "tsx", mainPath,
+      "--work", join(tempDir, "plan.md"),
+      "--skip-fingerprint", "--no-interaction",
+      "--group",
+    ], {
+      cwd: tempDir,
+      encoding: "utf-8",
+      timeout: 8_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const stderr = strip(r.stderr ?? "");
+    // Should NOT contain the "No group" error — undefined groupFilter is falsy
+    expect(stderr).not.toContain("No group");
+  }, 15_000);
+
 });
 
 describeIntegration("legacy cleanup", () => {
