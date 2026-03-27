@@ -21,7 +21,7 @@ const mockedCreateAgent = createAgent as Mock;
 // Dynamic import to get the module after mock is set up
 const loadModule = async () => {
   // Clear module cache so the mock takes effect
-  const mod = await import("../src/main.js");
+  const mod = await import("../src/agent-factory.js");
   return mod;
 };
 

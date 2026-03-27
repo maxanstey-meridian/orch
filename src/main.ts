@@ -37,19 +37,18 @@ import {
   BOT_GAP,
   BOT_FINAL,
   BOT_VERIFY,
-  BOT_PLAN,
   logSection,
 } from "./display.js";
-import { Orchestrator, CreditExhaustedError, type OrchestratorConfig, type PlanThenExecuteDeps, type PlanThenExecuteResult, type RunDeps } from "./orchestrator.js";
-import { runInit, profileToMarkdown, createAsk } from "./init.js";
-import { createAgent, type AgentProcess, type AgentStyle } from "./agent.js";
+import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
+import { runInit, profileToMarkdown } from "./init.js";
+import { spawnAgent, spawnPlanAgentWithSkill, TDD_RULES_REMINDER, REVIEW_RULES_REMINDER } from "./agent-factory.js";
+import { planThenExecute } from "./plan-executor.js";
 import { captureRef, hasChanges, getStatus, hasDirtyTree, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
 import { isCleanReview } from "./review-check.js";
 
 import { detectCreditExhaustion } from "./credit-detection.js";
 import { measureDiff } from "./review-threshold.js";
-// interrupt + skip + stdin-dispatcher replaced by HUD keyboard handling (ink useInput)
 import { createHud } from "./hud.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -60,170 +59,6 @@ const CONFIG = {
 };
 
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
-
-// ─── Agent helpers ───────────────────────────────────────────────────────────
-
-const BASE_FLAGS = ["--dangerously-skip-permissions"] as const;
-const PLAN_FLAGS = ["--permission-mode", "plan"] as const;
-
-const spawnAgent = (style: AgentStyle, systemPrompt?: string): AgentProcess =>
-  createAgent({
-    command: "claude",
-    args: [
-      ...BASE_FLAGS,
-      "-p",
-      "--input-format",
-      "stream-json",
-      "--output-format",
-      "stream-json",
-      "--verbose",
-      ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
-    ],
-    style,
-  });
-
-export const spawnPlanAgent = (style: AgentStyle, systemPrompt?: string): AgentProcess =>
-  createAgent({
-    command: "claude",
-    args: [
-      ...PLAN_FLAGS,
-      "-p",
-      "--input-format",
-      "stream-json",
-      "--output-format",
-      "stream-json",
-      "--verbose",
-      ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
-    ],
-    style,
-  });
-
-const planSkillContent = readFileSync(
-  resolve(import.meta.dirname, "..", "skills", "plan.md"),
-  "utf-8",
-);
-
-export const spawnPlanAgentWithSkill = (): AgentProcess =>
-  spawnPlanAgent(BOT_PLAN, planSkillContent);
-
-const TDD_RULES_REMINDER = `[ORCHESTRATOR] Non-negotiable rules for your operation. Acknowledge silently — do not respond to this message.
-
-1. RUN TESTS WITH BASH. Use your Bash tool to execute tests. Read the actual output. Do not narrate "RED confirmed" or "GREEN" without executing. No exceptions.
-2. COMMIT WHEN DONE. After all behaviours are GREEN, run the full test suite, then git add + git commit. Uncommitted work is invisible to the review agent.
-3. STAY IN SCOPE. Only modify files relevant to your current task. Do not touch, revert, or "clean up" unrelated files. Use git add with specific filenames, never git add . or git add -A.`;
-
-const REVIEW_RULES_REMINDER = `[ORCHESTRATOR] Non-negotiable rules for your operation. Acknowledge silently — do not respond to this message.
-
-1. ONLY REVIEW THE DIFF. Review files changed in the diff. Ignore unrelated uncommitted changes in the working tree — they belong to the operator.
-2. DO NOT SUGGEST REVERTING unrelated files (skill files, config, HUD changes) that weren't part of the slice.
-3. If the diff is empty and HEAD hasn't moved, respond with REVIEW_CLEAN. Do not claim work is missing if it was committed in prior commits.`;
-
-const spawnTddAgent = async (skill: string): Promise<AgentProcess> => {
-  const agent = spawnAgent(BOT_TDD, skill);
-  await agent.sendQuiet(TDD_RULES_REMINDER);
-  return agent;
-};
-
-const spawnReviewAgent = async (skill: string): Promise<AgentProcess> => {
-  const agent = spawnAgent(BOT_REVIEW, skill);
-  await agent.sendQuiet(REVIEW_RULES_REMINDER);
-  return agent;
-};
-
-// ─── Prompt helper ───────────────────────────────────────────────────────────
-
-// Lazy init — readline on stdout interferes with ink's cursor tracking
-let _rl: ReturnType<typeof createAsk> | null = null;
-const getRl = () => {
-  if (!_rl) _rl = createAsk();
-  return _rl;
-};
-const ask = (prompt: string) => getRl().ask(prompt);
-
-// ─── Plan-then-execute ──────────────────────────────────────────────────────
-
-const buildPlanPrompt = (sliceContent: string): string =>
-  `You are a planning agent. Explore the codebase and produce a step-by-step TDD execution plan for the following slice.
-
-## Plan Slice
-${sliceContent}
-
-## Instructions
-1. Read the relevant files to understand current state.
-2. Output numbered RED→GREEN cycles. Each cycle: one failing test, then minimal code to pass.
-3. Do NOT write any code — plan only.`;
-
-export const planThenExecute = async (
-  deps: PlanThenExecuteDeps,
-): Promise<PlanThenExecuteResult> => {
-  // ── Plan phase ──
-  const planPrompt = buildPlanPrompt(deps.sliceContent);
-  const ps = deps.makePlanStreamer();
-  const planResult = await deps.withInterrupt(deps.planAgent, () =>
-    deps.planAgent.send(planPrompt, ps, deps.onToolUse),
-  );
-  ps.flush();
-
-  if (deps.isSkipped()) {
-    deps.planAgent.kill();
-    return { tddResult: planResult, skipped: true };
-  }
-
-  const hardInterruptGuidance = deps.isHardInterrupted();
-  if (hardInterruptGuidance) {
-    deps.planAgent.kill();
-    return { tddResult: planResult, skipped: false, hardInterrupt: hardInterruptGuidance };
-  }
-
-  deps.planAgent.kill();
-
-  // Extract plan text — prefer structured planText, fall back to assistantText
-  const plan = planResult.planText ?? planResult.assistantText ?? "";
-
-  // ── Confirmation gate ──
-  let operatorGuidance = "";
-  if (!deps.noInteraction && deps.askUser) {
-    const planLines = plan.split("\n");
-    const MAX_PREVIEW = 30;
-    const preview = planLines.slice(0, MAX_PREVIEW).join("\n");
-    deps.log(`${BOT_PLAN.badge} plan ready`);
-    deps.onPlanReady?.();
-    deps.log(preview);
-    if (planLines.length > MAX_PREVIEW) {
-      deps.log(`... (truncated, ${planLines.length} lines)`);
-    }
-    const answer = await deps.askUser("Accept plan? (y)es / (e)dit / (r)eplan: ");
-    if (answer.startsWith("r")) {
-      return { tddResult: planResult, skipped: false, replan: true };
-    }
-    if (answer.startsWith("e")) {
-      operatorGuidance = await deps.askUser("Guidance for execution: ");
-    }
-    // "y", empty, or after guidance — fall through to execute
-  }
-
-  // ── Execute phase ──
-  deps.log(`${BOT_TDD.badge} executing plan...`);
-  const executePrompt = operatorGuidance
-    ? `Operator guidance: ${operatorGuidance}\n\nExecute this plan:\n\n${plan}`
-    : `Execute this plan:\n\n${plan}`;
-  const es = deps.makeExecuteStreamer();
-  const tddResult = await deps.withInterrupt(deps.tddAgent, () =>
-    deps.tddAgent.send(executePrompt, es, deps.onToolUse),
-  );
-  es.flush();
-
-  if (deps.isSkipped()) {
-    return { tddResult, skipped: true };
-  }
-
-  const execInterrupt = deps.isHardInterrupted();
-  if (execInterrupt) {
-    return { tddResult, skipped: false, hardInterrupt: execInterrupt };
-  }
-
-  return { tddResult, skipped: false };
-};
 
 // ─── Plan generation helper ──────────────────────────────────────────────────
 
@@ -386,7 +221,6 @@ const main = async () => {
   // Generate-only mode: --plan without --work
   const generateOnly = !!inventoryPath && !workMode;
   if (generateOnly) {
-    if (_rl) _rl.close();
     // Flush buffered output + final message directly (no HUD in this path)
     for (const line of earlyLog) origLog(line);
     origLog(`Plan written to ${planPath} — review and run with --work`);
@@ -424,7 +258,6 @@ const main = async () => {
       tddAgent.kill();
       reviewAgent.kill();
     }
-    if (_rl) _rl.close();
   };
   process.on("SIGINT", () => {
     cleanup();

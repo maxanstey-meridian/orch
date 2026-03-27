@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { withBrief, buildTddPrompt, buildReviewPreamble, buildReviewPrompt, buildGapPrompt, buildFinalPasses } from "../src/prompts.js";
+import { withBrief, buildTddPrompt, buildReviewPreamble, buildReviewPrompt, buildGapPrompt, buildFinalPasses, buildCommitSweepPrompt } from "../src/prompts.js";
 
 describe("withBrief", () => {
   it("returns prompt unchanged when brief is empty", () => {
@@ -69,5 +69,27 @@ describe("buildFinalPasses", () => {
     expect(names).toContain("Type fidelity");
     expect(names).toContain("Plan completeness");
     expect(names).toContain("Cross-cutting integration");
+  });
+});
+
+describe("buildCommitSweepPrompt", () => {
+  it("includes the group name and key instruction text", () => {
+    const prompt = buildCommitSweepPrompt("Authentication");
+    expect(prompt).toContain("Authentication");
+    expect(prompt).toContain("uncommitted changes");
+    expect(prompt).toContain("commit");
+  });
+
+  it("handles empty group name without crashing", () => {
+    const prompt = buildCommitSweepPrompt("");
+    expect(prompt).toContain("uncommitted changes");
+    expect(typeof prompt).toBe("string");
+    expect(prompt.length).toBeGreaterThan(0);
+  });
+
+  it("handles group name with special characters", () => {
+    const prompt = buildCommitSweepPrompt('Auth "OAuth2" & <SSO>');
+    expect(prompt).toContain('Auth "OAuth2" & <SSO>');
+    expect(prompt).toContain("uncommitted changes");
   });
 });
