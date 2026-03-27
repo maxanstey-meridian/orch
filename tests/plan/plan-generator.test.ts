@@ -3,8 +3,8 @@ import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../../src/plan/plan-generator.js";
-import { parsePlanJson } from "../../src/plan/plan-schema.js";
+import { extractJson, generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../../src/plan/plan-generator.js";
+import { PlanSchema } from "../../src/plan/plan-schema.js";
 import type { AgentProcess, AgentResult } from "../../src/agent/agent.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -174,6 +174,29 @@ describe("ensureCanonicalPlan", () => {
   });
 });
 
+// ─── extractJson ───────────────────────────────────────────────────────────
+
+describe("extractJson", () => {
+  it("extracts JSON object from text with preamble and postamble", () => {
+    const input = `Here's the plan:\n{"groups":[{"name":"A","slices":[]}]}\nLet me know.`;
+    expect(extractJson(input)).toBe('{"groups":[{"name":"A","slices":[]}]}');
+  });
+
+  it("returns original text when no braces found", () => {
+    expect(extractJson("no json here")).toBe("no json here");
+  });
+
+  it("handles nested braces correctly", () => {
+    const json = '{"groups":[{"name":"A","slices":[{"number":1}]}]}';
+    const input = `preamble\n${json}\npostamble`;
+    expect(extractJson(input)).toBe(json);
+  });
+
+  it("returns empty string for empty input", () => {
+    expect(extractJson("")).toBe("");
+  });
+});
+
 // ─── isPlanFormat ───────────────────────────────────────────────────────────
 
 describe("isPlanFormat", () => {
@@ -243,7 +266,7 @@ describe("generatePlan", () => {
     expect(written).not.toContain("Here's the plan");
   });
 
-  it("generated plan parses successfully via parsePlanJson", async () => {
+  it("generated plan passes Zod validation", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
@@ -253,12 +276,12 @@ describe("generatePlan", () => {
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
     const written = readFileSync(planPath, "utf-8");
-    const groups = parsePlanJson(written);
-    expect(groups).toHaveLength(2);
-    expect(groups[0].name).toBe("Auth");
-    expect(groups[0].slices).toHaveLength(2);
-    expect(groups[1].name).toBe("Dashboard");
-    expect(groups[1].slices).toHaveLength(1);
+    const parsed = PlanSchema.parse(JSON.parse(written));
+    expect(parsed.groups).toHaveLength(2);
+    expect(parsed.groups[0].name).toBe("Auth");
+    expect(parsed.groups[0].slices).toHaveLength(2);
+    expect(parsed.groups[1].name).toBe("Dashboard");
+    expect(parsed.groups[1].slices).toHaveLength(1);
   });
 
   it("throws when agent produces invalid JSON", async () => {
@@ -278,6 +301,16 @@ describe("generatePlan", () => {
     await expect(
       generatePlan("/does/not/exist/inventory.md", "brief", agent, outputDir),
     ).rejects.toThrow();
+  });
+
+  it("throws descriptive error when agent returns empty response", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent("");
+
+    await expect(generatePlan(inventoryPath, "", agent, outputDir)).rejects.toThrow("empty");
   });
 
   it("throws when agent returns non-JSON text", async () => {
@@ -316,7 +349,7 @@ describe("generatePlan", () => {
     expect(capturedPrompt).toContain("## Feature inventory");
   });
 
-  it("omits source comment when sourcePath is not provided", async () => {
+  it("written file starts with valid JSON, not HTML comments", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
@@ -326,38 +359,44 @@ describe("generatePlan", () => {
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
     const written = readFileSync(planPath, "utf-8");
-    expect(written.startsWith("<!--")).toBe(false);
+    expect(written.startsWith("{")).toBe(true);
+    const parsed = JSON.parse(written);
+    expect(parsed.groups).toHaveLength(2);
   });
 
-  it("prepends source comment when sourcePath is provided", async () => {
+  it("writes pretty-printed JSON to disk", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_PLAN); // minified
+
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
+
+    const written = readFileSync(planPath, "utf-8");
+    // Must be multi-line (pretty-printed)
+    expect(written).toContain("\n");
+    // Must be valid JSON
+    const parsed = JSON.parse(written);
+    expect(parsed.groups).toHaveLength(2);
+    expect(parsed.groups[0].name).toBe("Auth");
+    expect(parsed.groups[0].slices[0].title).toBe("User login");
+  });
+
+  it("written file is valid JSON that passes Zod validation", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
     const outputDir = join(tmpDir, ".orch");
     const agent = mockAgent(VALID_PLAN);
 
-    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir, "features/inventory.md");
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
     const written = readFileSync(planPath, "utf-8");
-    expect(written.startsWith("<!-- Generated from: features/inventory.md -->")).toBe(true);
-  });
-
-  it("plan with source comment prefix still parses via parsePlanJson", async () => {
-    const inventoryPath = join(tmpDir, "inventory.md");
-    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
-
-    const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
-
-    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir, "inv.md");
-
-    const written = readFileSync(planPath, "utf-8");
-    expect(written.startsWith("<!--")).toBe(true);
-    // Strip source comment prefix before parsing JSON
-    const jsonStart = written.indexOf("{");
-    const groups = parsePlanJson(written.slice(jsonStart));
-    expect(groups.length).toBe(2);
-    expect(groups[0].name).toBe("Auth");
+    const parsed = PlanSchema.parse(JSON.parse(written));
+    expect(parsed.groups[0].name).toBe("Auth");
+    expect(parsed.groups[0].slices[0].number).toBe(1);
+    expect(parsed.groups[0].slices[0].files[0].path).toBe("src/auth.ts");
   });
 
   it("creates deeply nested output directories that do not exist", async () => {
@@ -398,6 +437,39 @@ describe("generatePlan", () => {
     expect(capturedPrompt).toContain("TypeScript / NestJS stack");
     expect(capturedPrompt).toContain("# Features");
     expect(capturedPrompt).toContain("Transform this feature inventory");
+  });
+
+  it("prompt includes JSON schema shape and instructions", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    let capturedPrompt = "";
+    const agent: AgentProcess = {
+      ...mockAgent(VALID_PLAN),
+      send: async (prompt: string) => {
+        capturedPrompt = prompt;
+        return {
+          exitCode: 0,
+          assistantText: VALID_PLAN,
+          resultText: "",
+          needsInput: false,
+          sessionId: "mock",
+        };
+      },
+    };
+
+    await generatePlan(inventoryPath, "", agent, outputDir);
+
+    // Must reference JSON schema fields
+    for (const field of ["groups", "slices", "number", "title", "why", "files", "action", "details", "tests"]) {
+      expect(capturedPrompt).toContain(`"${field}"`);
+    }
+    // Must instruct JSON output
+    expect(capturedPrompt).toContain("valid JSON");
+    // Must NOT contain old markdown format instructions
+    expect(capturedPrompt).not.toContain("## Group:");
+    expect(capturedPrompt).not.toContain("### Slice");
   });
 });
 

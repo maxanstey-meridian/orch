@@ -1,7 +1,7 @@
 import { randomBytes, createHash } from "crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
-import { parsePlanJson } from "./plan-schema.js";
+import { PlanSchema } from "./plan-schema.js";
 import type { AgentProcess } from "../agent/agent.js";
 import { a, type LogFn } from "../ui/display.js";
 
@@ -50,36 +50,44 @@ const PLAN_INSTRUCTIONS = `Transform this feature inventory into a group-and-sli
 
 ## Required format
 
-Use exactly this heading structure:
+Output valid JSON matching this schema:
 
+\`\`\`json
+{
+  "groups": [
+    {
+      "name": "<group name>",
+      "description": "<optional group description>",
+      "slices": [
+        {
+          "number": 1,
+          "title": "<slice title>",
+          "why": "<one sentence explaining why this slice is needed>",
+          "files": [
+            { "path": "src/foo.ts", "action": "new" },
+            { "path": "src/bar.ts", "action": "edit" }
+          ],
+          "details": "<concrete implementation details — what to build, how it connects>",
+          "tests": "<what to test, which file>"
+        }
+      ]
+    }
+  ]
+}
 \`\`\`
-## Group: <group name>
 
-<optional group description>
+## Field reference
 
-### Slice 1: <slice title>
-
-**Why:** <one sentence>
-
-**Files:** \`src/foo.ts\` (new), \`src/bar.ts\` (edit)
-
-<concrete implementation details — what to build, how it connects>
-
-**Tests:** <what to test, which file>
-
-### Slice 2: <slice title>
-
-...
-\`\`\`
+- \`"action"\` must be one of: \`"new"\`, \`"edit"\`, \`"delete"\`.
+- \`"number"\` is a positive integer — globally unique across the entire plan.
+- \`"files"\` must have at least one entry per slice.
+- All string fields (\`"name"\`, \`"title"\`, \`"why"\`, \`"details"\`, \`"tests"\`) must be non-empty.
 
 ## Rules
 
-- Heading levels matter: \`##\` for groups, \`###\` for slices. Do not deviate.
 - **Slice numbers must be GLOBALLY unique and sequential across the entire plan.** Group 1 has Slices 1-3, Group 2 has Slices 4-6, etc. Do NOT restart numbering per group. The orchestrator tracks progress by slice number — duplicate numbers cause slices to be skipped.
 - Target 2-3 slices per group, max 4. Respect dependency ordering.
-- Each slice needs: **Why**, **Files**, concrete details, and **Tests**.
-- Output ONLY the plan markdown — no preamble, no commentary, no wrapping text.
-- Start your output with \`## Group:\` — the very first line must be a group heading.`;
+- Output ONLY the JSON object — no preamble, no commentary, no wrapping text.`;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -93,12 +101,8 @@ export const isPlanFormat = (content: string): boolean => {
   }
 };
 
-/**
- * Strip conversational preamble before the first markdown heading.
- * Does NOT strip postamble — plan bodies contain prose paragraphs
- * that would be false-positives. Validation catches bad output.
- */
-const stripPreamble = (text: string): string => {
+/** Extract the outermost JSON object from agent text that may include preamble/postamble. */
+export const extractJson = (text: string): string => {
   const jsonStart = text.indexOf("{");
   const jsonEnd = text.lastIndexOf("}");
   if (jsonStart >= 0 && jsonEnd > jsonStart) return text.slice(jsonStart, jsonEnd + 1);
@@ -114,7 +118,6 @@ export const generatePlan = async (
   briefContent: string,
   agent: AgentProcess,
   outputDir: string,
-  sourcePath?: string,
 ): Promise<GeneratePlanResult> => {
   const inventory = readFileSync(inventoryPath, "utf-8");
 
@@ -131,7 +134,7 @@ export const generatePlan = async (
   const raw = result.assistantText ?? "";
   const planFromExit = result.planText ?? "";
   const best = planFromExit || raw;
-  const planText = stripPreamble(best).trim();
+  const planText = extractJson(best).trim();
 
   if (!planText) {
     throw new Error(
@@ -139,17 +142,27 @@ export const generatePlan = async (
     );
   }
 
-  // Validate — parsePlanText throws if no groups found
-  parsePlanJson(planText, "generated plan");
+  // Parse and validate via Zod
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(planText);
+  } catch (e) {
+    throw new Error(`Invalid JSON in generated plan — ${(e as Error).message}`);
+  }
+  const validation = PlanSchema.safeParse(parsed);
+  if (!validation.success) {
+    const issues = validation.error.issues.map((i: { path: (string | number)[]; message: string }) =>
+      `  ${i.path.join(".")}: ${i.message}`).join("\n");
+    throw new Error(`Invalid plan (generated plan):\n${issues}`);
+  }
 
-  // Build output with optional source comment
-  const prefix = sourcePath ? `<!-- Generated from: ${sourcePath} -->\n` : "";
+  const formatted = JSON.stringify(validation.data, null, 2);
   const planId = generatePlanId();
 
   // Write to disk
   mkdirSync(outputDir, { recursive: true });
   const outPath = join(outputDir, planFileName(planId));
-  writeFileSync(outPath, prefix + planText);
+  writeFileSync(outPath, formatted);
 
   return { planPath: outPath, planId };
 };
@@ -169,7 +182,6 @@ export const doGeneratePlan = async (
       briefContent,
       planAgent,
       outputDir,
-      inventoryPath,
     );
     log(`${a.green}Plan written to ${planPath}${a.reset}`);
     return planPath;
