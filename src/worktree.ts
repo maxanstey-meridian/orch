@@ -3,7 +3,7 @@ import { stat, access } from "fs/promises";
 import { promisify } from "util";
 import { resolve } from "path";
 import { captureRef } from "./git.js";
-import { type OrchestratorState } from "./state.js";
+import { clearState, type OrchestratorState } from "./state.js";
 
 const run = promisify(execFile);
 
@@ -81,6 +81,16 @@ export const checkWorktreeResume = async (
     }
   }
   return { ok: true };
+};
+
+export const runCleanup = async (stateFile: string, state: OrchestratorState): Promise<string> => {
+  if (state.worktree) {
+    await removeWorktree(state.worktree.path);
+  }
+  await clearState(stateFile);
+  return state.worktree
+    ? `Removed worktree at ${state.worktree.path}. State cleared.`
+    : "No worktree to clean up. State cleared.";
 };
 
 export const createWorktree = async (
