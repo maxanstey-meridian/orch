@@ -5,9 +5,9 @@ const describeIntegration = process.env.INTEGRATION ? _describe : _describe.skip
 import { mkdtemp, rm, writeFile, readFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { createHash } from "crypto";
 import { execSync, spawnSync } from "child_process";
 import { loadState, saveState, clearState, statePathForPlan } from "../src/state.js";
+import { resolvePlanId } from "../src/plan-generator.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
@@ -58,7 +58,7 @@ describeIntegration("--reset flag behavior", () => {
 
     // Derive the plan ID the same way main.ts does for external plans
     const planPath = join(tempDir, "plan.md");
-    const planId = createHash("sha256").update(planPath).digest("hex").slice(0, 6);
+    const planId = resolvePlanId(planPath);
     const orchDir = join(tempDir, ".orch");
     const perPlanStateFile = statePathForPlan(orchDir, planId);
 
@@ -89,26 +89,21 @@ describeIntegration("--reset flag behavior", () => {
 });
 
 describe("SHA-256 fallback plan ID derivation", () => {
-  // main.ts derives a stable plan ID from the plan path when
-  // planIdFromPath throws (external plan file).
-  const derivePlanId = (path: string): string =>
-    createHash("sha256").update(path).digest("hex").slice(0, 6);
-
   it("produces a deterministic 6-char hex ID from the same path", () => {
-    const id1 = derivePlanId("/repo/plan.md");
-    const id2 = derivePlanId("/repo/plan.md");
+    const id1 = resolvePlanId("/repo/plan.md");
+    const id2 = resolvePlanId("/repo/plan.md");
     expect(id1).toMatch(/^[0-9a-f]{6}$/);
     expect(id1).toBe(id2);
   });
 
   it("produces different IDs for different paths", () => {
-    const idA = derivePlanId("/repo/plan-a.md");
-    const idB = derivePlanId("/repo/plan-b.md");
+    const idA = resolvePlanId("/repo/plan-a.md");
+    const idB = resolvePlanId("/repo/plan-b.md");
     expect(idA).not.toBe(idB);
   });
 
   it("derived ID maps to a valid statePathForPlan path", () => {
-    const id = derivePlanId("/repo/plan.md");
+    const id = resolvePlanId("/repo/plan.md");
     const statePath = statePathForPlan("/repo/.orch", id);
     expect(statePath).toMatch(/\.orch\/state\/plan-[0-9a-f]{6}\.json$/);
   });
@@ -365,7 +360,7 @@ describeIntegration("CLI flag wiring", () => {
 
     // Derive the same ID main.ts would use for this path
     const planPath = join(tempDir, "plan.md");
-    const expectedId = createHash("sha256").update(planPath).digest("hex").slice(0, 6);
+    const expectedId = resolvePlanId(planPath);
     const orchDir = join(tempDir, ".orch");
     const perPlanState = statePathForPlan(orchDir, expectedId);
 
@@ -571,7 +566,7 @@ describeIntegration(".orch/ directory structure", () => {
 
       // Pre-seed per-plan state so the state file exists after --work
       const planPath = join(dir, "plan.md");
-      const expectedId = createHash("sha256").update(planPath).digest("hex").slice(0, 6);
+      const expectedId = resolvePlanId(planPath);
       const orchDir = join(dir, ".orch");
       const { mkdirSync } = await import("fs");
       mkdirSync(join(orchDir, "state"), { recursive: true });

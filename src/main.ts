@@ -15,55 +15,22 @@
  *   npx ts-node src/main.ts --init --plan inventory.md        # interactive project init
  */
 
-import { createHash } from "crypto";
 import { resolve } from "path";
-import { readFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, mkdirSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { parsePlan } from "./plan-parser.js";
-import { generatePlan, isPlanFormat, planFileName, planIdFromPath } from "./plan-generator.js";
+import { isPlanFormat, ensureCanonicalPlan, doGeneratePlan } from "./plan-generator.js";
 import { loadState, clearState, statePathForPlan, type OrchestratorState } from "./state.js";
 import { runFingerprint } from "./fingerprint.js";
-import { a, ts, BOT_TDD, BOT_REVIEW, BOT_GAP, logSection } from "./display.js";
+import { a, ts, logSection, printStartupBanner } from "./display.js";
 import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
 import { runInit, profileToMarkdown } from "./init.js";
 import { spawnPlanAgentWithSkill } from "./agent-factory.js";
 import { getStatus, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
-
 import { createHud } from "./hud.js";
 
-// ─── Config ──────────────────────────────────────────────────────────────────
-
-const CONFIG = {
-  maxReviewCycles: 3,
-  briefDir: ".orch",
-};
-
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
-
-// ─── Plan generation helper ──────────────────────────────────────────────────
-
-const doGeneratePlan = async (
-  inventoryPath: string,
-  briefContent: string,
-  outputDir: string,
-): Promise<string> => {
-  log(`${a.bold}Generating plan from inventory...${a.reset}`);
-  const planAgent = spawnPlanAgentWithSkill();
-  try {
-    const { planPath } = await generatePlan(
-      inventoryPath,
-      briefContent,
-      planAgent,
-      outputDir,
-      inventoryPath,
-    );
-    log(`${a.green}Plan written to ${planPath}${a.reset}`);
-    return planPath;
-  } finally {
-    planAgent.kill();
-  }
-};
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
@@ -130,7 +97,7 @@ const main = async () => {
   const verifySkill = readFileSync(resolve(skillsDir, "verify.md"), "utf-8");
 
   const cwd = process.cwd();
-  const orchDir = resolve(cwd, CONFIG.briefDir);
+  const orchDir = resolve(cwd, ".orch");
 
   // 2. Init (if requested) → fingerprint + brief
   if (initMode) {
@@ -159,41 +126,24 @@ const main = async () => {
   let planPath: string;
 
   if (workMode) {
-    // --work <plan>: explicit path, no fallback
     planPath = resolve(workPath!);
   } else {
-    // --plan <input>: generate plan from inventory (or detect it's already a plan)
     const inputPath = resolve(inventoryPath!);
     const srcContent = readFileSync(inputPath, "utf-8");
 
     if (isPlanFormat(srcContent)) {
-      // Already a plan — use directly
       log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
       planPath = inputPath;
     } else {
-      planPath = await doGeneratePlan(inputPath, brief, orchDir);
+      planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnPlanAgentWithSkill);
     }
   }
 
-  // 4b. Derive per-plan state path from resolved planPath
-  let activePlanId: string;
-  try {
-    activePlanId = planIdFromPath(planPath);
-  } catch {
-    // External plan file (e.g. plan.md) — derive stable ID from path hash
-    activePlanId = createHash("sha256").update(planPath).digest("hex").slice(0, 6);
-
-    // Copy non-standard plan names to .orch/plan-<id>.md for state scoping
-    mkdirSync(orchDir, { recursive: true });
-    const canonicalPath = resolve(orchDir, planFileName(activePlanId));
-    if (!existsSync(canonicalPath)) {
-      writeFileSync(canonicalPath, readFileSync(planPath, "utf-8"));
-    }
-  }
+  // 4. Derive per-plan state path
+  const activePlanId = ensureCanonicalPlan(planPath, orchDir);
   const stateFile = statePathForPlan(orchDir, activePlanId);
   mkdirSync(resolve(orchDir, "state"), { recursive: true });
 
-  // 4c. --reset clears the per-plan state file
   if (resetState) {
     await clearState(stateFile);
     log(`${a.dim}State cleared.${a.reset}`);
@@ -202,30 +152,25 @@ const main = async () => {
   // Generate-only mode: --plan without --work
   const generateOnly = !!inventoryPath && !workMode;
   if (generateOnly) {
-    // Flush buffered output + final message directly (no HUD in this path)
     for (const line of earlyLog) origLog(line);
     origLog(`Plan written to ${planPath} — review and run with --work`);
     process.exit(0);
   }
 
-  // 4. Parse plan
+  // 5. Parse plan + HUD
   const groups = await parsePlan(planPath);
-
-  // 4b. HUD — persistent status bar at bottom of terminal
   const totalSlices = groups.reduce((n, g) => n + g.slices.length, 0);
   const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
   const hud = createHud(isTTY);
   hud.update({ totalSlices, completedSlices: 0, startTime: Date.now() });
   log = hud.wrapLog(origLog);
-  // Replay buffered pre-ink output through ink so it knows about those lines
   for (const line of earlyLog) log(line);
 
-  // 5. Load per-plan state
-  let state: OrchestratorState = await loadState(stateFile);
-
+  // 6. Load per-plan state
+  const state: OrchestratorState = await loadState(stateFile);
   const interactive = !noInteraction && isTTY;
 
-  // 6. Signal handlers + cleanup (delegates to orchestrator after it's constructed)
+  // 7. Signal handlers + cleanup
   // If SIGINT arrives during create(), _orch is null and spawned agents aren't
   // tracked here. process.exit() follows immediately, which reaps child processes.
   let _orch: Orchestrator | null = null;
@@ -236,16 +181,10 @@ const main = async () => {
       hud.teardown();
     }
   };
-  process.on("SIGINT", () => {
-    cleanup();
-    process.exit(130);
-  });
-  process.on("SIGTERM", () => {
-    cleanup();
-    process.exit(143);
-  });
+  process.on("SIGINT", () => { cleanup(); process.exit(130); });
+  process.on("SIGTERM", () => { cleanup(); process.exit(143); });
 
-  // 7. Validate group filter early (before spending time on create)
+  // 8. Validate group filter
   const startIdx = groupFilter
     ? groups.findIndex((g) => g.name.toLowerCase() === groupFilter.toLowerCase())
     : 0;
@@ -256,63 +195,29 @@ const main = async () => {
     process.exit(1);
   }
 
-  // Stash any unrelated working tree changes to protect them from the TDD bot
+  // Stash unrelated working tree changes
   const didStash = await stashBackup(cwd);
   if (didStash) log(`${ts()} ${a.dim}Backed up working tree to git stash${a.reset}`);
 
   const planContent = await readFile(planPath, "utf-8");
 
-  // 8. Construct Orchestrator — spawns + reminds agents internally
-  const orchConfig: OrchestratorConfig = {
-    cwd,
-    planPath,
-    planContent,
-    brief,
-    noInteraction,
-    auto,
-    reviewThreshold,
-    maxReviewCycles: CONFIG.maxReviewCycles,
-    stateFile,
-    tddSkill,
-    reviewSkill,
-    verifySkill,
-  };
-  _orch = await Orchestrator.create(orchConfig, state, hud, log);
+  // 9. Construct Orchestrator — spawns + reminds agents internally
+  _orch = await Orchestrator.create(
+    { cwd, planPath, planContent, brief, noInteraction, auto, reviewThreshold, maxReviewCycles: 3, stateFile, tddSkill, reviewSkill, verifySkill } satisfies OrchestratorConfig,
+    state, hud, log,
+  );
   if (interactive) _orch.setupKeyboardHandlers();
 
-  // 9. Startup banner
-  log(
-    `\n${a.bold}🚀 Orchestrator${a.reset} ${a.dim}${new Date().toISOString().slice(0, 16)}${a.reset}`,
-  );
-  log(`   ${a.dim}Plan${a.reset}    ${planPath}`);
-  log(
-    `   ${a.dim}Brief${a.reset}   ${brief ? `${a.green}✓${a.reset} .orch/brief.md` : `${a.dim}none${a.reset}`}`,
-  );
-  log(
-    `   ${a.dim}Mode${a.reset}    ${groupFilter ? `start from "${groupFilter}"` : auto ? "automatic" : "interactive"}`,
-  );
-  log(`   ${BOT_TDD.badge} ${a.dim}persistent (${_orch.tddAgent.sessionId.slice(0, 8)})${a.reset}`);
-  log(
-    `   ${BOT_REVIEW.badge} ${a.dim}persistent (${_orch.reviewAgent.sessionId.slice(0, 8)})${a.reset}`,
-  );
-  log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
-  if (interactive)
-    log(`   ${a.dim}Press${a.reset} ${a.bold}S${a.reset} ${a.dim}to skip current slice${a.reset}`);
-
-  // 10. Group list
+  // 10. Banner + group list
   const remaining = groups.slice(startIdx);
-  log("");
-  for (let g = 0; g < remaining.length; g++) {
-    const grp = remaining[g];
-    const slices = grp.slices.map((s) => `${s.number}`).join(", ");
-    const marker = g === 0 ? `${a.bold}▸${a.reset}` : " ";
-    log(
-      `   ${marker} ${a.dim}${String(g + 1).padStart(2)}.${a.reset} ${g === 0 ? a.bold : a.dim}${grp.name}${a.reset} ${a.dim}(${slices})${a.reset}`,
-    );
-  }
-  log("");
+  printStartupBanner(log, {
+    planPath, brief, auto, interactive, groupFilter,
+    tddSessionId: _orch.tddAgent.sessionId,
+    reviewSessionId: _orch.reviewAgent.sessionId,
+    groups: remaining,
+  });
 
-  // 10. Run the orchestrator
+  // 11. Run
   try {
     await _orch.run(remaining, 0);
   } catch (err) {

@@ -1,8 +1,9 @@
-import { randomBytes } from "crypto";
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
+import { randomBytes, createHash } from "crypto";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
+import { join, resolve } from "path";
 import { parsePlanText } from "./plan-parser.js";
 import type { AgentProcess } from "./agent.js";
+import { a, type LogFn } from "./display.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -16,6 +17,31 @@ export const planIdFromPath = (planPath: string): string => {
   const match = PLAN_ID_RE.exec(planPath);
   if (!match) throw new Error(`Cannot extract plan ID from path: ${planPath}`);
   return match[1];
+};
+
+export const resolvePlanId = (planPath: string): string => {
+  try {
+    return planIdFromPath(planPath);
+  } catch {
+    return createHash("sha256").update(planPath).digest("hex").slice(0, 6);
+  }
+};
+
+export const ensureCanonicalPlan = (planPath: string, orchDir: string): string => {
+  const id = resolvePlanId(planPath);
+  // Only copy if the path doesn't already match plan-<id>.md
+  try {
+    planIdFromPath(planPath);
+    return id;
+  } catch {
+    // External plan — copy to canonical location if not already present
+    mkdirSync(orchDir, { recursive: true });
+    const canonicalPath = resolve(orchDir, planFileName(id));
+    if (!existsSync(canonicalPath)) {
+      writeFileSync(canonicalPath, readFileSync(planPath, "utf-8"));
+    }
+    return id;
+  }
 };
 
 const PLAN_INSTRUCTIONS = `Transform this feature inventory into a group-and-slice plan.
@@ -121,4 +147,28 @@ export const generatePlan = async (
   writeFileSync(outPath, prefix + planText);
 
   return { planPath: outPath, planId };
+};
+
+export const doGeneratePlan = async (
+  inventoryPath: string,
+  briefContent: string,
+  outputDir: string,
+  log: LogFn,
+  spawnPlanAgent: () => AgentProcess,
+): Promise<string> => {
+  log(`${a.bold}Generating plan from inventory...${a.reset}`);
+  const planAgent = spawnPlanAgent();
+  try {
+    const { planPath } = await generatePlan(
+      inventoryPath,
+      briefContent,
+      planAgent,
+      outputDir,
+      inventoryPath,
+    );
+    log(`${a.green}Plan written to ${planPath}${a.reset}`);
+    return planPath;
+  } finally {
+    planAgent.kill();
+  }
 };
