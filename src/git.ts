@@ -3,7 +3,7 @@ import { promisify } from "util";
 
 const run = promisify(execFile);
 
-const git = async (args: string[], cwd: string): Promise<string> => {
+export const git = async (args: string[], cwd: string): Promise<string> => {
   const { stdout } = await run("git", args, { cwd });
   return stdout.trim();
 };
