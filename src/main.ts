@@ -11,6 +11,7 @@
  *   npx ts-node src/main.ts --work plan.md --group Auth       # start from group
  *   npx ts-node src/main.ts --work plan.md --auto             # no inter-group prompts
  *   npx ts-node src/main.ts --work plan.md --no-interaction   # suppress all prompts
+ *   npx ts-node src/main.ts --work plan.json --show-plan       # inspect plan structure
  *   npx ts-node src/main.ts --work plan.md --reset            # clear state and re-run
  *   npx ts-node src/main.ts --init --plan inventory.md        # interactive project init
  */
@@ -18,20 +19,20 @@
 import { resolve } from "path";
 import { readFileSync, mkdirSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
-import { parsePlan } from "./plan-parser.js";
-import { isPlanFormat, ensureCanonicalPlan, doGeneratePlan } from "./plan-generator.js";
-import { loadState, clearState, statePathForPlan, type OrchestratorState } from "./state.js";
-import { runFingerprint } from "./fingerprint.js";
-import { a, ts, logSection, printStartupBanner } from "./display.js";
+import { parsePlan } from "./plan/plan-parser.js";
+import { isPlanFormat, ensureCanonicalPlan, doGeneratePlan } from "./plan/plan-generator.js";
+import { loadState, clearState, statePathForPlan, type OrchestratorState } from "./state/state.js";
+import { runFingerprint } from "./state/fingerprint.js";
+import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "./ui/display.js";
 import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
-import { runInit, profileToMarkdown } from "./init.js";
-import { spawnPlanAgentWithSkill } from "./agent-factory.js";
-import { getStatus, stashBackup } from "./git.js";
-import { assertGitRepo } from "./repo-check.js";
-import { parseBranchFlag } from "./cli-args.js";
-import { resolveWorktree } from "./worktree-setup.js";
-import { checkWorktreeResume, runCleanup } from "./worktree.js";
-import { createHud } from "./hud.js";
+import { runInit, profileToMarkdown } from "./ui/init.js";
+import { spawnPlanAgentWithSkill } from "./agent/agent-factory.js";
+import { getStatus, stashBackup } from "./git/git.js";
+import { assertGitRepo } from "./git/repo-check.js";
+import { parseBranchFlag } from "./cli/cli-args.js";
+import { resolveWorktree } from "./git/worktree-setup.js";
+import { checkWorktreeResume, runCleanup } from "./git/worktree.js";
+import { createHud } from "./ui/hud.js";
 
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
 
@@ -67,6 +68,7 @@ const main = async () => {
   const cleanupMode = args.includes("--cleanup");
   const groupFilter = getArg("--group");
   const initMode = args.includes("--init");
+  const showPlan = args.includes("--show-plan");
   const rawThreshold = getArg("--review-threshold");
   const reviewThreshold = rawThreshold !== undefined ? Number(rawThreshold) : 30;
   if (Number.isNaN(reviewThreshold)) {
@@ -89,6 +91,10 @@ const main = async () => {
   }
   if (cleanupMode && !workMode) {
     console.error("--cleanup requires --work <plan>.");
+    process.exit(1);
+  }
+  if (showPlan && !workMode) {
+    console.error("--show-plan requires --work <plan>.");
     process.exit(1);
   }
   if (!inventoryPath && !workMode) {
@@ -176,6 +182,13 @@ const main = async () => {
 
   // 5. Parse plan + HUD
   const groups = await parsePlan(planPath);
+
+  if (showPlan) {
+    for (const line of earlyLog) origLog(line);
+    formatPlanSummary(origLog, groups);
+    process.exit(0);
+  }
+
   const totalSlices = groups.reduce((n, g) => n + g.slices.length, 0);
   const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
   const hud = createHud(isTTY);

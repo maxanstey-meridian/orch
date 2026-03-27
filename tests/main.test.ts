@@ -6,8 +6,8 @@ import { mkdtemp, rm, writeFile, readFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync, spawnSync } from "child_process";
-import { loadState, saveState, clearState, statePathForPlan } from "../src/state.js";
-import { resolvePlanId } from "../src/plan-generator.js";
+import { loadState, saveState, clearState, statePathForPlan } from "../src/state/state.js";
+import { resolvePlanId } from "../src/plan/plan-generator.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 

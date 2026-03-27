@@ -1,23 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "../src/orchestrator.js";
-import type { AgentProcess, AgentResult, AgentStyle } from "../src/agent.js";
-import type { Hud, KeyHandler, InterruptSubmitHandler } from "../src/hud.js";
-import type { Slice } from "../src/plan-parser.js";
-import { hasDirtyTree, captureRef, hasChanges } from "../src/git.js";
-import { spawnAgent, spawnPlanAgentWithSkill } from "../src/agent-factory.js";
-import { detectCreditExhaustion } from "../src/credit-detection.js";
-import { saveState } from "../src/state.js";
-import { isCleanReview } from "../src/review-check.js";
-import { measureDiff } from "../src/review-threshold.js";
+import type { AgentProcess, AgentResult, AgentStyle } from "../src/agent/agent.js";
+import type { Hud, KeyHandler, InterruptSubmitHandler } from "../src/ui/hud.js";
+import type { Slice } from "../src/plan/plan-parser.js";
+import { hasDirtyTree, captureRef, hasChanges } from "../src/git/git.js";
+import { spawnAgent, spawnPlanAgentWithSkill } from "../src/agent/agent-factory.js";
+import { detectCreditExhaustion } from "../src/agent/credit-detection.js";
+import { saveState } from "../src/state/state.js";
+import { isCleanReview } from "../src/cli/review-check.js";
+import { measureDiff } from "../src/cli/review-threshold.js";
 
-vi.mock("../src/git.js", () => ({
+vi.mock("../src/git/git.js", () => ({
   hasDirtyTree: vi.fn().mockResolvedValue(false),
   captureRef: vi.fn().mockResolvedValue("abc123"),
   hasChanges: vi.fn().mockResolvedValue(true),
 }));
 
-vi.mock("../src/agent-factory.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/agent-factory.js")>();
+vi.mock("../src/agent/agent-factory.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/agent/agent-factory.js")>();
   return {
     spawnAgent: vi.fn(),
     spawnPlanAgentWithSkill: vi.fn(),
@@ -26,20 +26,20 @@ vi.mock("../src/agent-factory.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../src/credit-detection.js", () => ({
+vi.mock("../src/agent/credit-detection.js", () => ({
   detectCreditExhaustion: vi.fn().mockReturnValue(null),
 }));
 
-vi.mock("../src/state.js", () => ({
+vi.mock("../src/state/state.js", () => ({
   saveState: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../src/review-check.js", () => ({
+vi.mock("../src/cli/review-check.js", () => ({
   isCleanReview: vi.fn().mockReturnValue(false),
 }));
 
-vi.mock("../src/review-threshold.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/review-threshold.js")>();
+vi.mock("../src/cli/review-threshold.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/cli/review-threshold.js")>();
   return {
     shouldReview: actual.shouldReview,
     measureDiff: vi.fn().mockResolvedValue({ linesAdded: 100, linesRemoved: 10, total: 110 }),
@@ -149,10 +149,69 @@ describe("Orchestrator.create", () => {
 
     await Orchestrator.create(makeConfig(), {}, fakeHud().hud, vi.fn());
 
-    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "TDD" }), "skill-tdd");
-    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "REVIEW" }), "skill-review");
+    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "TDD" }), "skill-tdd", undefined);
+    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "REVIEW" }), "skill-review", undefined);
     expect(tdd.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("RUN TESTS WITH BASH"));
     expect(review.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("ONLY REVIEW THE DIFF"));
+  });
+
+  it("passes resumeSessionId to spawnAgent when state has session IDs", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    await Orchestrator.create(
+      makeConfig(),
+      { tddSessionId: "tdd-sess-1", reviewSessionId: "rev-sess-1" },
+      fakeHud().hud,
+      vi.fn(),
+    );
+
+    expect(spawnAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ label: "TDD" }),
+      "skill-tdd",
+      "tdd-sess-1",
+    );
+    expect(spawnAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ label: "REVIEW" }),
+      "skill-review",
+      "rev-sess-1",
+    );
+  });
+
+  it("does not pass resumeSessionId when state has no session IDs", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    await Orchestrator.create(makeConfig(), {}, fakeHud().hud, vi.fn());
+
+    expect(spawnAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ label: "TDD" }),
+      "skill-tdd",
+      undefined,
+    );
+    expect(spawnAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ label: "REVIEW" }),
+      "skill-review",
+      undefined,
+    );
+  });
+
+  it("skips rules reminders when resuming with session IDs", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    await Orchestrator.create(
+      makeConfig(),
+      { tddSessionId: "tdd-sess-1", reviewSessionId: "rev-sess-1" },
+      fakeHud().hud,
+      vi.fn(),
+    );
+
+    expect(tdd.sendQuiet).not.toHaveBeenCalled();
+    expect(review.sendQuiet).not.toHaveBeenCalled();
   });
 
   it("uses provided agents when given, skipping spawn but still sending reminders", async () => {
@@ -220,6 +279,19 @@ describe("respawnTdd", () => {
     await orch.respawnTdd();
     expect(newTdd.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("RUN TESTS WITH BASH"));
   });
+
+  it("saves new tddSessionId to state after spawning", async () => {
+    const newTdd = { ...fakeAgent(), sessionId: "new-tdd-sess" };
+    vi.mocked(spawnAgent).mockReturnValue(newTdd);
+    const { orch } = await makeOrch();
+
+    await orch.respawnTdd();
+
+    expect(saveState).toHaveBeenCalledWith(
+      "/tmp/state.json",
+      expect.objectContaining({ tddSessionId: "new-tdd-sess" }),
+    );
+  });
 });
 
 describe("respawnBoth", () => {
@@ -252,6 +324,23 @@ describe("respawnBoth", () => {
     const { orch } = await makeOrch();
     await orch.respawnBoth();
     expect(newReview.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("ONLY REVIEW THE DIFF"));
+  });
+
+  it("saves both session IDs to state after spawning", async () => {
+    const newTdd = { ...fakeAgent(), sessionId: "new-tdd-sess" };
+    const newReview = { ...fakeAgent(), sessionId: "new-rev-sess" };
+    vi.mocked(spawnAgent).mockReturnValueOnce(newTdd).mockReturnValueOnce(newReview);
+    const { orch } = await makeOrch();
+
+    await orch.respawnBoth();
+
+    expect(saveState).toHaveBeenCalledWith(
+      "/tmp/state.json",
+      expect.objectContaining({
+        tddSessionId: "new-tdd-sess",
+        reviewSessionId: "new-rev-sess",
+      }),
+    );
   });
 });
 
@@ -841,6 +930,28 @@ describe("run()", () => {
     vi.mocked(hasChanges).mockResolvedValue(false);
     const { orch } = await makeOrch();
     await expect(orch.run([], 0)).resolves.toBeUndefined();
+  });
+
+  it("saves session IDs to state on group entry", async () => {
+    const tdd = { ...fakeAgent(), sessionId: "tdd-run-sess" };
+    const review = { ...fakeAgent(), sessionId: "rev-run-sess" };
+    const group = { name: "Auth", slices: [{ number: 1, title: "a", content: "c" }] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = await makeOrch({ tddAgent: tdd, reviewAgent: review });
+    vi.spyOn(orch, "planThenExecute").mockResolvedValue({ tddResult, skipped: false });
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
+
+    await orch.run([group], 0);
+
+    expect(saveState).toHaveBeenCalledWith(
+      "/tmp/state.json",
+      expect.objectContaining({
+        tddSessionId: "tdd-run-sess",
+        reviewSessionId: "rev-run-sess",
+      }),
+    );
   });
 
   it("skips group when all slices completed", async () => {
