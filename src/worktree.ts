@@ -43,7 +43,9 @@ export const createWorktree = async (
   const treePath = resolve(repoRoot, ".orch/trees", planId);
   try {
     await git(["worktree", "add", treePath, "-b", branch], repoRoot);
-  } catch {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "";
+    if (!msg.includes("a branch named")) throw err;
     await git(["worktree", "add", treePath, branch], repoRoot);
   }
   return treePath;
