@@ -1194,6 +1194,87 @@ describe("gapAnalysis()", () => {
     expect(tdd.send).not.toHaveBeenCalled();
   });
 
+  it("returns cleanly when hardInterruptPending set during TDD fix phase", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing edge case tests", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(captureRef).mockResolvedValue("gapsha");
+    const { orch } = await makeOrch({ tddAgent: tdd });
+    const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
+
+    const origWithInterrupt = orch.withInterrupt.bind(orch);
+    vi.spyOn(orch, "withInterrupt").mockImplementation(async (agent, fn) => {
+      const result = await origWithInterrupt(agent, fn);
+      if (agent === tdd) orch.hardInterruptPending = "stop";
+      return result;
+    });
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    expect(gapAgent.kill).toHaveBeenCalled();
+    expect(reviewFixSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns cleanly when sliceSkipFlag set during gap agent phase", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    const { orch } = await makeOrch({ tddAgent: tdd });
+
+    const origWithInterrupt = orch.withInterrupt.bind(orch);
+    vi.spyOn(orch, "withInterrupt").mockImplementation(async (agent, fn) => {
+      const result = await origWithInterrupt(agent, fn);
+      if (agent === gapAgent) orch.sliceSkipFlag = true;
+      return result;
+    });
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    expect(gapAgent.kill).toHaveBeenCalled();
+    expect(tdd.send).not.toHaveBeenCalled();
+    expect(orch.sliceSkipFlag).toBe(false);
+  });
+
+  it("logs interrupted (not failed) when hardInterruptPending is set after gap agent", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 143, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    const logFn = vi.fn();
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    const { orch } = await makeOrch({ tddAgent: tdd });
+    (orch as any).log = logFn;
+
+    // Simulate interrupt handler having fired during gap agent run
+    const origWithInterrupt = orch.withInterrupt.bind(orch);
+    vi.spyOn(orch, "withInterrupt").mockImplementation(async (agent, fn) => {
+      const result = await origWithInterrupt(agent, fn);
+      if (agent === gapAgent) orch.hardInterruptPending = "skip this";
+      return result;
+    });
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+    expect(allLogs).toContain("interrupted");
+    expect(allLogs).not.toContain("failed");
+    expect(gapAgent.kill).toHaveBeenCalled();
+    expect(tdd.send).not.toHaveBeenCalled();
+  });
+
+  it("sets activeAgent to GAP during gap scan", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s" });
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    const hudHelper = fakeHud();
+    const { orch } = await makeOrch({ hud: hudHelper });
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    expect(hudHelper.hud.update).toHaveBeenCalledWith(expect.objectContaining({ activeAgent: "GAP", activeAgentActivity: "scanning for gaps..." }));
+  });
+
   it("does not call TDD bot when NO_GAPS_FOUND", async () => {
     const gapAgent = fakeAgent();
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s" });
