@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId } from "../src/plan-generator.js";
+import { generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId } from "../src/plan-generator.js";
 import { parsePlanText } from "../src/plan-parser.js";
 import type { AgentProcess, AgentResult } from "../src/agent.js";
 
@@ -105,6 +105,30 @@ describe("generatePlanId", () => {
     const ids = Array.from({ length: 10 }, () => generatePlanId());
     const unique = new Set(ids);
     expect(unique.size).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ─── resolvePlanId ──────────────────────────────────────────────────────────
+
+describe("resolvePlanId", () => {
+  it("extracts ID from a plan-<id>.md path via regex", () => {
+    expect(resolvePlanId("/repo/.orch/plan-a1b2c3.md")).toBe("a1b2c3");
+  });
+
+  it("returns a 6-char hex string for an arbitrary path (hash fallback)", () => {
+    expect(resolvePlanId("/repo/plan.md")).toMatch(/^[0-9a-f]{6}$/);
+  });
+
+  it("is deterministic — same path always produces same ID", () => {
+    const id1 = resolvePlanId("/repo/plan.md");
+    const id2 = resolvePlanId("/repo/plan.md");
+    expect(id1).toBe(id2);
+  });
+
+  it("produces different IDs for different paths", () => {
+    const idA = resolvePlanId("/repo/plan-a.md");
+    const idB = resolvePlanId("/repo/plan-b.md");
+    expect(idA).not.toBe(idB);
   });
 });
 
