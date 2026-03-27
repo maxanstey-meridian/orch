@@ -99,7 +99,7 @@ ${buildReviewPreamble(baseSha)}
 - Structural: duplicated logic, parallel state, mixed concerns introduced by the change
 - Names: identifiers that no longer match their scope or purpose after the change
 - Enum/value completeness: new variants not handled in all consumers
-- Over-injection: pure functions passed as constructor/method params when a direct import would suffice
+- Over-engineering: deps bags, wrapper types, or indirection layers that exist "for testability" but add complexity with no real benefit. If a function is only called from one place, it doesn't need to be injectable. If a value is available on \`this\`, don't thread it through a params object. Prefer direct imports over DI for pure functions and leaf I/O. Three lines of duplication beats a premature abstraction
 
 ## What NOT to flag
 - Style, formatting, cosmetic preferences

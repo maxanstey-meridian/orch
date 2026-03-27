@@ -1,12 +1,12 @@
 import type { AgentProcess, AgentResult, AgentStyle } from "./agent.js";
 import type { Hud, WriteFn } from "./hud.js";
 import type { OrchestratorState } from "./state.js";
-import { a, ts, BOT_TDD, BOT_REVIEW, BOT_VERIFY, printSliceSummary } from "./display.js";
+import { a, ts, BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL, printSliceSummary } from "./display.js";
 import { shouldReview, type DiffStats } from "./review-threshold.js";
-import type { Slice } from "./plan-parser.js";
+import type { Group, Slice } from "./plan-parser.js";
 import { parseVerifyResult } from "./verify.js";
 import type { LogFn } from "./display.js";
-import { buildCommitSweepPrompt, buildReviewPrompt, buildTddPrompt, withBrief } from "./prompts.js";
+import { buildCommitSweepPrompt, buildFinalPasses, buildGapPrompt, buildReviewPrompt, buildTddPrompt, withBrief } from "./prompts.js";
 import type { CreditSignal } from "./credit-detection.js";
 import { makeStreamer, type Streamer } from "./streamer.js";
 
@@ -31,6 +31,30 @@ export type OrchestratorConfig = {
   readonly verifySkill: string;
 };
 
+export type PlanThenExecuteDeps = {
+  readonly sliceContent: string;
+  readonly planAgent: AgentProcess;
+  readonly tddAgent: AgentProcess;
+  readonly brief: string;
+  readonly makePlanStreamer: () => Streamer;
+  readonly makeExecuteStreamer: () => Streamer;
+  readonly withInterrupt: <T>(agent: AgentProcess, fn: () => Promise<T>) => Promise<T>;
+  readonly isSkipped: () => boolean;
+  readonly isHardInterrupted: () => string | null;
+  readonly onToolUse?: (summary: string) => void;
+  readonly log: (...args: unknown[]) => void;
+  readonly noInteraction?: boolean;
+  readonly askUser?: (prompt: string) => Promise<string>;
+  readonly onPlanReady?: () => void;
+};
+
+export type PlanThenExecuteResult = {
+  readonly tddResult: AgentResult;
+  readonly skipped: boolean;
+  readonly hardInterrupt?: string;
+  readonly replan?: boolean;
+};
+
 export class CreditExhaustedError extends Error {
   readonly kind: CreditSignal["kind"];
   constructor(message: string, kind: CreditSignal["kind"]) {
@@ -52,6 +76,19 @@ export class Orchestrator {
   hardInterruptPending: string | null = null;
   slicesCompleted = 0;
   activityShowing = false;
+
+  planThenExecute: (deps: PlanThenExecuteDeps) => Promise<PlanThenExecuteResult> = () => {
+    throw new Error("planThenExecute not wired");
+  };
+  spawnPlanWithSkill: () => AgentProcess = () => {
+    throw new Error("spawnPlanWithSkill not wired");
+  };
+  spawnGap: () => AgentProcess = () => {
+    throw new Error("spawnGap not wired");
+  };
+  spawnFinal: () => AgentProcess = () => {
+    throw new Error("spawnFinal not wired");
+  };
 
   private readonly hudWriter: WriteFn;
 
@@ -425,8 +462,220 @@ export class Orchestrator {
     this.reviewIsFirst = true;
   }
 
-  run(): never {
-    throw new Error("Orchestrator.run() not yet implemented");
+  async run(groups: readonly Group[], startIdx: number): Promise<void> {
+    const remaining = groups.slice(startIdx);
+    const runBaseSha = await this.git.captureRef(this.config.cwd);
+
+    for (let i = 0; i < remaining.length; i++) {
+      const group = remaining[i];
+
+      // Skip entire group if all its slices are already completed
+      const allSlicesDone =
+        this.state.lastCompletedSlice !== undefined &&
+        group.slices.every((s) => s.number <= this.state.lastCompletedSlice!);
+      if (allSlicesDone) {
+        this.slicesCompleted += group.slices.length;
+        continue;
+      }
+
+      // ── Slice loop ──
+      const groupBaseSha = await this.git.captureRef(this.config.cwd);
+      let reviewBase = groupBaseSha;
+      for (const slice of group.slices) {
+        if (this.state.lastCompletedSlice !== undefined && slice.number <= this.state.lastCompletedSlice) {
+          this.slicesCompleted++;
+          continue;
+        }
+
+        const verifyBaseSha = await this.git.captureRef(this.config.cwd);
+
+        const pteResult = await this.planThenExecute({
+          sliceContent: slice.content,
+          planAgent: this.spawnPlanWithSkill(),
+          tddAgent: this.tddAgent,
+          brief: this.tddIsFirst ? this.config.brief : "",
+          makePlanStreamer: () => this.streamer(BOT_PLAN),
+          makeExecuteStreamer: () => this.streamer(BOT_TDD),
+          withInterrupt: (agent, fn) => this.withInterrupt(agent, fn),
+          isSkipped: () => this.sliceSkipFlag,
+          isHardInterrupted: () => this.hardInterruptPending,
+          onToolUse: (s) => this.onToolUse(s),
+          log: this.log,
+          noInteraction: this.config.noInteraction,
+          askUser: this.config.noInteraction ? undefined : this.hud.askUser,
+        });
+
+        if (pteResult.skipped) {
+          this.sliceSkipFlag = false;
+          this.state = { ...this.state, lastCompletedSlice: slice.number };
+          await this.persistState(this.config.stateFile, this.state);
+          await this.respawnTdd();
+          this.slicesCompleted++;
+          continue;
+        }
+
+        const tddResult = pteResult.tddResult;
+        this.tddIsFirst = false;
+
+        await this.checkCredit(tddResult, this.tddAgent);
+        if (tddResult.needsInput) {
+          await this.followUp(tddResult, this.tddAgent);
+        }
+
+        // Commit sweep — ensure TDD bot's work is committed
+        await this.commitSweep(`Slice ${slice.number}`);
+
+        // Post-TDD pipeline: verify → review → summary
+        const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
+        reviewBase = sliceResult.reviewBase;
+        if (!sliceResult.skipped) {
+          // slicesCompleted already incremented inside runSlice
+        }
+      }
+
+      // Gap analysis
+      await this.gapAnalysis(group, groupBaseSha);
+
+      // Commit sweep — catch uncommitted changes before marking group done
+      await this.commitSweep(group.name);
+
+      // Mark group complete
+      this.state = { ...this.state, lastCompletedGroup: group.name };
+      await this.persistState(this.config.stateFile, this.state);
+
+      // Inter-group transition
+      if (i < remaining.length - 1) {
+        await this.respawnBoth();
+
+        if (!this.config.auto && !this.config.noInteraction) {
+          const next = remaining[i + 1];
+          const nextLabel = `${next.name} (${next.slices.map((s) => `Slice ${s.number}`).join(", ")})`;
+          this.log(`${ts()} ${a.green}✓ Group "${group.name}" complete${a.reset}`);
+          const answer = await this.hud.askUser(`Group done. Run ${nextLabel} next? (Y/n) `);
+          if (answer.toLowerCase() === "n") {
+            this.log(`Stopped. Resume with --group "${next.name}"`);
+            return;
+          }
+        }
+      }
+    }
+
+    // Final review passes
+    await this.finalPasses(runBaseSha);
+  }
+
+  async gapAnalysis(group: Group, groupBaseSha: string): Promise<void> {
+    if (this.sliceSkipFlag) {
+      this.sliceSkipFlag = false;
+      return;
+    }
+
+    if (!(await this.git.hasChanges(this.config.cwd, groupBaseSha))) {
+      return;
+    }
+
+    this.log(`${ts()} ${BOT_GAP.badge} scanning for coverage gaps across group...`);
+    const groupContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
+    const gapAgent = this.spawnGap();
+    const gapPrompt = withBrief(buildGapPrompt(groupContent, groupBaseSha), this.config.brief);
+    const onTool = (s: string) => this.onToolUse(s);
+    const gs = this.streamer(BOT_GAP);
+    const gapResult = await this.withInterrupt(gapAgent, () => gapAgent.send(gapPrompt, gs, onTool));
+    gs.flush();
+    await this.checkCredit(gapResult, gapAgent);
+
+    const gapText = gapResult.assistantText ?? "";
+
+    if (gapText.includes("NO_GAPS_FOUND") || gapResult.exitCode !== 0) {
+      this.log(`${ts()} ${a.green}✓ No coverage gaps found${a.reset}`);
+      gapAgent.kill();
+      return;
+    }
+
+    this.log(`${ts()} ${BOT_GAP.badge} gaps found — sending to TDD bot`);
+    const gapBaseSha = await this.git.captureRef(this.config.cwd);
+    const gapFixPrompt = buildTddPrompt(
+      groupContent,
+      `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
+    );
+    const ts2 = this.streamer(BOT_TDD);
+    const fixPrompt = this.tddIsFirst ? withBrief(gapFixPrompt, this.config.brief) : gapFixPrompt;
+    const fixResult = await this.withInterrupt(this.tddAgent, () =>
+      this.tddAgent.send(fixPrompt, ts2, onTool),
+    );
+    ts2.flush();
+    this.tddIsFirst = false;
+    await this.checkCredit(fixResult, this.tddAgent);
+
+    if (fixResult.needsInput) {
+      await this.followUp(fixResult, this.tddAgent);
+    }
+
+    if (await this.git.hasChanges(this.config.cwd, gapBaseSha)) {
+      await this.reviewFix(groupContent, gapBaseSha);
+      this.log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
+    }
+
+    gapAgent.kill();
+  }
+
+  async finalPasses(runBaseSha: string): Promise<void> {
+    if (!(await this.git.hasChanges(this.config.cwd, runBaseSha))) {
+      return;
+    }
+
+    const passes = buildFinalPasses(runBaseSha, this.config.planContent);
+    const onTool = (s: string) => this.onToolUse(s);
+
+    for (const pass of passes) {
+      this.log(`${ts()} ${BOT_FINAL.badge} ${pass.name}...`);
+
+      const finalAgent = this.spawnFinal();
+      const finalPrompt = withBrief(pass.prompt, this.config.brief);
+      const fs = this.streamer(BOT_FINAL);
+      const finalResult = await this.withInterrupt(finalAgent, () =>
+        finalAgent.send(finalPrompt, fs, onTool),
+      );
+      fs.flush();
+      await this.checkCredit(finalResult, finalAgent);
+      finalAgent.kill();
+
+      if (finalResult.exitCode !== 0) {
+        this.log(`${ts()} ${pass.name}: agent failed — skipping`);
+        continue;
+      }
+
+      const findings = finalResult.assistantText;
+      if (!findings || findings.includes("NO_ISSUES_FOUND")) {
+        this.log(`${ts()} ${a.green}✓ ${pass.name}: clean${a.reset}`);
+        continue;
+      }
+
+      // Fix cycle
+      this.log(`${ts()} ${BOT_TDD.badge} fixing ${pass.name} findings...`);
+      const preFixSha = await this.git.captureRef(this.config.cwd);
+      const fixPrompt = buildTddPrompt(
+        this.config.planContent,
+        `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
+      );
+      const ts2 = this.streamer(BOT_TDD);
+      const actualFixPrompt = this.tddIsFirst ? withBrief(fixPrompt, this.config.brief) : fixPrompt;
+      const fixResult = await this.withInterrupt(this.tddAgent, () =>
+        this.tddAgent.send(actualFixPrompt, ts2, onTool),
+      );
+      ts2.flush();
+      this.tddIsFirst = false;
+      await this.checkCredit(fixResult, this.tddAgent);
+
+      if (fixResult.needsInput) {
+        await this.followUp(fixResult, this.tddAgent);
+      }
+
+      if (await this.git.hasChanges(this.config.cwd, preFixSha)) {
+        await this.reviewFix(this.config.planContent, preFixSha);
+        this.log(`${ts()} ${a.green}✓ ${pass.name}: resolved${a.reset}`);
+      }
+    }
   }
 
   async respawnTdd(): Promise<void> {
