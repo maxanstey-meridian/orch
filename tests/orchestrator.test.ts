@@ -149,8 +149,8 @@ describe("Orchestrator.create", () => {
 
     await Orchestrator.create(makeConfig(), {}, fakeHud().hud, vi.fn());
 
-    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "TDD" }), "skill-tdd", undefined);
-    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "REVIEW" }), "skill-review", undefined);
+    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "TDD" }), "skill-tdd", undefined, "/tmp");
+    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "REVIEW" }), "skill-review", undefined, "/tmp");
     expect(tdd.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("RUN TESTS WITH BASH"));
     expect(review.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("ONLY REVIEW THE DIFF"));
   });
@@ -171,11 +171,13 @@ describe("Orchestrator.create", () => {
       expect.objectContaining({ label: "TDD" }),
       "skill-tdd",
       "tdd-sess-1",
+      "/tmp",
     );
     expect(spawnAgent).toHaveBeenCalledWith(
       expect.objectContaining({ label: "REVIEW" }),
       "skill-review",
       "rev-sess-1",
+      "/tmp",
     );
   });
 
@@ -190,11 +192,13 @@ describe("Orchestrator.create", () => {
       expect.objectContaining({ label: "TDD" }),
       "skill-tdd",
       undefined,
+      "/tmp",
     );
     expect(spawnAgent).toHaveBeenCalledWith(
       expect.objectContaining({ label: "REVIEW" }),
       "skill-review",
       undefined,
+      "/tmp",
     );
   });
 
@@ -266,7 +270,7 @@ describe("respawnTdd", () => {
     await orch.respawnTdd();
 
     expect(oldTdd.kill).toHaveBeenCalled();
-    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "TDD" }), "skill-tdd");
+    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "TDD" }), "skill-tdd", undefined, "/tmp");
     expect(orch.tddAgent).toBe(newTdd);
     expect(orch.tddIsFirst).toBe(true);
     expect(orch.reviewIsFirst).toBe(false);
@@ -309,8 +313,8 @@ describe("respawnBoth", () => {
 
     expect(oldTdd.kill).toHaveBeenCalled();
     expect(oldReview.kill).toHaveBeenCalled();
-    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "TDD" }), "skill-tdd");
-    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "REVIEW" }), "skill-review");
+    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "TDD" }), "skill-tdd", undefined, "/tmp");
+    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "REVIEW" }), "skill-review", undefined, "/tmp");
     expect(orch.tddAgent).toBe(newTdd);
     expect(orch.reviewAgent).toBe(newReview);
     expect(orch.tddIsFirst).toBe(true);
@@ -418,7 +422,7 @@ describe("cleanup", () => {
 });
 
 describe("streamer", () => {
-  it("returns Streamer that clears activity on first text", async () => {
+  it("returns Streamer that shows thinking shimmer on first text", async () => {
     const hudHelper = fakeHud();
     const captured: string[] = [];
     (hudHelper.hud.createWriter as ReturnType<typeof vi.fn>).mockReturnValue((t: string) => { captured.push(t); });
@@ -427,7 +431,7 @@ describe("streamer", () => {
     // Simulate activity showing
     orch.activityShowing = true;
     s("hello");
-    expect(hudHelper.hud.setActivity).toHaveBeenCalledWith("");
+    expect(hudHelper.hud.setActivity).toHaveBeenCalledWith("thinking...");
     expect(captured.length).toBeGreaterThan(0);
   });
 });
@@ -780,7 +784,7 @@ describe("verify", () => {
     vi.mocked(spawnAgent).mockReturnValue(vAgent);
     const { orch } = await makeOrch({ config: { verifySkill: "my-verify-skill" } });
     await orch.verify(testSlice, "abc123");
-    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "VERIFY" }), "my-verify-skill");
+    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "VERIFY" }), "my-verify-skill", undefined, "/tmp");
   });
 
   it("returns true when verification passes", async () => {
@@ -1098,7 +1102,7 @@ describe("run()", () => {
     await orch.run([group], 0);
 
     // TDD agent was respawned via factory
-    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "TDD" }), "skill-tdd");
+    expect(spawnAgent).toHaveBeenCalledWith(expect.objectContaining({ label: "TDD" }), "skill-tdd", undefined, "/tmp");
     expect(orch.tddAgent).toBe(newTdd);
     // Guidance was sent to the new TDD agent
     expect(newTdd.send).toHaveBeenCalled();

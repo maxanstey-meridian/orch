@@ -138,6 +138,7 @@ export type CreateAgentOptions = {
   readonly args: readonly string[];
   readonly style: AgentStyle;
   readonly sessionId?: string;
+  readonly cwd?: string;
 };
 
 export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
@@ -147,6 +148,7 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
 
   const proc = spawn(opts.command, [...opts.args], {
     stdio: ["pipe", "pipe", "pipe"],
+    ...(opts.cwd ? { cwd: opts.cwd } : {}),
   });
 
   let stderrBuf = "";
