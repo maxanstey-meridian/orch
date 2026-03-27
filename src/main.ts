@@ -41,7 +41,7 @@ import {
 } from "./display.js";
 import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
 import { runInit, profileToMarkdown } from "./init.js";
-import { spawnAgent, spawnPlanAgentWithSkill, TDD_RULES_REMINDER, REVIEW_RULES_REMINDER } from "./agent-factory.js";
+import { spawnAgent, spawnTddAgent, spawnReviewAgent, spawnPlanAgentWithSkill, TDD_RULES_REMINDER, REVIEW_RULES_REMINDER } from "./agent-factory.js";
 import { planThenExecute } from "./plan-executor.js";
 import { captureRef, hasChanges, getStatus, hasDirtyTree, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
@@ -342,8 +342,8 @@ const main = async () => {
     log,
     tddAgent,
     reviewAgent,
-    async () => spawnAgent(BOT_TDD, tddSkill),
-    async () => spawnAgent(BOT_REVIEW, reviewSkill),
+    async () => spawnTddAgent(tddSkill),
+    async () => spawnReviewAgent(reviewSkill),
     { hasDirtyTree, captureRef, hasChanges },
     detectCreditExhaustion,
     saveState,
