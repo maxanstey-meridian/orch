@@ -2174,6 +2174,46 @@ describe("Orchestrator.planThenExecute (method)", () => {
     // Result should be from the fresh agent
     expect(result.tddResult.exitCode).toBe(0);
   });
+
+  it("dead session fallback works with real detectApiError", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+
+    const tdd = fakeAgent();
+    let sendCount = 0;
+    (tdd.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      sendCount++;
+      if (sendCount === 1) {
+        (tdd as { alive: boolean }).alive = false;
+        return { exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+      }
+      return { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
+    });
+
+    // Use real detectApiError logic — exitCode 1 + empty text → { kind: "unknown", retryable: false }
+    vi.mocked(detectApiError).mockImplementation((result, stderr) => {
+      if (result.exitCode === 0) return null;
+      const combined = `${result.resultText}\n${stderr}`;
+      if (/529|overloaded/i.test(combined)) return { kind: "overloaded", retryable: true };
+      if (/rate\s+limit/i.test(combined)) return { kind: "rate-limited", retryable: true };
+      return { kind: "unknown", retryable: false };
+    });
+
+    const freshTdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(freshTdd);
+
+    const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+
+    // Should NOT throw CreditExhaustedError — withRetry short-circuits on dead agent
+    const result = await orch.planThenExecute("slice");
+
+    expect(orch.tddAgent).toBe(freshTdd);
+    expect(freshTdd.send).toHaveBeenCalledOnce();
+    expect(result.tddResult.exitCode).toBe(0);
+  });
 });
 
 describe("gapAnalysis uses imported spawnAgent", () => {
@@ -2312,6 +2352,22 @@ describe("withRetry", () => {
 
     const { orch } = await makeOrch();
     await expect(orch.checkCredit(result, agent)).rejects.toThrow(CreditExhaustedError);
+  });
+
+  it("returns result without throwing when agent is dead", async () => {
+    const agent = fakeAgent();
+    (agent as { alive: boolean }).alive = false;
+    const deadResult: AgentResult = { exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const fn = vi.fn().mockResolvedValue(deadResult);
+    // Real detectApiError returns { kind: "unknown", retryable: false } for exitCode 1
+    // which normally throws CreditExhaustedError. Dead agent should short-circuit.
+    vi.mocked(detectApiError).mockReturnValue({ kind: "unknown", retryable: false });
+
+    const { orch } = await makeOrch();
+    const result = await orch.withRetry(fn, agent, "tdd-execute", 2, 0);
+
+    expect(result).toBe(deadResult);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
   it("updates HUD activity during retry wait", async () => {

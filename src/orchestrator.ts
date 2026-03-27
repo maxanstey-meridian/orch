@@ -229,6 +229,7 @@ export class Orchestrator {
     let attempt = 0;
     while (true) {
       const result = await fn();
+      if (!agent.alive) return result;
       const apiError = detectApiError(result, agent.stderr);
 
       if (!apiError) return result;
