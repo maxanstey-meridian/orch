@@ -1217,6 +1217,29 @@ describe("gapAnalysis()", () => {
     expect(orch.hardInterruptPending).toBeNull();
   });
 
+  it("returns cleanly when sliceSkipFlag set during TDD fix phase", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing edge case tests", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(captureRef).mockResolvedValue("gapsha");
+    const { orch } = await makeOrch({ tddAgent: tdd });
+    const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
+
+    const origWithInterrupt = orch.withInterrupt.bind(orch);
+    vi.spyOn(orch, "withInterrupt").mockImplementation(async (agent, fn) => {
+      const result = await origWithInterrupt(agent, fn);
+      if (agent === tdd) orch.sliceSkipFlag = true;
+      return result;
+    });
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    expect(gapAgent.kill).toHaveBeenCalled();
+    expect(reviewFixSpy).not.toHaveBeenCalled();
+    expect(orch.sliceSkipFlag).toBe(false);
+  });
+
   it("returns cleanly when sliceSkipFlag set during gap agent phase", async () => {
     const gapAgent = fakeAgent();
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s" });
