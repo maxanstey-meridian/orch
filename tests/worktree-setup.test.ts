@@ -144,4 +144,80 @@ describe("resolveWorktree", () => {
     expect(createWorktree).not.toHaveBeenCalled();
     expect(result.cwd).toBe("/repo/.orch/trees/abc123");
   });
+
+  it("does not call saveState when createWorktree rejects", async () => {
+    vi.mocked(captureRef).mockResolvedValue("deadbeef");
+    vi.mocked(createWorktree).mockRejectedValue(new Error("worktree add failed"));
+
+    await expect(
+      resolveWorktree({
+        branchName: "orch/abc123",
+        cwd: "/repo",
+        activePlanId: "abc123",
+        state: {},
+        stateFile: "/repo/.orch/state/plan-abc123.json",
+        log: noop,
+      }),
+    ).rejects.toThrow("worktree add failed");
+
+    expect(saveState).not.toHaveBeenCalled();
+  });
+
+  it("does not call saveState when captureRef rejects", async () => {
+    vi.mocked(captureRef).mockRejectedValue(new Error("not a git repo"));
+
+    await expect(
+      resolveWorktree({
+        branchName: "orch/abc123",
+        cwd: "/repo",
+        activePlanId: "abc123",
+        state: {},
+        stateFile: "/repo/.orch/state/plan-abc123.json",
+        log: noop,
+      }),
+    ).rejects.toThrow("not a git repo");
+
+    expect(saveState).not.toHaveBeenCalled();
+    expect(createWorktree).not.toHaveBeenCalled();
+  });
+
+  it("reuses existing worktree even when --branch specifies a different branch name", async () => {
+    vi.mocked(verifyWorktree).mockResolvedValue({ ok: true });
+    const worktree = { path: "/repo/.orch/trees/abc123", branch: "orch/abc123", baseSha: "deadbeef" };
+
+    const result = await resolveWorktree({
+      branchName: "orch/different-branch",
+      cwd: "/repo",
+      activePlanId: "abc123",
+      state: { worktree },
+      stateFile: "/repo/.orch/state/plan-abc123.json",
+      log: noop,
+    });
+
+    expect(createWorktree).not.toHaveBeenCalled();
+    expect(result.cwd).toBe("/repo/.orch/trees/abc123");
+    expect(result.worktreeInfo).toEqual({ path: "/repo/.orch/trees/abc123", branch: "orch/abc123" });
+  });
+
+  it("fresh creation preserves existing state fields in updatedState", async () => {
+    vi.mocked(createWorktree).mockResolvedValue("/repo/.orch/trees/abc123");
+    vi.mocked(captureRef).mockResolvedValue("deadbeef");
+    vi.mocked(saveState).mockResolvedValue(undefined);
+
+    const result = await resolveWorktree({
+      branchName: "orch/abc123",
+      cwd: "/repo",
+      activePlanId: "abc123",
+      state: { lastCompletedSlice: 5 },
+      stateFile: "/repo/.orch/state/plan-abc123.json",
+      log: noop,
+    });
+
+    expect(result.updatedState.lastCompletedSlice).toBe(5);
+    expect(result.updatedState.worktree).toEqual({
+      path: "/repo/.orch/trees/abc123",
+      branch: "orch/abc123",
+      baseSha: "deadbeef",
+    });
+  });
 });

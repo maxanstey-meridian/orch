@@ -424,6 +424,7 @@ export class Orchestrator {
 
   async reviewFix(content: string, baseSha: string): Promise<void> {
     let reviewSha = baseSha;
+    let priorFindings: string | undefined;
 
     for (let cycle = 1; cycle <= this.config.maxReviewCycles; cycle++) {
       if (this.sliceSkipFlag) break;
@@ -437,8 +438,8 @@ export class Orchestrator {
 
       this.hud.update({ activeAgent: "REV", activeAgentActivity: `reviewing (cycle ${cycle})...` });
       const reviewPrompt = this.reviewIsFirst
-        ? withBrief(buildReviewPrompt(content, reviewSha), this.config.brief)
-        : buildReviewPrompt(content, reviewSha);
+        ? withBrief(buildReviewPrompt(content, reviewSha, priorFindings), this.config.brief)
+        : buildReviewPrompt(content, reviewSha, priorFindings);
       const onToolUse = (summary: string) => {
         this.activityShowing = true;
         this.hud.setActivity(summary);
@@ -457,6 +458,7 @@ export class Orchestrator {
         break;
       }
 
+      priorFindings = reviewText;
       this.hud.update({ activeAgent: "TDD", activeAgentActivity: "fixing review feedback..." });
       this.log(`${ts()} ${BOT_TDD.badge} fixing review feedback...`);
       const preFixSha = await captureRef(this.config.cwd);
