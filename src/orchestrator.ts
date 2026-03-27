@@ -59,6 +59,7 @@ type PlanThenExecuteResult = {
   readonly skipped: boolean;
   readonly hardInterrupt?: string;
   readonly replan?: boolean;
+  readonly planText?: string;
 };
 
 export class CreditExhaustedError extends Error {
@@ -84,6 +85,7 @@ export class Orchestrator {
   activityShowing = false;
   retryDelayMs = 5_000;
   currentSlice: Slice | null = null;
+  currentPlanText: string | null = null;
 
   private readonly hudWriter: WriteFn;
 
@@ -148,6 +150,8 @@ export class Orchestrator {
         this.hud.setSkipping(this.sliceSkipFlag);
       } else if (key === "c" && this.currentSlice) {
         printSliceIntro(this.log, this.currentSlice);
+      } else if (key === "p" && this.currentPlanText) {
+        this.log(this.currentPlanText);
       } else if (key === "q" || key === "\x03") {
         this.cleanup();
         process.exit(130);
@@ -338,20 +342,20 @@ export class Orchestrator {
     );
     ps.flush();
 
+    const plan = planResult.planText ?? planResult.assistantText ?? "";
+
     if (this.sliceSkipFlag) {
       planAgent.kill();
-      return { tddResult: planResult, skipped: true };
+      return { tddResult: planResult, skipped: true, planText: plan };
     }
 
     const hardInterruptGuidance = this.hardInterruptPending;
     if (hardInterruptGuidance) {
       planAgent.kill();
-      return { tddResult: planResult, skipped: false, hardInterrupt: hardInterruptGuidance };
+      return { tddResult: planResult, skipped: false, hardInterrupt: hardInterruptGuidance, planText: plan };
     }
 
     planAgent.kill();
-
-    const plan = planResult.planText ?? planResult.assistantText ?? "";
 
     // ── Confirmation gate ──
     let operatorGuidance = "";
@@ -368,7 +372,7 @@ export class Orchestrator {
       }
       const answer = await this.hud.askUser("Accept plan? (y)es / (e)dit / (r)eplan: ");
       if (answer.startsWith("r")) {
-        return { tddResult: planResult, skipped: false, replan: true };
+        return { tddResult: planResult, skipped: false, replan: true, planText: plan };
       }
       if (answer.startsWith("e")) {
         operatorGuidance = await this.hud.askUser("Guidance for execution: ");
@@ -392,15 +396,15 @@ export class Orchestrator {
     es.flush();
 
     if (this.sliceSkipFlag) {
-      return { tddResult, skipped: true };
+      return { tddResult, skipped: true, planText: plan };
     }
 
     const execInterrupt = this.hardInterruptPending;
     if (execInterrupt) {
-      return { tddResult, skipped: false, hardInterrupt: execInterrupt };
+      return { tddResult, skipped: false, hardInterrupt: execInterrupt, planText: plan };
     }
 
-    return { tddResult, skipped: false };
+    return { tddResult, skipped: false, planText: plan };
   }
 
   async verify(slice: Slice, verifyBaseSha: string): Promise<boolean> {
@@ -668,9 +672,12 @@ export class Orchestrator {
           pteResult = await this.planThenExecute(slice.content, true);
         }
 
+        this.currentPlanText = pteResult.planText || null;
+
         if (pteResult.skipped) {
           this.sliceSkipFlag = false;
           this.currentSlice = null;
+          this.currentPlanText = null;
           this.state = { ...this.state, lastCompletedSlice: slice.number };
           await saveState(this.config.stateFile, this.state);
           await this.respawnTdd();
@@ -711,6 +718,7 @@ export class Orchestrator {
         const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
         reviewBase = sliceResult.reviewBase;
         this.currentSlice = null;
+        this.currentPlanText = null;
         if (!sliceResult.skipped) {
           groupCompleted++;
           this.hud.update({ completedSlices: this.slicesCompleted, groupCompleted });
