@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, stat } from "fs/promises";
+import { mkdir, mkdtemp, rm, stat } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync } from "child_process";
@@ -40,6 +40,14 @@ describe("worktree", () => {
     const s = await stat(path);
     expect(s.isDirectory()).toBe(true);
     expect(exec("git branch --show-current", path)).toBe("orch/plan-2");
+  });
+
+  it("propagates non-branch errors instead of swallowing them", async () => {
+    // Occupy the path with an existing worktree — a second createWorktree at
+    // the same path should fail with a path-already-exists error, not silently
+    // retry the branch fallback.
+    await createWorktree(repoDir, "plan-conflict", "orch/plan-conflict");
+    await expect(createWorktree(repoDir, "plan-conflict", "orch/other")).rejects.toThrow(/already exists/);
   });
 
   it("removeWorktree removes the worktree directory", async () => {
