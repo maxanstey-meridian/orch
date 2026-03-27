@@ -29,8 +29,24 @@ import {
   type OrchestratorState,
 } from "./state.js";
 import { runFingerprint } from "./fingerprint.js";
-import { buildTddPrompt, buildCommitSweepPrompt, buildReviewPrompt, buildGapPrompt, buildFinalPasses, withBrief } from "./prompts.js";
-import { a, ts, BOT_TDD, BOT_REVIEW, BOT_GAP, BOT_FINAL, BOT_VERIFY, BOT_PLAN, logSection, printSliceIntro } from "./display.js";
+import {
+  buildTddPrompt,
+  buildGapPrompt,
+  buildFinalPasses,
+  withBrief,
+} from "./prompts.js";
+import {
+  a,
+  ts,
+  BOT_TDD,
+  BOT_REVIEW,
+  BOT_GAP,
+  BOT_FINAL,
+  BOT_VERIFY,
+  BOT_PLAN,
+  logSection,
+  printSliceIntro,
+} from "./display.js";
 import { makeStreamer, type Streamer } from "./streamer.js";
 import { Orchestrator, type OrchestratorConfig } from "./orchestrator.js";
 import { runInit, profileToMarkdown, createAsk } from "./init.js";
@@ -90,7 +106,10 @@ export const spawnPlanAgent = (style: AgentStyle, systemPrompt?: string): AgentP
     style,
   });
 
-const planSkillContent = readFileSync(resolve(import.meta.dirname, "..", "skills", "plan.md"), "utf-8");
+const planSkillContent = readFileSync(
+  resolve(import.meta.dirname, "..", "skills", "plan.md"),
+  "utf-8",
+);
 
 export const spawnPlanAgentWithSkill = (): AgentProcess =>
   spawnPlanAgent(BOT_PLAN, planSkillContent);
@@ -616,14 +635,26 @@ const main = async () => {
 
   // 9b. Construct Orchestrator (scaffold — run() not called yet)
   const orchConfig: OrchestratorConfig = {
-    cwd, planPath, planContent, brief,
-    noInteraction, auto, reviewThreshold,
+    cwd,
+    planPath,
+    planContent,
+    brief,
+    noInteraction,
+    auto,
+    reviewThreshold,
     maxReviewCycles: CONFIG.maxReviewCycles,
-    stateFile, tddSkill, reviewSkill, verifySkill,
+    stateFile,
+    tddSkill,
+    reviewSkill,
+    verifySkill,
   };
   const _orch = new Orchestrator(
-    orchConfig, state, hud, log,
-    tddAgent, reviewAgent,
+    orchConfig,
+    state,
+    hud,
+    log,
+    tddAgent,
+    reviewAgent,
     async () => spawnAgent(BOT_TDD, tddSkill),
     async () => spawnAgent(BOT_REVIEW, reviewSkill),
     { hasDirtyTree, captureRef, hasChanges },
@@ -662,7 +693,8 @@ const main = async () => {
       continue;
     }
 
-    logSection(log,
+    logSection(
+      log,
       `Group: ${group.name} — ${group.slices.map((s: Slice) => `Slice ${s.number}`).join(", ")}`,
     );
     hud.update({
@@ -738,8 +770,13 @@ const main = async () => {
         const MAX_REPLANS = 2;
         let pteResult: Awaited<ReturnType<typeof planThenExecute>>;
         do {
-          log(`${ts()} ${BOT_PLAN.badge} ${a.white}${replanAttempts > 0 ? "replanning..." : "planning..."}${a.reset}`);
-          hud.update({ activeAgent: "PLN", activeAgentActivity: replanAttempts > 0 ? "replanning..." : "planning..." });
+          log(
+            `${ts()} ${BOT_PLAN.badge} ${a.white}${replanAttempts > 0 ? "replanning..." : "planning..."}${a.reset}`,
+          );
+          hud.update({
+            activeAgent: "PLN",
+            activeAgentActivity: replanAttempts > 0 ? "replanning..." : "planning...",
+          });
 
           const planAgent = spawnPlanAgentWithSkill();
 
@@ -757,7 +794,8 @@ const main = async () => {
             log,
             noInteraction,
             askUser: noInteraction ? undefined : hud.askUser,
-            onPlanReady: () => hud.update({ activeAgent: "PLN", activeAgentActivity: "plan ready" }),
+            onPlanReady: () =>
+              hud.update({ activeAgent: "PLN", activeAgentActivity: "plan ready" }),
           });
           replanAttempts++;
         } while (pteResult.replan && replanAttempts < MAX_REPLANS);

@@ -23,7 +23,11 @@ export const ts = (): string => {
   return `${a.dim}${d.toLocaleTimeString("en-GB", { hour12: false })}${a.reset}`;
 };
 
-export const BOT_TDD: AgentStyle = { label: "TDD", color: a.cyan, badge: `${a.bgCyan} TDD ${a.reset}` };
+export const BOT_TDD: AgentStyle = {
+  label: "TDD",
+  color: a.cyan,
+  badge: `${a.bgCyan} TDD ${a.reset}`,
+};
 export const BOT_REVIEW: AgentStyle = {
   label: "REVIEW",
   color: a.magenta,
