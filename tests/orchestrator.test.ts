@@ -1076,6 +1076,30 @@ describe("run()", () => {
     expect(orch.currentSlice).toBeNull();
   });
 
+  it("currentPlanText persists through hard interrupt path and clears after runSlice", async () => {
+    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const group = { name: "G", slices: [slice] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false, hardInterrupt: "fix this", planText: "the plan" });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const tdd = fakeAgent();
+    const { orch } = await makeOrch({ tddAgent: tdd });
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch as any, "respawnTdd").mockResolvedValue(undefined);
+    vi.spyOn(orch as any, "checkCredit").mockResolvedValue(undefined);
+    let capturedPlanText: unknown = "not-set";
+    vi.spyOn(orch, "runSlice").mockImplementation(async () => {
+      capturedPlanText = orch.currentPlanText;
+      return { reviewBase: "sha", skipped: false };
+    });
+
+    await orch.run([group], 0);
+
+    expect(capturedPlanText).toBe("the plan");
+    expect(orch.currentPlanText).toBeNull();
+  });
+
   it("clears currentPlanText when slice is skipped", async () => {
     const slice = { number: 1, title: "Auth", content: "do auth" };
     const group = { name: "G", slices: [slice] };
@@ -2032,6 +2056,36 @@ describe("Orchestrator.planThenExecute (method)", () => {
     const tddPrompt = (tdd.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(tddPrompt).toContain("Focus on error handling");
     expect(tddPrompt).toContain("the plan text");
+  });
+
+  it("returns planText in normal exit path", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "fallback", planText: "the real plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(result.planText).toBe("the real plan");
+  });
+
+  it("returns planText when skip flag set during plan phase", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "fallback", planText: "skipped plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+    orch.sliceSkipFlag = true;
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(result.planText).toBe("skipped plan");
+    expect(result.skipped).toBe(true);
   });
 
   it("fires onPlanReady (hud.update) before askUser in interactive mode", async () => {
