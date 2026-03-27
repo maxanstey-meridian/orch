@@ -1,7 +1,10 @@
 import type { AgentProcess, AgentResult, AgentStyle } from "./agent.js";
 import type { Hud, WriteFn } from "./hud.js";
 import type { OrchestratorState } from "./state.js";
-import { a, ts, BOT_TDD, BOT_REVIEW } from "./display.js";
+import { a, ts, BOT_TDD, BOT_REVIEW, BOT_VERIFY, printSliceSummary } from "./display.js";
+import { shouldReview, type DiffStats } from "./review-threshold.js";
+import type { Slice } from "./plan-parser.js";
+import { parseVerifyResult } from "./verify.js";
 import type { LogFn } from "./display.js";
 import { buildCommitSweepPrompt, buildReviewPrompt, buildTddPrompt, withBrief } from "./prompts.js";
 import type { CreditSignal } from "./credit-detection.js";
@@ -56,6 +59,8 @@ export class Orchestrator {
 
   private readonly spawnTdd: () => Promise<AgentProcess>;
   private readonly spawnReview: () => Promise<AgentProcess>;
+  private readonly spawnVerify: () => Promise<AgentProcess>;
+  private readonly _measureDiff: (cwd: string, since: string) => Promise<DiffStats>;
   private readonly hudWriter: WriteFn;
   readonly git: GitPort;
   private readonly detectCredit: (result: AgentResult, stderr: string) => CreditSignal | null;
@@ -75,6 +80,8 @@ export class Orchestrator {
     detectCredit: (result: AgentResult, stderr: string) => CreditSignal | null,
     persistState: (path: string, state: OrchestratorState) => Promise<void>,
     isCleanReview: (text: string) => boolean,
+    spawnVerify: () => Promise<AgentProcess>,
+    measureDiff: (cwd: string, since: string) => Promise<DiffStats>,
   ) {
     this.config = config;
     this.state = initialState;
@@ -89,6 +96,8 @@ export class Orchestrator {
     this.detectCredit = detectCredit;
     this.persistState = persistState;
     this._isCleanReview = isCleanReview;
+    this.spawnVerify = spawnVerify;
+    this._measureDiff = measureDiff;
   }
 
   streamer(style: AgentStyle): Streamer {
@@ -170,6 +179,158 @@ export class Orchestrator {
     this.log(`Credit exhaustion detected: ${signal.message}`);
     await this.persistState(this.config.stateFile, this.state);
     throw new CreditExhaustedError(signal.message, signal.kind);
+  }
+
+  async runSlice(
+    slice: Slice,
+    reviewBase: string,
+    tddResult: AgentResult,
+    verifyBaseSha: string,
+  ): Promise<{ reviewBase: string; skipped: boolean }> {
+    // Already-implemented detection
+    const tddText = tddResult.assistantText ?? "";
+    const headAfterTdd = await this.git.captureRef(this.config.cwd);
+    if (this.isAlreadyImplemented(tddText, headAfterTdd, reviewBase)) {
+      this.log(`${ts()} ⏩ Slice ${slice.number} already implemented — skipping verify/review`);
+      this.state = {
+        ...this.state,
+        lastSliceImplemented: slice.number,
+        lastCompletedSlice: slice.number,
+      };
+      await this.persistState(this.config.stateFile, this.state);
+      this.slicesCompleted++;
+      return { reviewBase, skipped: false };
+    }
+
+    // Verify gate
+    const verified = await this.verify(slice, verifyBaseSha);
+    if (!verified) {
+      return { reviewBase, skipped: true };
+    }
+
+    if (this.sliceSkipFlag) {
+      return { reviewBase, skipped: true };
+    }
+
+    this.state = { ...this.state, lastSliceImplemented: slice.number, reviewBaseSha: verifyBaseSha };
+    await this.persistState(this.config.stateFile, this.state);
+
+    // Review-fix loop — gated on minimum diff threshold
+    const diffStats = await this._measureDiff(this.config.cwd, reviewBase);
+    if (!shouldReview(diffStats, this.config.reviewThreshold)) {
+      this.log(`${ts()} Diff too small (${diffStats.total} lines) — deferring review`);
+      this.state = { ...this.state, lastCompletedSlice: slice.number };
+      await this.persistState(this.config.stateFile, this.state);
+      this.slicesCompleted++;
+      return { reviewBase, skipped: false };
+    }
+
+    if (this.sliceSkipFlag) {
+      return { reviewBase, skipped: true };
+    }
+
+    await this.reviewFix(slice.content, reviewBase);
+    const newReviewBase = await this.git.captureRef(this.config.cwd);
+
+    if (this.sliceSkipFlag) {
+      return { reviewBase: newReviewBase, skipped: true };
+    }
+
+    // Slice summary
+    this.log(`${ts()} extracting slice summary...`);
+    const summary = await this.tddAgent.sendQuiet(
+      `Summarise what you just built for Slice ${slice.number} in this format exactly:\n\n## What was built\n<1-2 sentences>\n\n## Key decisions\n<2-4 bullet points>\n\n## Files touched\n<bulleted list>\n\n## Test coverage\n<1-2 sentences>\n\nBe concrete and specific. No filler.`,
+    );
+    printSliceSummary(this.log, slice.number, summary);
+
+    this.state = { ...this.state, lastCompletedSlice: slice.number };
+    await this.persistState(this.config.stateFile, this.state);
+    this.slicesCompleted++;
+    this.hud.update({ activeAgent: undefined, activeAgentActivity: undefined });
+    return { reviewBase: newReviewBase, skipped: false };
+  }
+
+  onToolUse(summary: string): void {
+    this.activityShowing = true;
+    this.hud.setActivity(summary);
+  }
+
+  async verify(slice: Slice, verifyBaseSha: string): Promise<boolean> {
+    this.hud.update({ activeAgent: "VFY", activeAgentActivity: "verifying..." });
+    this.log(`${ts()} ${BOT_VERIFY.badge} verifying slice ${slice.number}...`);
+
+    const verifyAgent = await this.spawnVerify();
+    const verifyPrompt = withBrief(
+      `Verify the changes since commit ${verifyBaseSha}. Context: TDD implementation of Slice ${slice.number}.`,
+      this.config.brief,
+    );
+    const onTool = (s: string) => this.onToolUse(s);
+    let vs = this.streamer(BOT_VERIFY);
+    const verifyResult = await this.withInterrupt(verifyAgent, () =>
+      verifyAgent.send(verifyPrompt, vs, onTool),
+    );
+    vs.flush();
+    let parsed = parseVerifyResult(verifyResult.assistantText ?? "");
+
+    if (!parsed.passed) {
+      this.log(`${ts()} ⚠ Verification failed — sending failures to TDD bot`);
+      const failureContext =
+        parsed.newFailures.length > 0
+          ? parsed.newFailures.join("\n")
+          : "Verification checks failed. Run the test/lint/typecheck pipeline and fix any failures.";
+      const retryPrompt = `Verification found new failures after your implementation. Fix them:\n\n${failureContext}`;
+      const rs = this.streamer(BOT_TDD);
+      await this.withInterrupt(this.tddAgent, () =>
+        this.tddAgent.send(retryPrompt, rs, onTool),
+      );
+      rs.flush();
+
+      this.hud.update({ activeAgent: "VFY", activeAgentActivity: "re-verifying..." });
+      this.log(`${ts()} ${BOT_VERIFY.badge} re-verifying...`);
+      vs = this.streamer(BOT_VERIFY);
+      const reVerifyResult = await this.withInterrupt(verifyAgent, () =>
+        verifyAgent.send(
+          `Re-verify changes since ${verifyBaseSha}. The TDD bot attempted fixes.`,
+          vs,
+          onTool,
+        ),
+      );
+      vs.flush();
+      parsed = parseVerifyResult(reVerifyResult.assistantText ?? "");
+
+      if (!parsed.passed) {
+        verifyAgent.kill();
+        const failSummary =
+          parsed.newFailures.join("\n") || "Checks still failing after retry.";
+        this.log(`${ts()} ✗ Verification still failing after retry on Slice ${slice.number}`);
+        const answer = await this.hud.askUser(
+          `Slice ${slice.number} verification failed:\n${failSummary}\n\n(r)etry / (s)kip / s(t)op? `,
+        );
+        const choice = answer.trim().toLowerCase();
+        if (choice === "t" || choice === "stop") {
+          this.log(`${ts()} ✗ Operator stopped run at Slice ${slice.number}`);
+          this.hud.teardown();
+          process.exit(1);
+        }
+        if (choice === "s" || choice === "skip") {
+          this.log(`${ts()} ⏭ Operator skipped Slice ${slice.number}`);
+          return false;
+        }
+        this.log(`${ts()} ↻ Operator chose retry — continuing to review`);
+        return true;
+      }
+    }
+
+    verifyAgent.kill();
+    return true;
+  }
+
+  isAlreadyImplemented(tddText: string, headSha: string, baseSha: string): boolean {
+    const textMatch =
+      /already (?:fully )?implemented/i.test(tddText) ||
+      /already exist/i.test(tddText) ||
+      /nothing (?:left )?to (?:do|implement|change)/i.test(tddText);
+    return textMatch && headSha === baseSha;
   }
 
   async reviewFix(content: string, baseSha: string): Promise<void> {
