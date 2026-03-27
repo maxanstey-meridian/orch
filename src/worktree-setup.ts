@@ -3,14 +3,14 @@ import { captureRef } from "./git.js";
 import { saveState, type OrchestratorState } from "./state.js";
 import type { LogFn } from "./display.js";
 
-export type WorktreeResult = {
+type WorktreeResult = {
   readonly cwd: string;
   readonly worktreeInfo?: { readonly path: string; readonly branch: string };
   readonly skipStash: boolean;
   readonly updatedState: OrchestratorState;
 };
 
-export type ResolveWorktreeOpts = {
+type ResolveWorktreeOpts = {
   readonly branchName: string | undefined;
   readonly cwd: string;
   readonly activePlanId: string;

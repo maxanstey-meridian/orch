@@ -237,7 +237,7 @@ const main = async () => {
 
   // 12. Cleanup
   logSection(log, `${a.green}✅ All groups complete + final review done${a.reset}`);
-  const status = await getStatus(cwd);
+  const status = await getStatus(effectiveCwd);
   log(`\n${status}`);
   cleanup();
   await clearState(stateFile);
