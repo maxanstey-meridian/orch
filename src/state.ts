@@ -8,6 +8,13 @@ const stateSchema = z
     lastCompletedGroup: z.string().min(1).optional(),
     lastSliceImplemented: z.number().int().nonnegative().optional(),
     reviewBaseSha: z.string().min(1).optional(),
+    worktree: z
+      .object({
+        path: z.string().min(1),
+        branch: z.string().min(1),
+        baseSha: z.string().min(1),
+      })
+      .optional(),
   })
   .passthrough();
 

@@ -28,6 +28,7 @@ import { runInit, profileToMarkdown } from "./init.js";
 import { spawnPlanAgentWithSkill } from "./agent-factory.js";
 import { getStatus, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
+import { parseBranchFlag } from "./cli-args.js";
 import { createHud } from "./hud.js";
 
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
@@ -141,6 +142,7 @@ const main = async () => {
 
   // 4. Derive per-plan state path
   const activePlanId = ensureCanonicalPlan(planPath, orchDir);
+  const branchName = parseBranchFlag(args, activePlanId);
   const stateFile = statePathForPlan(orchDir, activePlanId);
   mkdirSync(resolve(orchDir, "state"), { recursive: true });
 
