@@ -1,7 +1,7 @@
 import { randomBytes, createHash } from "crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
-import { parsePlanText } from "./plan-parser.js";
+import { parsePlanJson } from "./plan-schema.js";
 import type { AgentProcess } from "../agent/agent.js";
 import { a, type LogFn } from "../ui/display.js";
 
@@ -9,9 +9,9 @@ import { a, type LogFn } from "../ui/display.js";
 
 export const generatePlanId = (): string => randomBytes(3).toString("hex");
 
-export const planFileName = (id: string): string => `plan-${id}.md`;
+export const planFileName = (id: string): string => `plan-${id}.json`;
 
-const PLAN_ID_RE = /plan-([0-9a-f]{6})\.md$/;
+const PLAN_ID_RE = /plan-([0-9a-f]{6})\.json$/;
 
 export const planIdFromPath = (planPath: string): string => {
   const match = PLAN_ID_RE.exec(planPath);
@@ -29,7 +29,7 @@ export const resolvePlanId = (planPath: string): string => {
 
 export const ensureCanonicalPlan = (planPath: string, orchDir: string): string => {
   const id = resolvePlanId(planPath);
-  // Only copy if the path doesn't already match plan-<id>.md
+  // Only copy if the path doesn't already match plan-<id>.json
   try {
     planIdFromPath(planPath);
     return id;
@@ -83,10 +83,15 @@ Use exactly this heading structure:
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const GROUP_RE = /^## Group:/m;
-
-/** True if content already has group headings (is a plan, not an inventory). */
-export const isPlanFormat = (content: string): boolean => GROUP_RE.test(content);
+/** True if content is a JSON plan with a groups array. */
+export const isPlanFormat = (content: string): boolean => {
+  try {
+    const parsed = JSON.parse(content);
+    return Array.isArray(parsed?.groups);
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Strip conversational preamble before the first markdown heading.
@@ -94,10 +99,10 @@ export const isPlanFormat = (content: string): boolean => GROUP_RE.test(content)
  * that would be false-positives. Validation catches bad output.
  */
 const stripPreamble = (text: string): string => {
-  if (text.startsWith("#")) return text;
-  const idx = text.indexOf("\n#");
-  if (idx === -1) return text;
-  return text.slice(idx + 1);
+  const jsonStart = text.indexOf("{");
+  const jsonEnd = text.lastIndexOf("}");
+  if (jsonStart >= 0 && jsonEnd > jsonStart) return text.slice(jsonStart, jsonEnd + 1);
+  return text;
 };
 
 // ─── Plan generation ────────────────────────────────────────────────────────
@@ -135,7 +140,7 @@ export const generatePlan = async (
   }
 
   // Validate — parsePlanText throws if no groups found
-  parsePlanText(planText, "generated plan");
+  parsePlanJson(planText, "generated plan");
 
   // Build output with optional source comment
   const prefix = sourcePath ? `<!-- Generated from: ${sourcePath} -->\n` : "";

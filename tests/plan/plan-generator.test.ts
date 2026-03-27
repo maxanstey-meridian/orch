@@ -4,44 +4,30 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../../src/plan/plan-generator.js";
-import { parsePlanText } from "../../src/plan/plan-parser.js";
+import { parsePlanJson } from "../../src/plan/plan-schema.js";
 import type { AgentProcess, AgentResult } from "../../src/agent/agent.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const VALID_PLAN = `## Group: Auth
+const VALID_PLAN = JSON.stringify({
+  groups: [
+    {
+      name: "Auth",
+      slices: [
+        { number: 1, title: "User login", why: "Users need to log in.", files: [{ path: "src/auth.ts", action: "new" }], details: "Implement login flow.", tests: "Login works." },
+        { number: 2, title: "Token refresh", why: "Tokens expire.", files: [{ path: "src/auth.ts", action: "edit" }], details: "Implement token refresh.", tests: "Refresh works." },
+      ],
+    },
+    {
+      name: "Dashboard",
+      slices: [
+        { number: 3, title: "Widget rendering", why: "Users need widgets.", files: [{ path: "src/dashboard.ts", action: "new" }], details: "Render widgets.", tests: "Widgets render." },
+      ],
+    },
+  ],
+});
 
-### Slice 1: User login
-
-**Why:** Users need to log in.
-
-**Files:** src/auth.ts
-
-**Tests:** Login works.
-
-### Slice 2: Token refresh
-
-**Why:** Tokens expire.
-
-**Files:** src/auth.ts
-
-**Tests:** Refresh works.
-
-## Group: Dashboard
-
-### Slice 3: Widget rendering
-
-**Why:** Users need widgets.
-
-**Files:** src/dashboard.ts
-
-**Tests:** Widgets render.`;
-
-const PLAN_WITH_PREAMBLE = `Here's the plan I generated:
-
-${VALID_PLAN}
-
-Let me know if you'd like changes.`;
+const PLAN_WITH_PREAMBLE = `Here's the plan I generated:\n${VALID_PLAN}\nLet me know if you'd like changes.`;
 
 const mockAgent = (responseText: string): AgentProcess => ({
   send: async (_prompt: string) =>
@@ -64,8 +50,8 @@ const mockAgent = (responseText: string): AgentProcess => ({
 // ─── planFileName ───────────────────────────────────────────────────────────
 
 describe("planFileName", () => {
-  it("returns plan-<id>.md for a given hex id", () => {
-    expect(planFileName("a1b2c3")).toBe("plan-a1b2c3.md");
+  it("returns plan-<id>.json for a given hex id", () => {
+    expect(planFileName("a1b2c3")).toBe("plan-a1b2c3.json");
   });
 });
 
@@ -73,23 +59,27 @@ describe("planFileName", () => {
 
 describe("planIdFromPath", () => {
   it("extracts the 6-char hex id from a valid plan path", () => {
-    expect(planIdFromPath("/foo/.orch/plan-a1b2c3.md")).toBe("a1b2c3");
+    expect(planIdFromPath("/foo/.orch/plan-a1b2c3.json")).toBe("a1b2c3");
   });
 
-  it("throws when filename does not match plan-<hex>.md pattern", () => {
-    expect(() => planIdFromPath("/foo/random.md")).toThrow("Cannot extract plan ID");
+  it("throws when filename does not match plan-<hex>.json pattern", () => {
+    expect(() => planIdFromPath("/foo/random.json")).toThrow("Cannot extract plan ID");
   });
 
   it("throws for uppercase hex in filename", () => {
-    expect(() => planIdFromPath("/foo/.orch/plan-A1B2C3.md")).toThrow("Cannot extract plan ID");
+    expect(() => planIdFromPath("/foo/.orch/plan-A1B2C3.json")).toThrow("Cannot extract plan ID");
   });
 
   it("throws for too-short hex (5 chars)", () => {
-    expect(() => planIdFromPath("/foo/.orch/plan-a1b2c.md")).toThrow("Cannot extract plan ID");
+    expect(() => planIdFromPath("/foo/.orch/plan-a1b2c.json")).toThrow("Cannot extract plan ID");
   });
 
   it("throws for too-long hex (7 chars)", () => {
-    expect(() => planIdFromPath("/foo/.orch/plan-a1b2c3d.md")).toThrow("Cannot extract plan ID");
+    expect(() => planIdFromPath("/foo/.orch/plan-a1b2c3d.json")).toThrow("Cannot extract plan ID");
+  });
+
+  it("throws for .md paths (no longer matches)", () => {
+    expect(() => planIdFromPath("/foo/.orch/plan-a1b2c3.md")).toThrow("Cannot extract plan ID");
   });
 });
 
@@ -111,8 +101,8 @@ describe("generatePlanId", () => {
 // ─── resolvePlanId ──────────────────────────────────────────────────────────
 
 describe("resolvePlanId", () => {
-  it("extracts ID from a plan-<id>.md path via regex", () => {
-    expect(resolvePlanId("/repo/.orch/plan-a1b2c3.md")).toBe("a1b2c3");
+  it("extracts ID from a plan-<id>.json path via regex", () => {
+    expect(resolvePlanId("/repo/.orch/plan-a1b2c3.json")).toBe("a1b2c3");
   });
 
   it("returns a 6-char hex string for an arbitrary path (hash fallback)", () => {
@@ -145,7 +135,7 @@ describe("ensureCanonicalPlan", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("copies non-standard plan to orchDir/plan-<id>.md and returns the plan ID", () => {
+  it("copies non-standard plan to orchDir/plan-<id>.json and returns the plan ID", () => {
     const planPath = join(tmpDir, "plan.md");
     const orchDir = join(tmpDir, ".orch");
     writeFileSync(planPath, "## Group: Test\n### Slice 1: Noop\nDo nothing.");
@@ -153,7 +143,7 @@ describe("ensureCanonicalPlan", () => {
     const id = ensureCanonicalPlan(planPath, orchDir);
 
     expect(id).toMatch(/^[0-9a-f]{6}$/);
-    const canonical = readFileSync(join(orchDir, `plan-${id}.md`), "utf-8");
+    const canonical = readFileSync(join(orchDir, `plan-${id}.json`), "utf-8");
     expect(canonical).toContain("## Group: Test");
   });
 
@@ -165,18 +155,18 @@ describe("ensureCanonicalPlan", () => {
     // First call creates
     const id = ensureCanonicalPlan(planPath, orchDir);
     // Overwrite the canonical with different content
-    writeFileSync(join(orchDir, `plan-${id}.md`), "original");
+    writeFileSync(join(orchDir, `plan-${id}.json`), "original");
 
     // Second call should NOT overwrite
     ensureCanonicalPlan(planPath, orchDir);
-    const content = readFileSync(join(orchDir, `plan-${id}.md`), "utf-8");
+    const content = readFileSync(join(orchDir, `plan-${id}.json`), "utf-8");
     expect(content).toBe("original");
   });
 
-  it("returns regex-extracted ID for plan-<id>.md paths without copying", () => {
+  it("returns regex-extracted ID for plan-<id>.json paths without copying", () => {
     const orchDir = join(tmpDir, ".orch");
     mkdirSync(orchDir, { recursive: true });
-    const planPath = join(orchDir, "plan-a1b2c3.md");
+    const planPath = join(orchDir, "plan-a1b2c3.json");
     writeFileSync(planPath, "## Group: Test");
 
     const id = ensureCanonicalPlan(planPath, orchDir);
@@ -187,23 +177,26 @@ describe("ensureCanonicalPlan", () => {
 // ─── isPlanFormat ───────────────────────────────────────────────────────────
 
 describe("isPlanFormat", () => {
-  it("returns true for content with ## Group: headings", () => {
-    expect(isPlanFormat(VALID_PLAN)).toBe(true);
+  it("returns true for valid JSON plan with groups array", () => {
+    const json = JSON.stringify({ groups: [{ name: "Auth", slices: [] }] });
+    expect(isPlanFormat(json)).toBe(true);
   });
 
-  it("returns false for inventory content without group headings", () => {
-    const inventory = `# Feature Inventory\n\n## Login\nUsers can log in.\n\n## Dashboard\nUsers see widgets.`;
+  it("returns false for inventory markdown", () => {
+    const inventory = "# Feature Inventory\n\n## Login\nUsers can log in.";
     expect(isPlanFormat(inventory)).toBe(false);
   });
 
-  it("returns false for empty content", () => {
+  it("returns false for empty string", () => {
     expect(isPlanFormat("")).toBe(false);
   });
 
-  it("returns true when ## Group: appears inside a code fence (known limitation)", () => {
-    const fenced = "```\n## Group: fake\n```";
-    // Documents current behavior: regex doesn't distinguish code fences
-    expect(isPlanFormat(fenced)).toBe(true);
+  it("returns false for JSON without groups key", () => {
+    expect(isPlanFormat(JSON.stringify({ slices: [] }))).toBe(false);
+  });
+
+  it("returns false for JSON where groups is not an array", () => {
+    expect(isPlanFormat(JSON.stringify({ groups: "not-array" }))).toBe(false);
   });
 });
 
@@ -220,7 +213,7 @@ describe("generatePlan", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("writes plan to plan-<id>.md and returns planPath and planId", async () => {
+  it("writes plan to plan-<id>.json and returns planPath and planId", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Login\nUsers can log in.\n\n## Dashboard\nWidgets.");
 
@@ -230,10 +223,10 @@ describe("generatePlan", () => {
     const result = await generatePlan(inventoryPath, "Brief content here", agent, outputDir);
 
     expect(result.planId).toMatch(/^[0-9a-f]{6}$/);
-    expect(result.planPath).toBe(join(outputDir, `plan-${result.planId}.md`));
+    expect(result.planPath).toBe(join(outputDir, `plan-${result.planId}.json`));
     const written = readFileSync(result.planPath, "utf-8");
-    expect(written).toContain("## Group: Auth");
-    expect(written).toContain("### Slice 1: User login");
+    expect(written).toContain('"Auth"');
+    expect(written).toContain('"User login"');
   });
 
   it("strips preamble from agent response", async () => {
@@ -246,11 +239,11 @@ describe("generatePlan", () => {
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
     const written = readFileSync(planPath, "utf-8");
-    expect(written).toContain("## Group:");
+    expect(written).toContain('"groups"');
     expect(written).not.toContain("Here's the plan");
   });
 
-  it("generated plan parses successfully via parsePlanText", async () => {
+  it("generated plan parses successfully via parsePlanJson", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
@@ -260,22 +253,22 @@ describe("generatePlan", () => {
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
     const written = readFileSync(planPath, "utf-8");
-    const groups = parsePlanText(written);
-    expect(groups.length).toBe(2);
+    const groups = parsePlanJson(written);
+    expect(groups).toHaveLength(2);
     expect(groups[0].name).toBe("Auth");
     expect(groups[0].slices).toHaveLength(2);
     expect(groups[1].name).toBe("Dashboard");
     expect(groups[1].slices).toHaveLength(1);
   });
 
-  it("throws when agent produces no valid groups", async () => {
+  it("throws when agent produces invalid JSON", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Login\nLogin.");
 
     const outputDir = join(tmpDir, ".orch");
     const agent = mockAgent("I don't know how to make a plan from this.");
 
-    await expect(generatePlan(inventoryPath, "", agent, outputDir)).rejects.toThrow("No groups found");
+    await expect(generatePlan(inventoryPath, "", agent, outputDir)).rejects.toThrow("Invalid JSON");
   });
 
   it("throws when inventory file does not exist", async () => {
@@ -287,14 +280,14 @@ describe("generatePlan", () => {
     ).rejects.toThrow();
   });
 
-  it("throws 'No groups found' when agent returns preamble with heading but no Group:", async () => {
+  it("throws when agent returns non-JSON text", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Login\nLogin.");
 
     const outputDir = join(tmpDir, ".orch");
     const agent = mockAgent("Sure!\n# Just a single heading with no Group:");
 
-    await expect(generatePlan(inventoryPath, "", agent, outputDir)).rejects.toThrow("No groups found");
+    await expect(generatePlan(inventoryPath, "", agent, outputDir)).rejects.toThrow("Invalid JSON");
   });
 
   it("omits Codebase context section when briefContent is empty", async () => {
@@ -349,7 +342,7 @@ describe("generatePlan", () => {
     expect(written.startsWith("<!-- Generated from: features/inventory.md -->")).toBe(true);
   });
 
-  it("plan with source comment prefix still parses via parsePlanText", async () => {
+  it("plan with source comment prefix still parses via parsePlanJson", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
@@ -360,7 +353,9 @@ describe("generatePlan", () => {
 
     const written = readFileSync(planPath, "utf-8");
     expect(written.startsWith("<!--")).toBe(true);
-    const groups = parsePlanText(written);
+    // Strip source comment prefix before parsing JSON
+    const jsonStart = written.indexOf("{");
+    const groups = parsePlanJson(written.slice(jsonStart));
     expect(groups.length).toBe(2);
     expect(groups[0].name).toBe("Auth");
   });
@@ -375,7 +370,7 @@ describe("generatePlan", () => {
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
     const written = readFileSync(planPath, "utf-8");
-    expect(written).toContain("## Group: Auth");
+    expect(written).toContain('"Auth"');
   });
 
   it("includes brief content in prompt sent to agent", async () => {
@@ -428,9 +423,9 @@ describe("doGeneratePlan", () => {
 
     const planPath = await doGeneratePlan(inventoryPath, "", outputDir, log, () => agent);
 
-    expect(planPath).toMatch(/plan-[0-9a-f]{6}\.md$/);
+    expect(planPath).toMatch(/plan-[0-9a-f]{6}\.json$/);
     const written = readFileSync(planPath, "utf-8");
-    expect(written).toContain("## Group: Auth");
+    expect(written).toContain('"Auth"');
   });
 
   it("kills the agent even if generatePlan throws", async () => {
