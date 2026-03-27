@@ -30,7 +30,7 @@ import { getStatus, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
 import { parseBranchFlag } from "./cli-args.js";
 import { resolveWorktree } from "./worktree-setup.js";
-import { checkWorktreeResume } from "./worktree.js";
+import { checkWorktreeResume, runCleanup } from "./worktree.js";
 import { createHud } from "./hud.js";
 
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
@@ -64,6 +64,7 @@ const main = async () => {
   const skipFingerprint = args.includes("--skip-fingerprint");
   const noInteraction = args.includes("--no-interaction");
   const resetState = args.includes("--reset");
+  const cleanupMode = args.includes("--cleanup");
   const groupFilter = getArg("--group");
   const initMode = args.includes("--init");
   const rawThreshold = getArg("--review-threshold");
@@ -84,6 +85,10 @@ const main = async () => {
   }
   if (workMode && !workPath) {
     console.error("--work requires a plan path. Usage: --work <plan.md>");
+    process.exit(1);
+  }
+  if (cleanupMode && !workMode) {
+    console.error("--cleanup requires --work <plan>.");
     process.exit(1);
   }
   if (!inventoryPath && !workMode) {
@@ -151,6 +156,14 @@ const main = async () => {
   if (resetState) {
     await clearState(stateFile);
     log(`${a.dim}State cleared.${a.reset}`);
+  }
+
+  if (cleanupMode) {
+    const state = await loadState(stateFile);
+    const message = await runCleanup(stateFile, state);
+    for (const line of earlyLog) origLog(line);
+    origLog(message);
+    process.exit(0);
   }
 
   // Generate-only mode: --plan without --work

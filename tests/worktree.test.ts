@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, rm, stat } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync } from "child_process";
-import { createWorktree, removeWorktree, verifyWorktree, checkWorktreeResume } from "../src/worktree.js";
+import { createWorktree, removeWorktree, verifyWorktree, checkWorktreeResume, runCleanup } from "../src/worktree.js";
+import { saveState } from "../src/state.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
@@ -94,6 +95,42 @@ describe("checkWorktreeResume", () => {
   it("returns ok with repo root when no worktree state and no branch flag", async () => {
     const result = await checkWorktreeResume(undefined, {});
     expect(result).toEqual({ ok: true });
+  });
+});
+
+describe("runCleanup", () => {
+  it("removes worktree directory and clears state file when worktree state exists", async () => {
+    const treePath = await createWorktree(repoDir, "plan-cleanup", "orch/plan-cleanup");
+    const baseSha = exec("git rev-parse HEAD", treePath);
+    const stateFile = join(repoDir, ".orch/state/plan-cleanup.json");
+    const state = { worktree: { path: treePath, branch: "orch/plan-cleanup", baseSha } };
+    await mkdir(join(repoDir, ".orch/state"), { recursive: true });
+    await saveState(stateFile, state);
+
+    const message = await runCleanup(stateFile, state);
+
+    await expect(stat(treePath)).rejects.toThrow();
+    await expect(stat(stateFile)).rejects.toThrow();
+    expect(exec("git branch --list orch/plan-cleanup", repoDir)).toContain("orch/plan-cleanup");
+    expect(message).toContain("Removed worktree");
+  });
+
+  it("clears state file and returns message when no worktree state exists", async () => {
+    const stateFile = join(repoDir, ".orch/state/plan-no-wt.json");
+    const state = { lastCompletedSlice: 3 };
+    await mkdir(join(repoDir, ".orch/state"), { recursive: true });
+    await saveState(stateFile, state);
+
+    const message = await runCleanup(stateFile, state);
+
+    await expect(stat(stateFile)).rejects.toThrow();
+    expect(message).toContain("No worktree to clean up");
+  });
+
+  it("succeeds when state file does not exist", async () => {
+    const stateFile = "/tmp/nonexistent-state-" + Date.now() + ".json";
+    const message = await runCleanup(stateFile, {});
+    expect(message).toContain("No worktree to clean up");
   });
 });
 
