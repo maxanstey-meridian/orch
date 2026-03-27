@@ -178,6 +178,33 @@ describe("state", () => {
     await writeFile(testPath, "null");
     await expect(loadState(testPath)).rejects.toThrow("Corrupt state file");
   });
+
+  it("throws when worktree.path is empty string", async () => {
+    await writeFile(testPath, JSON.stringify({ worktree: { path: "", branch: "b", baseSha: "abc" } }));
+    await expect(loadState(testPath)).rejects.toThrow("worktree");
+  });
+
+  it("throws when worktree is missing required fields", async () => {
+    await writeFile(testPath, JSON.stringify({ worktree: { path: "/tmp/wt" } }));
+    await expect(loadState(testPath)).rejects.toThrow("worktree");
+  });
+
+  it("loads state without worktree field (backwards compat)", async () => {
+    await writeFile(testPath, JSON.stringify({ lastCompletedSlice: 5 }));
+    const loaded = await loadState(testPath);
+    expect(loaded.worktree).toBeUndefined();
+    expect(loaded.lastCompletedSlice).toBe(5);
+  });
+
+  it("persists worktree field and loads it back", async () => {
+    const state = {
+      lastCompletedSlice: 1,
+      worktree: { path: "/tmp/wt", branch: "orch/abc123", baseSha: "deadbeef" },
+    };
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+    expect(loaded).toEqual(state);
+  });
 });
 
 describe("saveState without parent directory", () => {
