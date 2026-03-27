@@ -172,7 +172,7 @@ const main = async () => {
 
   // 6. Load per-plan state + resume mismatch guard + resolve worktree
   const state: OrchestratorState = await loadState(stateFile);
-  const resumeCheck = await checkWorktreeResume(branchName, state, cwd);
+  const resumeCheck = await checkWorktreeResume(branchName, state);
   if (!resumeCheck.ok) {
     origLog(resumeCheck.message);
     process.exit(1);
