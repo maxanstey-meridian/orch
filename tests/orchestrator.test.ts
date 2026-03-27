@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from "vitest";
 import { Orchestrator, CreditExhaustedError, type OrchestratorConfig, type GitPort } from "../src/orchestrator.js";
 import type { AgentProcess, AgentResult, AgentStyle } from "../src/agent.js";
 import type { Hud, KeyHandler, InterruptSubmitHandler } from "../src/hud.js";
+import type { Slice } from "../src/plan-parser.js";
 import type { CreditSignal } from "../src/credit-detection.js";
+import type { DiffStats } from "../src/review-threshold.js";
 
 const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig => ({
   cwd: "/tmp",
@@ -71,6 +73,8 @@ const makeOrch = (overrides?: {
   detectCredit?: (result: AgentResult, stderr: string) => CreditSignal | null;
   persistState?: (path: string, state: unknown) => Promise<void>;
   isCleanReview?: (text: string) => boolean;
+  spawnVerify?: () => Promise<AgentProcess>;
+  measureDiff?: (cwd: string, since: string) => Promise<DiffStats>;
 }) => {
   const tdd = overrides?.tddAgent ?? fakeAgent();
   const review = overrides?.reviewAgent ?? fakeAgent();
@@ -88,6 +92,8 @@ const makeOrch = (overrides?: {
     overrides?.detectCredit ?? (() => null),
     overrides?.persistState ?? vi.fn().mockResolvedValue(undefined),
     overrides?.isCleanReview ?? (() => false),
+    overrides?.spawnVerify ?? (() => Promise.resolve(fakeAgent())),
+    overrides?.measureDiff ?? vi.fn().mockResolvedValue({ linesAdded: 100, linesRemoved: 10, total: 110 }),
   );
   return { orch, tdd, review, ...hudHelper };
 };
@@ -555,5 +561,170 @@ describe("Orchestrator.reviewFix", () => {
     await orch.reviewFix("content", "sha1");
     expect(hudHelper.hud.update).toHaveBeenCalledWith(expect.objectContaining({ activeAgent: "REV" }));
     expect(hudHelper.hud.update).toHaveBeenCalledWith(expect.objectContaining({ activeAgent: "TDD" }));
+  });
+});
+
+describe("isAlreadyImplemented", () => {
+  it("returns true when text matches marker and HEAD === base", () => {
+    const { orch } = makeOrch();
+    expect(orch.isAlreadyImplemented("This feature is already implemented", "abc123", "abc123")).toBe(true);
+  });
+
+  it("returns false when text matches but HEAD !== base", () => {
+    const { orch } = makeOrch();
+    expect(orch.isAlreadyImplemented("already implemented", "def456", "abc123")).toBe(false);
+  });
+
+  it("returns false when no text marker present", () => {
+    const { orch } = makeOrch();
+    expect(orch.isAlreadyImplemented("I built the feature and all tests pass", "abc123", "abc123")).toBe(false);
+  });
+
+  it("matches 'nothing left to do' pattern", () => {
+    const { orch } = makeOrch();
+    expect(orch.isAlreadyImplemented("There is nothing left to implement", "abc", "abc")).toBe(true);
+  });
+
+  it("matches 'already exist' pattern", () => {
+    const { orch } = makeOrch();
+    expect(orch.isAlreadyImplemented("The tests already exist", "abc", "abc")).toBe(true);
+  });
+});
+
+describe("verify", () => {
+  const testSlice: Slice = { number: 1, title: "Test", content: "Do something" };
+  const passText = "### VERIFY_RESULT\n**Status:** PASS";
+  const failText = "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- test broke";
+
+  it("returns true when verification passes", async () => {
+    const verifyAgent = fakeAgent();
+    (verifyAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: passText, resultText: "", needsInput: false, sessionId: "s" });
+    const { orch } = makeOrch({ spawnVerify: () => Promise.resolve(verifyAgent) });
+    const result = await orch.verify(testSlice, "base123");
+    expect(result).toBe(true);
+    expect(verifyAgent.kill).toHaveBeenCalled();
+  });
+
+  it("retries via TDD bot on first failure then returns true on re-verify pass", async () => {
+    const verifyAgent = fakeAgent();
+    (verifyAgent.send as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ exitCode: 0, assistantText: failText, resultText: "", needsInput: false, sessionId: "s" })
+      .mockResolvedValueOnce({ exitCode: 0, assistantText: passText, resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    const { orch } = makeOrch({ tddAgent: tdd, spawnVerify: () => Promise.resolve(verifyAgent) });
+    const result = await orch.verify(testSlice, "base123");
+    expect(result).toBe(true);
+    expect(tdd.send).toHaveBeenCalledWith(expect.stringContaining("Fix them"), expect.any(Function), expect.any(Function));
+    expect(verifyAgent.send).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns false when operator skips after second failure", async () => {
+    const verifyAgent = fakeAgent();
+    (verifyAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: failText, resultText: "", needsInput: false, sessionId: "s" });
+    const hudHelper = fakeHud();
+    (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("s");
+    const { orch } = makeOrch({ hud: hudHelper, spawnVerify: () => Promise.resolve(verifyAgent) });
+    const result = await orch.verify(testSlice, "base123");
+    expect(result).toBe(false);
+    expect(hudHelper.hud.askUser).toHaveBeenCalled();
+  });
+
+  it("exits process when operator stops", async () => {
+    const verifyAgent = fakeAgent();
+    (verifyAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: failText, resultText: "", needsInput: false, sessionId: "s" });
+    const hudHelper = fakeHud();
+    (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("t");
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const { orch } = makeOrch({ hud: hudHelper, spawnVerify: () => Promise.resolve(verifyAgent) });
+    await orch.verify(testSlice, "base123");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+  });
+
+  it("returns true when operator retries", async () => {
+    const verifyAgent = fakeAgent();
+    (verifyAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: failText, resultText: "", needsInput: false, sessionId: "s" });
+    const hudHelper = fakeHud();
+    (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("r");
+    const { orch } = makeOrch({ hud: hudHelper, spawnVerify: () => Promise.resolve(verifyAgent) });
+    const result = await orch.verify(testSlice, "base123");
+    expect(result).toBe(true);
+  });
+});
+
+describe("runSlice", () => {
+  const testSlice: Slice = { number: 1, title: "Test", content: "Do something" };
+  const tddResult: AgentResult = { exitCode: 0, assistantText: "implemented", resultText: "", needsInput: false, sessionId: "s" };
+
+  it("runs verify then reviewFix for normal slice", async () => {
+    const passText = "### VERIFY_RESULT\n**Status:** PASS";
+    const verifyAgent = fakeAgent();
+    (verifyAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: passText, resultText: "", needsInput: false, sessionId: "s" });
+    const git = fakeGit({
+      captureRef: vi.fn().mockResolvedValue("newsha"),
+      hasChanges: vi.fn().mockResolvedValue(true),
+    });
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    (review.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "REVIEW_CLEAN", resultText: "", needsInput: false, sessionId: "s" });
+    const persistState = vi.fn().mockResolvedValue(undefined);
+    const { orch } = makeOrch({
+      tddAgent: tdd,
+      reviewAgent: review,
+      git,
+      spawnVerify: () => Promise.resolve(verifyAgent),
+      isCleanReview: (t) => t.includes("REVIEW_CLEAN"),
+      persistState,
+    });
+    const result = await orch.runSlice(testSlice, "oldbase", tddResult, "vfybase");
+    expect(verifyAgent.send).toHaveBeenCalled();
+    expect(result.skipped).toBe(false);
+    expect(result.reviewBase).toBe("newsha");
+  });
+
+  it("skips verify/review when already implemented", async () => {
+    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("samesha") });
+    const review = fakeAgent();
+    const persistState = vi.fn().mockResolvedValue(undefined);
+    const { orch } = makeOrch({ reviewAgent: review, git, persistState });
+    const alreadyResult = { ...tddResult, assistantText: "already fully implemented" };
+    const result = await orch.runSlice(testSlice, "samesha", alreadyResult, "vfybase");
+    expect(review.send).not.toHaveBeenCalled();
+    expect(result.skipped).toBe(false);
+    expect(result.reviewBase).toBe("samesha");
+    expect(persistState).toHaveBeenCalled();
+  });
+
+  it("defers review when diff is small", async () => {
+    const passText = "### VERIFY_RESULT\n**Status:** PASS";
+    const verifyAgent = fakeAgent();
+    (verifyAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: passText, resultText: "", needsInput: false, sessionId: "s" });
+    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("newsha"), hasChanges: vi.fn().mockResolvedValue(true) });
+    const review = fakeAgent();
+    const persistState = vi.fn().mockResolvedValue(undefined);
+    const measureDiff = vi.fn().mockResolvedValue({ linesAdded: 2, linesRemoved: 1, total: 3 });
+    const { orch } = makeOrch({
+      reviewAgent: review,
+      git,
+      spawnVerify: () => Promise.resolve(verifyAgent),
+      persistState,
+      measureDiff,
+      config: { reviewThreshold: 30 },
+    });
+    const result = await orch.runSlice(testSlice, "oldbase", tddResult, "vfybase");
+    expect(review.send).not.toHaveBeenCalled();
+    expect(result.reviewBase).toBe("oldbase"); // not advanced
+    expect(persistState).toHaveBeenCalled();
+  });
+
+  it("returns skipped true when verify returns false", async () => {
+    const failText = "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- broke";
+    const verifyAgent = fakeAgent();
+    (verifyAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: failText, resultText: "", needsInput: false, sessionId: "s" });
+    const hudHelper = fakeHud();
+    (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("s");
+    const { orch } = makeOrch({ hud: hudHelper, spawnVerify: () => Promise.resolve(verifyAgent) });
+    const result = await orch.runSlice(testSlice, "oldbase", tddResult, "vfybase");
+    expect(result.skipped).toBe(true);
   });
 });

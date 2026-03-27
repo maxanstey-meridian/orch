@@ -88,7 +88,7 @@ Before concluding, answer this: if a project manager read the plan slice and the
 A feature that exists but isn't wired in is not delivered.`;
 
 export const buildReviewPrompt = (sliceContent: string, baseSha: string): string =>
-  `Review the changes since commit ${baseSha} against the intended plan slice.
+  `Review the code changed since commit ${baseSha}. Judge the code on its own merits — correctness, types, structure — not just whether it matches the plan.
 
 ${buildReviewPreamble(baseSha)}
 
@@ -99,18 +99,19 @@ ${buildReviewPreamble(baseSha)}
 - Structural: duplicated logic, parallel state, mixed concerns introduced by the change
 - Names: identifiers that no longer match their scope or purpose after the change
 - Enum/value completeness: new variants not handled in all consumers
+- Over-injection: pure functions passed as constructor/method params when a direct import would suffice
 
 ## What NOT to flag
 - Style, formatting, cosmetic preferences
 - Test coverage gaps (separate pass handles this)
 - Harmless redundancy that aids readability
 - Threshold values tuned empirically
-- Missing wiring or integration that belongs to a LATER slice. This slice is one step in a multi-slice plan. If code was created but not yet wired in, that is intentional — the wiring comes in a subsequent slice. Only flag issues within THIS slice's deliverables.
+- Missing wiring to call sites that a LATER slice will handle — do not flag functions that exist but aren't called yet. However, bugs, type errors, dead code, and structural issues within the changed files are always in scope, even if the file is "not done yet."
 
-## Intended Plan Slice
+## Plan Slice (for context, not as acceptance criteria)
 ${sliceContent}
 
-If all changes are correct and complete for THIS slice, respond with exactly: REVIEW_CLEAN`;
+If all changes are correct and well-structured, respond with exactly: REVIEW_CLEAN`;
 
 export const buildGapPrompt = (groupContent: string, baseSha: string): string =>
   `You are a gap-finder for a TDD pipeline. A group of slices has just been implemented and reviewed.

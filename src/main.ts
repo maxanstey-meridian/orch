@@ -30,18 +30,17 @@ import {
 } from "./state.js";
 import { runFingerprint } from "./fingerprint.js";
 import { buildTddPrompt, buildCommitSweepPrompt, buildReviewPrompt, buildGapPrompt, buildFinalPasses, withBrief } from "./prompts.js";
-import { a, ts, BOT_TDD, BOT_REVIEW, BOT_GAP, BOT_FINAL, BOT_VERIFY, BOT_PLAN, logSection, printSliceIntro, printSliceSummary } from "./display.js";
+import { a, ts, BOT_TDD, BOT_REVIEW, BOT_GAP, BOT_FINAL, BOT_VERIFY, BOT_PLAN, logSection, printSliceIntro } from "./display.js";
 import { makeStreamer, type Streamer } from "./streamer.js";
 import { Orchestrator, type OrchestratorConfig } from "./orchestrator.js";
 import { runInit, profileToMarkdown, createAsk } from "./init.js";
 import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
 import { captureRef, hasChanges, getStatus, hasDirtyTree, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
-import { parseVerifyResult } from "./verify.js";
 import { isCleanReview } from "./review-check.js";
 
 import { detectCreditExhaustion } from "./credit-detection.js";
-import { measureDiff, shouldReview } from "./review-threshold.js";
+import { measureDiff } from "./review-threshold.js";
 // interrupt + skip + stdin-dispatcher replaced by HUD keyboard handling (ink useInput)
 import { createHud } from "./hud.js";
 
@@ -631,6 +630,8 @@ const main = async () => {
     detectCreditExhaustion,
     saveState,
     isCleanReview,
+    async () => spawnAgent(BOT_VERIFY, verifySkill),
+    measureDiff,
   );
   // Sync helpers — bridge inline mutable state with orchestrator fields until run() takes over
   const syncToOrch = () => {
@@ -831,175 +832,27 @@ const main = async () => {
         await _orch.commitSweep(`Slice ${slice.number}`);
         syncFromOrch();
 
-        // ── Already-implemented detection ────────────────────────────────
-        const tddText = tddResult.assistantText ?? "";
-        const alreadyDone =
-          /already (?:fully )?implemented/i.test(tddText) ||
-          /already exist/i.test(tddText) ||
-          /nothing (?:left )?to (?:do|implement|change)/i.test(tddText);
+        // ── Post-TDD pipeline: already-implemented → verify → review → summary ──
+        syncToOrch();
+        const prevCompleted = _orch.slicesCompleted;
+        const sliceResult = await _orch.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
+        syncFromOrch();
+        state = _orch.state;
 
-        const headAfterTdd = await captureRef(cwd);
-        if (alreadyDone && headAfterTdd === reviewBase) {
-          log(
-            `${ts()} ${a.dim}⏩ Slice ${slice.number} already implemented — skipping verify/review${a.reset}`,
-          );
-          state = {
-            ...state,
-            lastSliceImplemented: slice.number,
-            lastCompletedSlice: slice.number,
-          };
-          await saveState(stateFile, state);
-          groupSlicesCompleted++;
-          globalSlicesCompleted++;
-          hud.update({
-            completedSlices: globalSlicesCompleted,
-            groupCompleted: groupSlicesCompleted,
-          });
-          continue;
-        }
-
-        // ── Verify gate ──────────────────────────────────────────────────
-        hud.update({ activeAgent: "VFY", activeAgentActivity: "verifying..." });
-        log(`${ts()} ${BOT_VERIFY.badge} ${a.green}verifying slice ${slice.number}...${a.reset}`);
-
-        const verifyAgent = spawnAgent(BOT_VERIFY, verifySkill);
-        const verifyPrompt = withBrief(
-          `Verify the changes since commit ${verifyBaseSha}. Context: TDD implementation of Slice ${slice.number}.`,
-          brief,
-        );
-        let vs = boundMakeStreamer(BOT_VERIFY);
-        const verifyResult = await withInterrupt(verifyAgent, () =>
-          verifyAgent.send(verifyPrompt, vs, onToolUse),
-        );
-        vs.flush();
-        let parsed = parseVerifyResult(verifyResult.assistantText ?? "");
-
-        if (!parsed.passed) {
-          // One retry: send failures to TDD bot, verify again
-          log(`${ts()} ${a.yellow}⚠ Verification failed — sending failures to TDD bot${a.reset}`);
-          const failureContext =
-            parsed.newFailures.length > 0
-              ? parsed.newFailures.join("\n")
-              : "Verification checks failed. Run the test/lint/typecheck pipeline and fix any failures.";
-          const retryPrompt = `Verification found new failures after your implementation. Fix them:\n\n${failureContext}`;
-          const rs = boundMakeStreamer(BOT_TDD);
-          await withInterrupt(tddAgent, () => tddAgent.send(retryPrompt, rs, onToolUse));
-          rs.flush();
-
-          // Re-verify
-          hud.update({ activeAgent: "VFY", activeAgentActivity: "re-verifying..." });
-          log(`${ts()} ${BOT_VERIFY.badge} ${a.green}re-verifying...${a.reset}`);
-          vs = boundMakeStreamer(BOT_VERIFY);
-          const reVerifyResult = await withInterrupt(verifyAgent, () =>
-            verifyAgent.send(
-              `Re-verify changes since ${verifyBaseSha}. The TDD bot attempted fixes.`,
-              vs,
-              onToolUse,
-            ),
-          );
-          vs.flush();
-          parsed = parseVerifyResult(reVerifyResult.assistantText ?? "");
-
-          if (!parsed.passed) {
-            // Hard stop — ask operator
-            verifyAgent.kill();
-            const failSummary =
-              parsed.newFailures.join("\n") || "Checks still failing after retry.";
-            log(
-              `${ts()} ${a.red}✗ Verification still failing after retry on Slice ${slice.number}${a.reset}`,
-            );
-            const answer = await hud.askUser(
-              `Slice ${slice.number} verification failed:\n${failSummary}\n\n(r)etry / (s)kip / s(t)op? `,
-            );
-            const choice = answer.trim().toLowerCase();
-            if (choice === "t" || choice === "stop") {
-              log(`${ts()} ${a.red}✗ Operator stopped run at Slice ${slice.number}${a.reset}`);
-              hud.teardown();
-              process.exit(1);
-            }
-            if (choice === "s" || choice === "skip") {
-              log(`${ts()} ${a.yellow}⏭ Operator skipped Slice ${slice.number}${a.reset}`);
-              continue;
-            }
-            // "r" or anything else → fall through to review (best effort)
-            log(`${ts()} ${a.yellow}↻ Operator chose retry — continuing to review${a.reset}`);
-          }
-        }
-
-        verifyAgent.kill();
-
-        if (sliceSkipFlag) {
+        if (sliceResult.skipped) {
           await doSkip();
           continue;
         }
 
-        state = { ...state, lastSliceImplemented: slice.number, reviewBaseSha: verifyBaseSha };
-        await saveState(stateFile, state);
-      }
-
-      // Review-fix loop — gated on minimum diff threshold
-      const diffStats = await measureDiff(cwd, reviewBase);
-      if (!shouldReview(diffStats, reviewThreshold)) {
-        log(
-          `${ts()} ${a.dim}Diff too small (${diffStats.total} lines) — deferring review${a.reset}`,
-        );
-        // Don't advance reviewBase — let changes accumulate
-        state = { ...state, lastCompletedSlice: slice.number };
-        await saveState(stateFile, state);
-        groupSlicesCompleted++;
-        globalSlicesCompleted++;
+        reviewBase = sliceResult.reviewBase;
+        const delta = _orch.slicesCompleted - prevCompleted;
+        groupSlicesCompleted += delta;
+        globalSlicesCompleted += delta;
         hud.update({
           completedSlices: globalSlicesCompleted,
           groupCompleted: groupSlicesCompleted,
         });
-        continue; // skip to next slice
       }
-
-      if (sliceSkipFlag) {
-        await doSkip();
-        continue;
-      }
-
-      syncToOrch();
-      await _orch.reviewFix(slice.content, reviewBase);
-      syncFromOrch();
-      reviewBase = await captureRef(cwd);
-      if (sliceSkipFlag) {
-        await doSkip();
-        continue;
-      }
-
-      // Slice outro — summary via quiet mode
-      log(`\n${ts()} ${a.dim}extracting slice summary...${a.reset}`);
-      const summary = await tddAgent.sendQuiet(
-        `Summarise what you just built for Slice ${slice.number} in this format exactly:
-
-## What was built
-<1-2 sentences: what capability now exists that didn't before>
-
-## Key decisions
-<2-4 bullet points: technical choices, edge cases handled, anything non-obvious>
-
-## Files touched
-<bulleted list of files created or modified>
-
-## Test coverage
-<1-2 sentences: what's tested, any known gaps>
-
-Be concrete and specific. No filler.`,
-      );
-      printSliceSummary(log, slice.number, summary);
-
-      state = { ...state, lastCompletedSlice: slice.number };
-      await saveState(stateFile, state);
-      groupSlicesCompleted++;
-      globalSlicesCompleted++;
-      hud.update({
-        completedSlices: globalSlicesCompleted,
-        groupCompleted: groupSlicesCompleted,
-        activeAgent: undefined,
-        activeAgentActivity: undefined,
-      });
     }
 
     // Reset skip visual but keep sliceSkipFlag alive for gap/commit phases
