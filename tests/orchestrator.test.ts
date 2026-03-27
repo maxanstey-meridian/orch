@@ -250,10 +250,9 @@ describe("streamer", () => {
   });
 });
 
-describe("run", () => {
-  it("throws NotImplementedError", () => {
-    const { orch } = makeOrch();
-    expect(() => orch.run()).toThrow("not yet implemented");
+describe("run (stub removed)", () => {
+  it("run() is now fully implemented", () => {
+    expect(true).toBe(true);
   });
 });
 
@@ -726,5 +725,300 @@ describe("runSlice", () => {
     const { orch } = makeOrch({ hud: hudHelper, spawnVerify: () => Promise.resolve(verifyAgent) });
     const result = await orch.runSlice(testSlice, "oldbase", tddResult, "vfybase");
     expect(result.skipped).toBe(true);
+  });
+});
+
+// ─── run() ────────────────────────────────────────────────────────────────────
+
+describe("run()", () => {
+  it("resolves for empty group list", async () => {
+    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
+    const { orch } = makeOrch({ git });
+    await expect(orch.run([], 0)).resolves.toBeUndefined();
+  });
+
+  it("skips group when all slices completed", async () => {
+    const group = { name: "Auth", slices: [{ number: 1, title: "a", content: "a" }, { number: 2, title: "b", content: "b" }] };
+    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
+    const { orch } = makeOrch({ git });
+    orch.state = { lastCompletedSlice: 2 };
+    await orch.run([group], 0);
+    expect(orch.slicesCompleted).toBe(2);
+  });
+
+  it("skips completed slices but runs remaining", async () => {
+    const group = {
+      name: "Auth",
+      slices: [
+        { number: 1, title: "a", content: "slice 1" },
+        { number: 2, title: "b", content: "slice 2" },
+        { number: 3, title: "c", content: "slice 3" },
+      ],
+    };
+    const pte = vi.fn().mockResolvedValue({ tddResult: { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" }, skipped: false });
+    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
+    const { orch } = makeOrch({ git });
+    orch.planThenExecute = pte;
+    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
+    orch.state = { lastCompletedSlice: 1 };
+    await orch.run([group], 0);
+    // Slice 1 skipped, slices 2 and 3 went through pipeline
+    expect(pte).toHaveBeenCalledTimes(2);
+  });
+
+  it("calls commitSweep and runSlice for each slice", async () => {
+    const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
+    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("sha1"), hasChanges: vi.fn().mockResolvedValue(false) });
+    const persistState = vi.fn().mockResolvedValue(undefined);
+    const measureDiff = vi.fn().mockResolvedValue({ linesAdded: 100, linesRemoved: 10, total: 110 });
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    (review.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "LGTM", resultText: "", needsInput: false, sessionId: "s" });
+    const { orch } = makeOrch({ tddAgent: tdd, reviewAgent: review, git, persistState, measureDiff, isCleanReview: () => true });
+    orch.planThenExecute = pte;
+    orch.spawnPlanWithSkill = () => fakeAgent();
+
+    const commitSweepSpy = vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    const runSliceSpy = vi.spyOn(orch, "runSlice");
+
+    await orch.run([group], 0);
+
+    expect(commitSweepSpy).toHaveBeenCalled();
+    expect(runSliceSpy).toHaveBeenCalledWith(group.slices[0], expect.any(String), tddResult, expect.any(String));
+  });
+
+  it("skips slice when planThenExecute returns skipped", async () => {
+    const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
+    const pte = vi.fn().mockResolvedValue({ tddResult: { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" }, skipped: true });
+    const persistState = vi.fn().mockResolvedValue(undefined);
+    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
+    const { orch } = makeOrch({ persistState, git });
+    orch.planThenExecute = pte;
+    orch.spawnPlanWithSkill = () => fakeAgent();
+
+    const respawnTddSpy = vi.spyOn(orch, "respawnTdd").mockResolvedValue(undefined);
+    const runSliceSpy = vi.spyOn(orch, "runSlice");
+
+    await orch.run([group], 0);
+
+    expect(runSliceSpy).not.toHaveBeenCalled();
+    expect(respawnTddSpy).toHaveBeenCalled();
+    expect(persistState).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ lastCompletedSlice: 1 }));
+  });
+
+  it("respawns agents between groups", async () => {
+    const g1 = { name: "A", slices: [{ number: 1, title: "a", content: "c" }] };
+    const g2 = { name: "B", slices: [{ number: 2, title: "b", content: "c" }] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
+    const persistState = vi.fn().mockResolvedValue(undefined);
+    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("sha1"), hasChanges: vi.fn().mockResolvedValue(false) });
+    const { orch } = makeOrch({ persistState, git, config: { auto: true } });
+    orch.planThenExecute = pte;
+    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha1", skipped: false });
+    const respawnBothSpy = vi.spyOn(orch, "respawnBoth").mockResolvedValue(undefined);
+
+    await orch.run([g1, g2], 0);
+
+    expect(respawnBothSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves lastCompletedGroup after group completes", async () => {
+    const group = { name: "Auth", slices: [{ number: 1, title: "a", content: "c" }] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
+    const persistState = vi.fn().mockResolvedValue(undefined);
+    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("sha1"), hasChanges: vi.fn().mockResolvedValue(false) });
+    const { orch } = makeOrch({ persistState, git, config: { auto: true } });
+    orch.planThenExecute = pte;
+    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha1", skipped: false });
+
+    await orch.run([group], 0);
+
+    expect(persistState).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ lastCompletedGroup: "Auth" }));
+  });
+});
+
+// ─── gapAnalysis() ────────────────────────────────────────────────────────────
+
+describe("gapAnalysis()", () => {
+  it("skips when sliceSkipFlag is true", async () => {
+    const spawnGap = vi.fn().mockReturnValue(fakeAgent());
+    const { orch } = makeOrch();
+    orch.spawnGap = spawnGap;
+    orch.sliceSkipFlag = true;
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [] }, "sha");
+
+    expect(spawnGap).not.toHaveBeenCalled();
+    expect(orch.sliceSkipFlag).toBe(false);
+  });
+
+  it("skips when no changes since group base", async () => {
+    const hasChanges = vi.fn().mockResolvedValue(false);
+    const spawnGap = vi.fn().mockReturnValue(fakeAgent());
+    const { orch } = makeOrch({ git: fakeGit({ hasChanges }) });
+    orch.spawnGap = spawnGap;
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [] }, "sha");
+
+    expect(hasChanges).toHaveBeenCalledWith("/tmp", "sha");
+    expect(spawnGap).not.toHaveBeenCalled();
+  });
+
+  it("runs gap agent and sends findings to TDD for fixes", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing edge case tests for auth", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true), captureRef: vi.fn().mockResolvedValue("gapsha") });
+    const { orch } = makeOrch({ tddAgent: tdd, git });
+    orch.spawnGap = () => gapAgent;
+    const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
+
+    const group = { name: "G", slices: [{ number: 1, title: "a", content: "slice content" }] };
+    await (orch as any).gapAnalysis(group, "basesha");
+
+    expect(gapAgent.send).toHaveBeenCalled();
+    expect(tdd.send).toHaveBeenCalled();
+    expect(reviewFixSpy).toHaveBeenCalled();
+    expect(gapAgent.kill).toHaveBeenCalled();
+  });
+
+  it("does not call TDD bot when NO_GAPS_FOUND", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true) });
+    const { orch } = makeOrch({ tddAgent: tdd, git });
+    orch.spawnGap = () => gapAgent;
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    expect(gapAgent.send).toHaveBeenCalled();
+    expect(tdd.send).not.toHaveBeenCalled();
+  });
+});
+
+// ─── finalPasses() ────────────────────────────────────────────────────────────
+
+describe("finalPasses()", () => {
+  it("returns early when no changes since run base", async () => {
+    const hasChanges = vi.fn().mockResolvedValue(false);
+    const spawnFinal = vi.fn().mockReturnValue(fakeAgent());
+    const { orch } = makeOrch({ git: fakeGit({ hasChanges }) });
+    orch.spawnFinal = spawnFinal;
+
+    await (orch as any).finalPasses("runbasesha");
+
+    expect(hasChanges).toHaveBeenCalledWith("/tmp", "runbasesha");
+    expect(spawnFinal).not.toHaveBeenCalled();
+  });
+
+  it("skips fix cycle when pass returns NO_ISSUES_FOUND", async () => {
+    const finalAgent = fakeAgent();
+    (finalAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_ISSUES_FOUND", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true) });
+    const { orch } = makeOrch({ tddAgent: tdd, git });
+    orch.spawnFinal = () => finalAgent;
+
+    await (orch as any).finalPasses("sha");
+
+    expect(finalAgent.send).toHaveBeenCalled();
+    expect(tdd.send).not.toHaveBeenCalled();
+  });
+
+  it("sends findings to TDD and calls reviewFix", async () => {
+    const finalAgent = fakeAgent();
+    (finalAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Found type issues in auth.ts", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true), captureRef: vi.fn().mockResolvedValue("fixsha") });
+    const { orch } = makeOrch({ tddAgent: tdd, git });
+    orch.spawnFinal = () => finalAgent;
+    const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
+
+    await (orch as any).finalPasses("sha");
+
+    expect(tdd.send).toHaveBeenCalled();
+    expect(reviewFixSpy).toHaveBeenCalled();
+  });
+});
+
+// ─── run() full lifecycle ─────────────────────────────────────────────────────
+
+describe("run() full lifecycle", () => {
+  it("calls gapAnalysis, commitSweep per group, then finalPasses", async () => {
+    const group = { name: "Auth", slices: [{ number: 1, title: "a", content: "c" }] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
+    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("sha1") });
+    const persistState = vi.fn().mockResolvedValue(undefined);
+    const { orch } = makeOrch({ git, persistState, config: { auto: true } });
+    orch.planThenExecute = pte;
+    orch.spawnPlanWithSkill = () => fakeAgent();
+    const commitSweepSpy = vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    const runSliceSpy = vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha1", skipped: false });
+    const gapSpy = vi.spyOn(orch, "gapAnalysis").mockResolvedValue(undefined);
+    const finalSpy = vi.spyOn(orch, "finalPasses").mockResolvedValue(undefined);
+
+    await orch.run([group], 0);
+
+    // Order: slice pipeline → gap → commitSweep(group name) → state persist → finalPasses
+    expect(runSliceSpy).toHaveBeenCalled();
+    expect(gapSpy).toHaveBeenCalledWith(group, "sha1");
+    // commitSweep called at least for the group name (after gap)
+    expect(commitSweepSpy).toHaveBeenCalledWith("Auth");
+    expect(finalSpy).toHaveBeenCalledWith("sha1");
+  });
+
+  it("prompts user between groups in interactive mode", async () => {
+    const g1 = { name: "A", slices: [{ number: 1, title: "a", content: "c" }] };
+    const g2 = { name: "B", slices: [{ number: 2, title: "b", content: "c" }] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
+    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("sha1"), hasChanges: vi.fn().mockResolvedValue(false) });
+    const persistState = vi.fn().mockResolvedValue(undefined);
+    const hudHelper = fakeHud();
+    (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("y");
+    const { orch } = makeOrch({ persistState, git, hud: hudHelper, config: { auto: false, noInteraction: false } });
+    orch.planThenExecute = pte;
+    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha1", skipped: false });
+    vi.spyOn(orch, "respawnBoth").mockResolvedValue(undefined);
+
+    await orch.run([g1, g2], 0);
+
+    expect(hudHelper.hud.askUser).toHaveBeenCalled();
+    expect(pte).toHaveBeenCalledTimes(2); // both groups ran
+  });
+
+  it("exits early when user declines next group", async () => {
+    const g1 = { name: "A", slices: [{ number: 1, title: "a", content: "c" }] };
+    const g2 = { name: "B", slices: [{ number: 2, title: "b", content: "c" }] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
+    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("sha1"), hasChanges: vi.fn().mockResolvedValue(false) });
+    const persistState = vi.fn().mockResolvedValue(undefined);
+    const hudHelper = fakeHud();
+    (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("n");
+    const { orch } = makeOrch({ persistState, git, hud: hudHelper, config: { auto: false, noInteraction: false } });
+    orch.planThenExecute = pte;
+    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha1", skipped: false });
+    vi.spyOn(orch, "respawnBoth").mockResolvedValue(undefined);
+
+    await orch.run([g1, g2], 0);
+
+    expect(pte).toHaveBeenCalledTimes(1); // only first group ran
   });
 });

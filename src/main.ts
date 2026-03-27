@@ -19,7 +19,7 @@ import { createHash } from "crypto";
 import { resolve } from "path";
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { readFile } from "fs/promises";
-import { parsePlan, type Slice } from "./plan-parser.js";
+import { parsePlan } from "./plan-parser.js";
 import { generatePlan, isPlanFormat, planFileName, planIdFromPath } from "./plan-generator.js";
 import {
   loadState,
@@ -30,12 +30,6 @@ import {
 } from "./state.js";
 import { runFingerprint } from "./fingerprint.js";
 import {
-  buildTddPrompt,
-  buildGapPrompt,
-  buildFinalPasses,
-  withBrief,
-} from "./prompts.js";
-import {
   a,
   ts,
   BOT_TDD,
@@ -45,10 +39,9 @@ import {
   BOT_VERIFY,
   BOT_PLAN,
   logSection,
-  printSliceIntro,
 } from "./display.js";
-import { makeStreamer, type Streamer } from "./streamer.js";
-import { Orchestrator, type OrchestratorConfig } from "./orchestrator.js";
+import type { Streamer } from "./streamer.js";
+import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
 import { runInit, profileToMarkdown, createAsk } from "./init.js";
 import { createAgent, type AgentProcess, type AgentResult, type AgentStyle } from "./agent.js";
 import { captureRef, hasChanges, getStatus, hasDirtyTree, stashBackup } from "./git.js";
@@ -147,42 +140,6 @@ const getRl = () => {
   return _rl;
 };
 const ask = (prompt: string) => getRl().ask(prompt);
-
-// ─── Interactive follow-up ───────────────────────────────────────────────────
-
-const followUpIfNeeded = async (
-  result: AgentResult,
-  agent: AgentProcess,
-  noInteraction: boolean,
-  createStreamer: (style: AgentStyle) => Streamer = (style) => makeStreamer(style),
-  toolUseHandler?: (summary: string) => void,
-  askUser: (prompt: string) => Promise<string> = ask,
-  maxFollowUps = 3,
-): Promise<AgentResult> => {
-  let current = result;
-  let followUps = 0;
-
-  while (current.needsInput && !noInteraction && followUps < maxFollowUps) {
-    log(`\n${ts()} ${a.yellow}Bot is asking for input ↑${a.reset}`);
-    const answer = await askUser(`${a.bold}Your response${a.reset} (or Enter to skip): `);
-
-    const s = createStreamer(agent.style);
-    if (!answer.trim()) {
-      log(`${ts()} ${a.dim}skipped — telling bot to proceed autonomously${a.reset}`);
-      current = await agent.send(
-        "No preference — proceed with your best judgement. Make the decision yourself and continue implementing.",
-        s,
-        toolUseHandler,
-      );
-    } else {
-      current = await agent.send(answer, s, toolUseHandler);
-    }
-    s.flush();
-    followUps++;
-  }
-
-  return current;
-};
 
 // ─── Plan-then-execute ──────────────────────────────────────────────────────
 
@@ -468,92 +425,30 @@ const main = async () => {
   const totalSlices = groups.reduce((n, g) => n + g.slices.length, 0);
   const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
   const hud = createHud(isTTY);
-  let globalSlicesCompleted = 0;
   hud.update({ totalSlices, completedSlices: 0, startTime: Date.now() });
   log = hud.wrapLog(origLog);
   // Replay buffered pre-ink output through ink so it knows about those lines
   for (const line of earlyLog) log(line);
-  const hudWriter = hud.createWriter();
-  let _activityShowing = false;
-  const onToolUse = (summary: string) => {
-    _activityShowing = true;
-    hud.setActivity(summary);
-  };
-
-  const boundMakeStreamer = (style: AgentStyle): Streamer => {
-    const base = makeStreamer(style, hudWriter);
-    // Clear activity spinner once on first text chunk, not on every chunk
-    const wrapped = (text: string) => {
-      if (_activityShowing) {
-        _activityShowing = false;
-        hud.setActivity("");
-      }
-      base(text);
-    };
-    wrapped.flush = base.flush;
-    return wrapped;
-  };
 
   // 5. Load per-plan state
   let state: OrchestratorState = await loadState(stateFile);
 
   // 6. Spawn persistent agents with skill system prompts (spawned here, rules reminder awaited after banner)
-  let tddAgent = spawnAgent(BOT_TDD, tddSkill);
-  let reviewAgent = spawnAgent(BOT_REVIEW, reviewSkill);
-  const tddFirstMessage = { value: true };
-  const reviewFirstMessage = { value: true };
+  const tddAgent = spawnAgent(BOT_TDD, tddSkill);
+  const reviewAgent = spawnAgent(BOT_REVIEW, reviewSkill);
 
-  // 6b. Keyboard handling — all via ink's useInput in the HUD
   const interactive = !noInteraction && isTTY;
-  let interruptTarget: AgentProcess | null = null;
-  let sliceSkippable = false;
-  let sliceSkipFlag = false;
 
-  let hardInterruptPending: string | null = null;
-
-  if (interactive) {
-    hud.onKey((key) => {
-      if (key === "g" && interruptTarget) {
-        hud.startPrompt("guide");
-      } else if (key === "i" && interruptTarget) {
-        hud.startPrompt("interrupt");
-      } else if (key === "s" && sliceSkippable) {
-        sliceSkipFlag = !sliceSkipFlag;
-        hud.setSkipping(sliceSkipFlag);
-      } else if (key === "q" || key === "\x03") {
-        cleanup();
-        process.exit(130);
-      }
-    });
-    hud.onInterruptSubmit((text, mode) => {
-      if (!interruptTarget) return;
-      if (mode === "guide") {
-        // Soft: inject guidance, agent sees it on next turn
-        interruptTarget.inject(text);
-        log(`${ts()} ${a.cyan}💬 Guidance sent (will apply on next turn)${a.reset}`);
-      } else {
-        // Hard: store message, kill agent — respawn logic picks it up
-        hardInterruptPending = text;
-        interruptTarget.kill();
-        log(`${ts()} ${a.yellow}⚡ Interrupting agent...${a.reset}`);
-      }
-    });
-  }
-
-  const withInterrupt = async <T>(agent: AgentProcess, fn: () => Promise<T>): Promise<T> => {
-    interruptTarget = agent;
-    try {
-      return await fn();
-    } finally {
-      interruptTarget = null;
-    }
-  };
-
-  // 7. Signal handlers + cleanup
+  // 7. Signal handlers + cleanup (delegates to orchestrator after it's constructed)
+  let _orch: Orchestrator | null = null;
   const cleanup = () => {
-    hud.teardown();
-    tddAgent.kill();
-    reviewAgent.kill();
+    if (_orch) {
+      _orch.cleanup();
+    } else {
+      hud.teardown();
+      tddAgent.kill();
+      reviewAgent.kill();
+    }
     if (_rl) _rl.close();
   };
   process.on("SIGINT", () => {
@@ -564,21 +459,6 @@ const main = async () => {
     cleanup();
     process.exit(143);
   });
-
-  // Closure over mutable `state` — always saves the latest value
-  const exitOnCreditExhaustion = async (result: AgentResult, agent: AgentProcess) => {
-    const signal = detectCreditExhaustion(result, agent.stderr);
-    if (!signal) return;
-    log(`\n${ts()} ${a.red}Credit exhaustion detected: ${signal.message}${a.reset}`);
-    await saveState(stateFile, state);
-    if (signal.kind === "mid-response") {
-      log(
-        `${ts()} ${a.yellow}Agent was interrupted mid-response. The current slice will be re-run on resume.${a.reset}`,
-      );
-    }
-    cleanup();
-    process.exit(2);
-  };
 
   // 8. Startup banner
   log(
@@ -630,7 +510,6 @@ const main = async () => {
   const didStash = await stashBackup(cwd);
   if (didStash) log(`${ts()} ${a.dim}Backed up working tree to git stash${a.reset}`);
 
-  const runBaseSha = await captureRef(cwd);
   const planContent = await readFile(planPath, "utf-8");
 
   // 9b. Construct Orchestrator (scaffold — run() not called yet)
@@ -648,7 +527,7 @@ const main = async () => {
     reviewSkill,
     verifySkill,
   };
-  const _orch = new Orchestrator(
+  _orch = new Orchestrator(
     orchConfig,
     state,
     hud,
@@ -664,432 +543,23 @@ const main = async () => {
     async () => spawnAgent(BOT_VERIFY, verifySkill),
     measureDiff,
   );
-  // Sync helpers — bridge inline mutable state with orchestrator fields until run() takes over
-  const syncToOrch = () => {
-    _orch.tddAgent = tddAgent;
-    _orch.reviewAgent = reviewAgent;
-    _orch.tddIsFirst = tddFirstMessage.value;
-    _orch.reviewIsFirst = reviewFirstMessage.value;
-    _orch.sliceSkipFlag = sliceSkipFlag;
-    _orch.state = state;
-  };
-  const syncFromOrch = () => {
-    tddFirstMessage.value = _orch.tddIsFirst;
-    reviewFirstMessage.value = _orch.reviewIsFirst;
-  };
+  // Wire additional deps for run()
+  _orch.planThenExecute = planThenExecute;
+  _orch.spawnPlanWithSkill = () => spawnPlanAgentWithSkill();
+  _orch.spawnGap = () => spawnAgent(BOT_GAP);
+  _orch.spawnFinal = () => spawnAgent(BOT_FINAL);
+  if (interactive) _orch.setupKeyboardHandlers();
 
-  // 10. Group loop
-  for (let i = 0; i < remaining.length; i++) {
-    const group = remaining[i];
-
-    // Skip entire group if all its slices are already completed
-    const allSlicesDone =
-      state.lastCompletedSlice !== undefined &&
-      group.slices.every((s) => s.number <= state.lastCompletedSlice!);
-    if (allSlicesDone) {
-      log(`\n${ts()} ${a.dim}⏩ Group "${group.name}" already completed — skipping${a.reset}`);
-      globalSlicesCompleted += group.slices.length;
-      hud.update({ completedSlices: globalSlicesCompleted });
-      continue;
+  // 10. Run the orchestrator
+  try {
+    await _orch.run(remaining, 0);
+  } catch (err) {
+    if (err instanceof CreditExhaustedError) {
+      log(`\n${ts()} ${a.red}Credit exhaustion detected: ${err.message}${a.reset}`);
+      cleanup();
+      process.exit(2);
     }
-
-    logSection(
-      log,
-      `Group: ${group.name} — ${group.slices.map((s: Slice) => `Slice ${s.number}`).join(", ")}`,
-    );
-    hud.update({
-      groupName: group.name,
-      groupSliceCount: group.slices.length,
-      groupCompleted: 0,
-    });
-
-    const groupBaseSha = await captureRef(cwd);
-
-    // Skip signal — active for the entire group (slices, gap analysis, commit sweep).
-    sliceSkippable = true;
-    sliceSkipFlag = false;
-
-    // ── Slice loop ──
-    let reviewBase = groupBaseSha;
-    let groupSlicesCompleted = 0;
-    for (const slice of group.slices) {
-      if (state.lastCompletedSlice !== undefined && slice.number <= state.lastCompletedSlice) {
-        log(
-          `\n${ts()} ${a.dim}⏭ Slice ${slice.number}: ${slice.title} — already completed${a.reset}`,
-        );
-        groupSlicesCompleted++;
-        globalSlicesCompleted++;
-        hud.update({
-          completedSlices: globalSlicesCompleted,
-          groupCompleted: groupSlicesCompleted,
-        });
-        continue;
-      }
-
-      printSliceIntro(log, slice);
-      hud.update({
-        currentSlice: { number: slice.number },
-      });
-
-      const doSkip = async () => {
-        sliceSkipFlag = false;
-        hud.setSkipping(false);
-        log(`\n${ts()} ${a.yellow}⏭ Slice ${slice.number} skipped by operator${a.reset}`);
-        tddAgent.kill();
-        tddAgent = await spawnTddAgent(tddSkill);
-        tddFirstMessage.value = true;
-        reviewFirstMessage.value = true;
-        state = { ...state, lastCompletedSlice: slice.number };
-        await saveState(stateFile, state);
-        groupSlicesCompleted++;
-        globalSlicesCompleted++;
-        hud.update({
-          completedSlices: globalSlicesCompleted,
-          groupCompleted: groupSlicesCompleted,
-        });
-      };
-
-      // Resume support: TDD done but review was interrupted
-      const alreadyImplemented =
-        state.lastSliceImplemented !== undefined &&
-        slice.number <= state.lastSliceImplemented &&
-        (state.lastCompletedSlice === undefined || slice.number > state.lastCompletedSlice);
-
-      if (alreadyImplemented) {
-        // Restore the pre-TDD baseline so review can diff the actual work
-        if (state.reviewBaseSha) reviewBase = state.reviewBaseSha;
-        log(
-          `${ts()} ${a.dim}⏩ TDD already ran for Slice ${slice.number} — resuming review${a.reset}`,
-        );
-      } else {
-        // Capture baseline BEFORE TDD runs — verify needs to diff against pre-TDD state
-        const verifyBaseSha = await captureRef(cwd);
-
-        // ── Plan phase (with replan loop) ──
-        let replanAttempts = 0;
-        const MAX_REPLANS = 2;
-        let pteResult: Awaited<ReturnType<typeof planThenExecute>>;
-        do {
-          log(
-            `${ts()} ${BOT_PLAN.badge} ${a.white}${replanAttempts > 0 ? "replanning..." : "planning..."}${a.reset}`,
-          );
-          hud.update({
-            activeAgent: "PLN",
-            activeAgentActivity: replanAttempts > 0 ? "replanning..." : "planning...",
-          });
-
-          const planAgent = spawnPlanAgentWithSkill();
-
-          pteResult = await planThenExecute({
-            sliceContent: slice.content,
-            planAgent,
-            tddAgent,
-            brief: tddFirstMessage.value ? brief : "",
-            makePlanStreamer: () => boundMakeStreamer(BOT_PLAN),
-            makeExecuteStreamer: () => boundMakeStreamer(BOT_TDD),
-            withInterrupt,
-            isSkipped: () => sliceSkipFlag,
-            isHardInterrupted: () => hardInterruptPending,
-            onToolUse,
-            log,
-            noInteraction,
-            askUser: noInteraction ? undefined : hud.askUser,
-            onPlanReady: () =>
-              hud.update({ activeAgent: "PLN", activeAgentActivity: "plan ready" }),
-          });
-          replanAttempts++;
-        } while (pteResult.replan && replanAttempts < MAX_REPLANS);
-
-        // After max replans, auto-accept: re-run planThenExecute without askUser
-        if (pteResult.replan) {
-          log(`${ts()} ${a.yellow}Max replans reached — auto-accepting plan${a.reset}`);
-          const planAgent = spawnPlanAgentWithSkill();
-          pteResult = await planThenExecute({
-            sliceContent: slice.content,
-            planAgent,
-            tddAgent,
-            brief: tddFirstMessage.value ? brief : "",
-            makePlanStreamer: () => boundMakeStreamer(BOT_PLAN),
-            makeExecuteStreamer: () => boundMakeStreamer(BOT_TDD),
-            withInterrupt,
-            isSkipped: () => sliceSkipFlag,
-            isHardInterrupted: () => hardInterruptPending,
-            onToolUse,
-            log,
-            noInteraction: true,
-          });
-        }
-
-        if (pteResult.skipped) {
-          await doSkip();
-          continue;
-        }
-
-        let tddResult = pteResult.tddResult;
-
-        // Hard interrupt: agent was killed during plan or execute phase
-        if (pteResult.hardInterrupt) {
-          const guidance = pteResult.hardInterrupt;
-          hardInterruptPending = null;
-          log(`${ts()} ${a.yellow}⚡ Respawning TDD agent with guidance...${a.reset}`);
-          tddAgent = await spawnTddAgent(tddSkill);
-          tddFirstMessage.value = true;
-          reviewFirstMessage.value = true;
-          const s2 = boundMakeStreamer(BOT_TDD);
-          tddResult = await withInterrupt(tddAgent, () =>
-            tddAgent.send(withBrief(guidance, brief), s2, onToolUse),
-          );
-          s2.flush();
-        }
-
-        tddFirstMessage.value = false;
-        await exitOnCreditExhaustion(tddResult, tddAgent);
-        await followUpIfNeeded(
-          tddResult,
-          tddAgent,
-          noInteraction,
-          boundMakeStreamer,
-          onToolUse,
-          hud.askUser,
-        );
-
-        if (sliceSkipFlag) {
-          await doSkip();
-          continue;
-        }
-
-        if (tddResult.exitCode !== 0) {
-          log(
-            `\n${ts()} ${a.red}✗ TDD agent failed (exit ${tddResult.exitCode}) on Slice ${slice.number}. Continuing...${a.reset}`,
-          );
-          continue;
-        }
-
-        // ── Commit sweep — ensure TDD bot's work is committed ────────────
-        syncToOrch();
-        await _orch.commitSweep(`Slice ${slice.number}`);
-        syncFromOrch();
-
-        // ── Post-TDD pipeline: already-implemented → verify → review → summary ──
-        syncToOrch();
-        const prevCompleted = _orch.slicesCompleted;
-        const sliceResult = await _orch.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
-        syncFromOrch();
-        state = _orch.state;
-
-        if (sliceResult.skipped) {
-          await doSkip();
-          continue;
-        }
-
-        reviewBase = sliceResult.reviewBase;
-        const delta = _orch.slicesCompleted - prevCompleted;
-        groupSlicesCompleted += delta;
-        globalSlicesCompleted += delta;
-        hud.update({
-          completedSlices: globalSlicesCompleted,
-          groupCompleted: groupSlicesCompleted,
-        });
-      }
-    }
-
-    // Reset skip visual but keep sliceSkipFlag alive for gap/commit phases
-    hud.setSkipping(false);
-    hud.setActivity("");
-
-    // ── Gap analysis ──
-    if (sliceSkipFlag) {
-      log(`\n${ts()} ${a.yellow}⏭ Gap analysis skipped by operator${a.reset}`);
-      sliceSkipFlag = false;
-      hud.setSkipping(false);
-    } else if (await hasChanges(cwd, groupBaseSha)) {
-      log(
-        `\n${ts()} ${BOT_GAP.badge} ${a.yellow}scanning for coverage gaps across group...${a.reset}`,
-      );
-
-      const groupContent = group.slices.map((s: Slice) => s.content).join("\n\n---\n\n");
-      const gapAgent = spawnAgent(BOT_GAP);
-      const gapPrompt = withBrief(buildGapPrompt(groupContent, groupBaseSha), brief);
-      let s = boundMakeStreamer(BOT_GAP);
-      const gapResult = await withInterrupt(gapAgent, () => gapAgent.send(gapPrompt, s, onToolUse));
-      s.flush();
-      await exitOnCreditExhaustion(gapResult, gapAgent);
-
-      if (sliceSkipFlag) {
-        log(`\n${ts()} ${a.yellow}⏭ Gap fixes skipped by operator${a.reset}`);
-        sliceSkipFlag = false;
-        hud.setSkipping(false);
-      } else if (gapResult.exitCode !== 0) {
-        log(
-          `${ts()} ${a.yellow}⚠ Gap analysis agent failed (exit ${gapResult.exitCode}) — skipping${a.reset}`,
-        );
-      } else {
-        const gapText = gapResult.assistantText;
-
-        if (gapText && !gapText.includes("NO_GAPS_FOUND")) {
-          log(`${ts()} ${BOT_GAP.badge} ${a.yellow}gaps found — sending to TDD bot${a.reset}`);
-
-          if (sliceSkipFlag) {
-            log(`${ts()} ${a.yellow}⏭ Gap fixes skipped by operator${a.reset}`);
-            sliceSkipFlag = false;
-            hud.setSkipping(false);
-          } else {
-            const gapBaseSha = await captureRef(cwd);
-            const gapFixPrompt = buildTddPrompt(
-              groupContent,
-              `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
-            );
-            s = boundMakeStreamer(BOT_TDD);
-            const gapFixResult = await withInterrupt(tddAgent, () =>
-              tddAgent.send(
-                tddFirstMessage.value ? withBrief(gapFixPrompt, brief) : gapFixPrompt,
-                s,
-                onToolUse,
-              ),
-            );
-            s.flush();
-            tddFirstMessage.value = false;
-            await exitOnCreditExhaustion(gapFixResult, tddAgent);
-            await followUpIfNeeded(
-              gapFixResult,
-              tddAgent,
-              noInteraction,
-              boundMakeStreamer,
-              onToolUse,
-              hud.askUser,
-            );
-            if (!(await hasChanges(cwd, gapBaseSha))) {
-              log(`${ts()} ${a.dim}TDD bot made no changes for gaps${a.reset}`);
-            } else {
-              syncToOrch();
-              await _orch.reviewFix(groupContent, gapBaseSha);
-              syncFromOrch();
-              log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
-            }
-          }
-        } else {
-          log(`${ts()} ${a.green}✓ No coverage gaps found${a.reset}`);
-        }
-      }
-
-      gapAgent.kill();
-    }
-
-    // ── Commit sweep — catch uncommitted changes before marking group done ──
-    if (sliceSkipFlag) {
-      log(`\n${ts()} ${a.yellow}⏭ Commit sweep skipped by operator${a.reset}`);
-      sliceSkipFlag = false;
-      hud.setSkipping(false);
-    }
-    syncToOrch();
-    await _orch.commitSweep(group.name);
-    syncFromOrch();
-
-    state = { ...state, lastCompletedGroup: group.name };
-    await saveState(stateFile, state);
-    sliceSkippable = false;
-    sliceSkipFlag = false;
-    hud.setSkipping(false);
-
-    // ── Inter-group transition ──
-    if (i < remaining.length - 1) {
-      // Kill and respawn agents — clean context slate
-      tddAgent.kill();
-      reviewAgent.kill();
-      tddAgent = await spawnTddAgent(tddSkill);
-      reviewAgent = await spawnReviewAgent(reviewSkill);
-      tddFirstMessage.value = true;
-      reviewFirstMessage.value = true;
-
-      const next = remaining[i + 1];
-      const nextLabel = `${next.name} (${next.slices.map((s: Slice) => `Slice ${s.number}`).join(", ")})`;
-
-      if (auto || noInteraction) {
-        log(`\n${ts()} ${a.dim}→ next: ${nextLabel}${a.reset}`);
-      } else {
-        log(`\n${ts()} ${a.green}✓ Group "${group.name}" complete${a.reset}`);
-        const answer = await hud.askUser(`Group done. Run ${nextLabel} next? (Y/n) `);
-        if (answer.toLowerCase() === "n") {
-          log(`Stopped. Resume with --group "${next.name}"`);
-          cleanup();
-          process.exit(0);
-        }
-      }
-    }
-  }
-
-  // 11. Final review passes
-  if (await hasChanges(cwd, runBaseSha)) {
-    logSection(log, "Final review — 3 targeted passes");
-
-    const passes = buildFinalPasses(runBaseSha, planContent);
-
-    for (const pass of passes) {
-      log(`\n${ts()} ${BOT_FINAL.badge} ${a.green}${pass.name}...${a.reset}`);
-
-      // Fresh agent per final pass
-      const finalAgent = spawnAgent(BOT_FINAL);
-      const finalPrompt = withBrief(pass.prompt, brief);
-      let s = boundMakeStreamer(BOT_FINAL);
-      const finalResult = await withInterrupt(finalAgent, () =>
-        finalAgent.send(finalPrompt, s, onToolUse),
-      );
-      s.flush();
-      await exitOnCreditExhaustion(finalResult, finalAgent);
-      finalAgent.kill();
-
-      if (finalResult.exitCode !== 0) {
-        log(`${ts()} ${a.dim}${pass.name}: agent failed — skipping${a.reset}`);
-        continue;
-      }
-
-      const findings = finalResult.assistantText;
-
-      if (!findings || findings.includes("NO_ISSUES_FOUND")) {
-        log(`${ts()} ${a.green}✓ ${pass.name}: clean${a.reset}`);
-        continue;
-      }
-
-      log(`${ts()} ${BOT_FINAL.badge} ${a.yellow}${pass.name}: issues found${a.reset}`);
-
-      // Fix cycle for final pass findings
-      log(`${ts()} ${BOT_TDD.badge} ${a.cyan}fixing ${pass.name} findings...${a.reset}`);
-
-      const preFixSha = await captureRef(cwd);
-      const fixPrompt = buildTddPrompt(
-        planContent,
-        `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
-      );
-      s = boundMakeStreamer(BOT_TDD);
-      const fixResult = await withInterrupt(tddAgent, () =>
-        tddAgent.send(
-          tddFirstMessage.value ? withBrief(fixPrompt, brief) : fixPrompt,
-          s,
-          onToolUse,
-        ),
-      );
-      s.flush();
-      tddFirstMessage.value = false;
-      await exitOnCreditExhaustion(fixResult, tddAgent);
-      await followUpIfNeeded(
-        fixResult,
-        tddAgent,
-        noInteraction,
-        boundMakeStreamer,
-        onToolUse,
-        hud.askUser,
-      );
-      if (!(await hasChanges(cwd, preFixSha))) {
-        log(`${ts()} ${a.dim}TDD bot made no changes for ${pass.name}${a.reset}`);
-        continue;
-      }
-
-      // Review cycle on the fixes
-      syncToOrch();
-      await _orch.reviewFix(planContent, preFixSha);
-      syncFromOrch();
-      log(`${ts()} ${a.green}✓ ${pass.name}: resolved${a.reset}`);
-    }
+    throw err;
   }
 
   // 12. Cleanup
