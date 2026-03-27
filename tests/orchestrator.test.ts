@@ -10,6 +10,12 @@ import { detectApiError } from "../src/agent/api-errors.js";
 import { saveState } from "../src/state/state.js";
 import { isCleanReview } from "../src/cli/review-check.js";
 import { measureDiff } from "../src/cli/review-threshold.js";
+import { printSliceIntro } from "../src/ui/display.js";
+
+vi.mock("../src/ui/display.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/ui/display.js")>();
+  return { ...actual, printSliceIntro: vi.fn() };
+});
 
 vi.mock("../src/git/git.js", () => ({
   hasDirtyTree: vi.fn().mockResolvedValue(false),
@@ -391,6 +397,24 @@ describe("setupKeyboardHandlers", () => {
     expect(hud.teardown).toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(130);
     exitSpy.mockRestore();
+  });
+
+  it("key 'c' with no currentSlice does not log", async () => {
+    const { orch, pressKey } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    expect(orch.currentSlice).toBeNull();
+    pressKey("c");
+    expect(vi.mocked(printSliceIntro)).not.toHaveBeenCalled();
+  });
+
+  it("key 'c' with currentSlice calls printSliceIntro", async () => {
+    const { orch, pressKey } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    vi.mocked(printSliceIntro).mockReset();
+    const slice: Slice = { number: 3, title: "Test slice", content: "slice body" };
+    orch.currentSlice = slice;
+    pressKey("c");
+    expect(vi.mocked(printSliceIntro)).toHaveBeenCalledWith(orch.log, slice);
   });
 });
 
@@ -994,23 +1018,59 @@ describe("run()", () => {
     expect(pte).toHaveBeenCalledTimes(2);
   });
 
-  it("logs slice intro for non-skipped slices", async () => {
-    const group = { name: "G", slices: [{ number: 1, title: "Setup auth", content: "c" }] };
+  it("sets currentSlice during processing and clears after", async () => {
+    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const group = { name: "G", slices: [slice] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
-    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
+    let capturedSlice: unknown = "not-set";
+    const pte = vi.fn().mockImplementation(async () => {
+      capturedSlice = orch.currentSlice;
+      return { tddResult, skipped: false };
+    });
     vi.mocked(hasChanges).mockResolvedValue(false);
-    const logFn = vi.fn();
     const { orch } = await makeOrch();
     vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
-    (orch as any).log = logFn;
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
 
     await orch.run([group], 0);
 
-    const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
-    expect(allLogs).toContain("Slice 1");
-    expect(allLogs).toContain("Setup auth");
+    expect(capturedSlice).toEqual(slice);
+    expect(orch.currentSlice).toBeNull();
+  });
+
+  it("clears currentSlice when slice is skipped", async () => {
+    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const group = { name: "G", slices: [slice] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: true });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = await makeOrch();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
+    vi.spyOn(orch as any, "respawnTdd").mockResolvedValue(undefined);
+
+    await orch.run([group], 0);
+
+    expect(orch.currentSlice).toBeNull();
+  });
+
+  it("logs slice intro for non-skipped slices", async () => {
+    const slice = { number: 1, title: "Setup auth", content: "c" };
+    const group = { name: "G", slices: [slice] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    vi.mocked(printSliceIntro).mockReset();
+    const { orch } = await makeOrch();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
+
+    await orch.run([group], 0);
+
+    expect(vi.mocked(printSliceIntro)).toHaveBeenCalledWith(expect.any(Function), slice);
   });
 
   it("calls commitSweep and runSlice for each slice", async () => {
