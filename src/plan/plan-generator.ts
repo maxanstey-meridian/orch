@@ -112,7 +112,7 @@ export const extractJson = (text: string): string => {
 
 // ─── Summary ────────────────────────────────────────────────────────────────
 
-export const formatPlanSummary = (groups: readonly Group[]): string[] => {
+export const planSummaryLines = (groups: readonly Group[]): string[] => {
   const totalSlices = groups.reduce((sum, g) => sum + g.slices.length, 0);
   const lines: string[] = [`${a.bold}Plan: ${groups.length} groups, ${totalSlices} slices${a.reset}`];
   for (const g of groups) {
@@ -189,7 +189,7 @@ export const doGeneratePlan = async (
       outputDir,
     );
     log(`${a.green}Plan written to ${planPath}${a.reset}`);
-    for (const line of formatPlanSummary(groups)) {
+    for (const line of planSummaryLines(groups)) {
       log(line);
     }
     return planPath;

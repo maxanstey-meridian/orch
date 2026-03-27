@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { extractJson, formatPlanSummary, generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../../src/plan/plan-generator.js";
+import { extractJson, planSummaryLines, generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../../src/plan/plan-generator.js";
 import { PlanSchema, parsePlanJson } from "../../src/plan/plan-schema.js";
 import type { AgentProcess, AgentResult } from "../../src/agent/agent.js";
 
@@ -477,19 +477,19 @@ describe("generatePlan", () => {
   });
 });
 
-// ─── formatPlanSummary ──────────────────────────────────────────────────────
+// ─── planSummaryLines ──────────────────────────────────────────────────────
 
-describe("formatPlanSummary", () => {
+describe("planSummaryLines", () => {
   const groups = parsePlanJson(VALID_PLAN);
 
   it("returns a line with total group and slice counts", () => {
-    const lines = formatPlanSummary(groups);
+    const lines = planSummaryLines(groups);
     expect(lines[0]).toContain("2 groups");
     expect(lines[0]).toContain("3 slices");
   });
 
   it("lists each group with name, slice count, and titles", () => {
-    const lines = formatPlanSummary(groups);
+    const lines = planSummaryLines(groups);
     const joined = lines.join("\n");
     expect(joined).toContain("Auth");
     expect(joined).toContain("2 slices");
