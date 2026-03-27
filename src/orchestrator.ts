@@ -9,12 +9,7 @@ import type { LogFn } from "./display.js";
 import { buildCommitSweepPrompt, buildFinalPasses, buildGapPrompt, buildReviewPrompt, buildTddPrompt, withBrief } from "./prompts.js";
 import type { CreditSignal } from "./credit-detection.js";
 import { makeStreamer, type Streamer } from "./streamer.js";
-
-export type GitPort = {
-  readonly hasDirtyTree: (cwd: string) => Promise<boolean>;
-  readonly captureRef: (cwd: string) => Promise<string>;
-  readonly hasChanges: (cwd: string, since: string) => Promise<boolean>;
-};
+import { hasDirtyTree, captureRef, hasChanges } from "./git.js";
 
 export type OrchestratorConfig = {
   readonly cwd: string;
@@ -100,7 +95,6 @@ export class Orchestrator {
     reviewAgent: AgentProcess,
     private readonly spawnTdd: () => Promise<AgentProcess>,
     private readonly spawnReview: () => Promise<AgentProcess>,
-    readonly git: GitPort,
     private readonly detectCredit: (result: AgentResult, stderr: string) => CreditSignal | null,
     private readonly persistState: (path: string, state: OrchestratorState) => Promise<void>,
     private readonly _isCleanReview: (text: string) => boolean,
@@ -207,7 +201,7 @@ export class Orchestrator {
   ): Promise<{ reviewBase: string; skipped: boolean }> {
     // Already-implemented detection
     const tddText = tddResult.assistantText ?? "";
-    const headAfterTdd = await this.git.captureRef(this.config.cwd);
+    const headAfterTdd = await captureRef(this.config.cwd);
     if (this.isAlreadyImplemented(tddText, headAfterTdd, reviewBase)) {
       this.log(`${ts()} ⏩ Slice ${slice.number} already implemented — skipping verify/review`);
       this.state = {
@@ -252,7 +246,7 @@ export class Orchestrator {
     }
 
     await this.reviewFix(slice.content, reviewBase);
-    const newReviewBase = await this.git.captureRef(this.config.cwd);
+    const newReviewBase = await captureRef(this.config.cwd);
 
     if (this.sliceSkipFlag) {
       return { reviewBase: newReviewBase, skipped: true };
@@ -360,7 +354,7 @@ export class Orchestrator {
 
       this.log(`${ts()} ${BOT_REVIEW.badge} review cycle ${cycle}/${this.config.maxReviewCycles}`);
 
-      if (!(await this.git.hasChanges(this.config.cwd, reviewSha))) {
+      if (!(await hasChanges(this.config.cwd, reviewSha))) {
         this.log(`${ts()} no diff — skipping review`);
         break;
       }
@@ -389,7 +383,7 @@ export class Orchestrator {
 
       this.hud.update({ activeAgent: "TDD", activeAgentActivity: "fixing review feedback..." });
       this.log(`${ts()} ${BOT_TDD.badge} fixing review feedback...`);
-      const preFixSha = await this.git.captureRef(this.config.cwd);
+      const preFixSha = await captureRef(this.config.cwd);
       const fixPrompt = buildTddPrompt(content, reviewText);
       s = this.streamer(BOT_TDD);
       const fixResult = await this.withInterrupt(this.tddAgent, () =>
@@ -407,17 +401,17 @@ export class Orchestrator {
         await this.followUp(fixResult, this.tddAgent);
       }
 
-      if (!(await this.git.hasChanges(this.config.cwd, preFixSha))) {
+      if (!(await hasChanges(this.config.cwd, preFixSha))) {
         this.log(`${ts()} TDD bot made no changes — review cycle complete`);
         break;
       }
 
-      reviewSha = await this.git.captureRef(this.config.cwd);
+      reviewSha = await captureRef(this.config.cwd);
     }
   }
 
   async commitSweep(groupName: string): Promise<void> {
-    const dirty = await this.git.hasDirtyTree(this.config.cwd);
+    const dirty = await hasDirtyTree(this.config.cwd);
     if (!dirty) return;
 
     if (!this.tddAgent.alive) {
@@ -468,7 +462,7 @@ export class Orchestrator {
 
   async run(groups: readonly Group[], startIdx: number): Promise<void> {
     const remaining = groups.slice(startIdx);
-    const runBaseSha = await this.git.captureRef(this.config.cwd);
+    const runBaseSha = await captureRef(this.config.cwd);
 
     for (let i = 0; i < remaining.length; i++) {
       const group = remaining[i];
@@ -483,7 +477,7 @@ export class Orchestrator {
       }
 
       // ── Slice loop ──
-      const groupBaseSha = await this.git.captureRef(this.config.cwd);
+      const groupBaseSha = await captureRef(this.config.cwd);
       let reviewBase = groupBaseSha;
       for (const slice of group.slices) {
         if (this.state.lastCompletedSlice !== undefined && slice.number <= this.state.lastCompletedSlice) {
@@ -493,7 +487,7 @@ export class Orchestrator {
 
         printSliceIntro(this.log, slice);
 
-        const verifyBaseSha = await this.git.captureRef(this.config.cwd);
+        const verifyBaseSha = await captureRef(this.config.cwd);
 
         // Plan-then-execute with replan loop
         const MAX_REPLANS = 2;
@@ -617,7 +611,7 @@ export class Orchestrator {
       return;
     }
 
-    if (!(await this.git.hasChanges(this.config.cwd, groupBaseSha))) {
+    if (!(await hasChanges(this.config.cwd, groupBaseSha))) {
       return;
     }
 
@@ -646,7 +640,7 @@ export class Orchestrator {
     }
 
     this.log(`${ts()} ${BOT_GAP.badge} gaps found — sending to TDD bot`);
-    const gapBaseSha = await this.git.captureRef(this.config.cwd);
+    const gapBaseSha = await captureRef(this.config.cwd);
     const gapFixPrompt = buildTddPrompt(
       groupContent,
       `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
@@ -664,7 +658,7 @@ export class Orchestrator {
       await this.followUp(fixResult, this.tddAgent);
     }
 
-    if (await this.git.hasChanges(this.config.cwd, gapBaseSha)) {
+    if (await hasChanges(this.config.cwd, gapBaseSha)) {
       await this.reviewFix(groupContent, gapBaseSha);
       this.log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
     }
@@ -673,7 +667,7 @@ export class Orchestrator {
   }
 
   async finalPasses(runBaseSha: string): Promise<void> {
-    if (!(await this.git.hasChanges(this.config.cwd, runBaseSha))) {
+    if (!(await hasChanges(this.config.cwd, runBaseSha))) {
       return;
     }
 
@@ -706,7 +700,7 @@ export class Orchestrator {
 
       // Fix cycle
       this.log(`${ts()} ${BOT_TDD.badge} fixing ${pass.name} findings...`);
-      const preFixSha = await this.git.captureRef(this.config.cwd);
+      const preFixSha = await captureRef(this.config.cwd);
       const fixPrompt = buildTddPrompt(
         this.config.planContent,
         `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
@@ -724,7 +718,7 @@ export class Orchestrator {
         await this.followUp(fixResult, this.tddAgent);
       }
 
-      if (await this.git.hasChanges(this.config.cwd, preFixSha)) {
+      if (await hasChanges(this.config.cwd, preFixSha)) {
         await this.reviewFix(this.config.planContent, preFixSha);
         this.log(`${ts()} ${a.green}✓ ${pass.name}: resolved${a.reset}`);
       }

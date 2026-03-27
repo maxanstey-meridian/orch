@@ -1,10 +1,17 @@
-import { describe, it, expect, vi } from "vitest";
-import { Orchestrator, CreditExhaustedError, type OrchestratorConfig, type GitPort, type RunDeps } from "../src/orchestrator.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Orchestrator, CreditExhaustedError, type OrchestratorConfig, type RunDeps } from "../src/orchestrator.js";
 import type { AgentProcess, AgentResult, AgentStyle } from "../src/agent.js";
 import type { Hud, KeyHandler, InterruptSubmitHandler } from "../src/hud.js";
 import type { Slice } from "../src/plan-parser.js";
 import type { CreditSignal } from "../src/credit-detection.js";
 import type { DiffStats } from "../src/review-threshold.js";
+import { hasDirtyTree, captureRef, hasChanges } from "../src/git.js";
+
+vi.mock("../src/git.js", () => ({
+  hasDirtyTree: vi.fn().mockResolvedValue(false),
+  captureRef: vi.fn().mockResolvedValue("abc123"),
+  hasChanges: vi.fn().mockResolvedValue(true),
+}));
 
 const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig => ({
   cwd: "/tmp",
@@ -19,13 +26,6 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   tddSkill: "skill-tdd",
   reviewSkill: "skill-review",
   verifySkill: "skill-verify",
-  ...overrides,
-});
-
-const fakeGit = (overrides?: Partial<GitPort>): GitPort => ({
-  hasDirtyTree: vi.fn().mockResolvedValue(false),
-  captureRef: vi.fn().mockResolvedValue("abc123"),
-  hasChanges: vi.fn().mockResolvedValue(true),
   ...overrides,
 });
 
@@ -76,7 +76,6 @@ const makeOrch = (overrides?: {
   hud?: ReturnType<typeof fakeHud>;
   spawnTdd?: () => Promise<AgentProcess>;
   spawnReview?: () => Promise<AgentProcess>;
-  git?: GitPort;
   detectCredit?: (result: AgentResult, stderr: string) => CreditSignal | null;
   persistState?: (path: string, state: unknown) => Promise<void>;
   isCleanReview?: (text: string) => boolean;
@@ -96,7 +95,6 @@ const makeOrch = (overrides?: {
     review,
     overrides?.spawnTdd ?? (() => Promise.resolve(fakeAgent())),
     overrides?.spawnReview ?? (() => Promise.resolve(fakeAgent())),
-    overrides?.git ?? fakeGit(),
     overrides?.detectCredit ?? (() => null),
     overrides?.persistState ?? vi.fn().mockResolvedValue(undefined),
     overrides?.isCleanReview ?? (() => false),
@@ -106,6 +104,12 @@ const makeOrch = (overrides?: {
   );
   return { orch, tdd, review, ...hudHelper };
 };
+
+beforeEach(() => {
+  vi.mocked(hasDirtyTree).mockReset().mockResolvedValue(false);
+  vi.mocked(captureRef).mockReset().mockResolvedValue("abc123");
+  vi.mocked(hasChanges).mockReset().mockResolvedValue(true);
+});
 
 describe("OrchestratorConfig", () => {
   it("has required fields", () => {
@@ -367,7 +371,7 @@ describe("followUp", () => {
 describe("Orchestrator.commitSweep", () => {
   it("skips when tree is clean", async () => {
     const tdd = fakeAgent();
-    const { orch } = makeOrch({ tddAgent: tdd, git: fakeGit({ hasDirtyTree: vi.fn().mockResolvedValue(false) }) });
+    const { orch } = makeOrch({ tddAgent: tdd });
     await orch.commitSweep("Auth");
     expect(tdd.send).not.toHaveBeenCalled();
   });
@@ -375,7 +379,8 @@ describe("Orchestrator.commitSweep", () => {
   it("skips with warning when agent is not alive", async () => {
     const tdd = fakeAgent();
     Object.defineProperty(tdd, "alive", { value: false });
-    const { orch } = makeOrch({ tddAgent: tdd, git: fakeGit({ hasDirtyTree: vi.fn().mockResolvedValue(true) }) });
+    vi.mocked(hasDirtyTree).mockResolvedValue(true);
+    const { orch } = makeOrch({ tddAgent: tdd });
     await orch.commitSweep("Auth");
     expect(tdd.send).not.toHaveBeenCalled();
     expect(orch.log).toHaveBeenCalledWith(expect.stringContaining("not alive"));
@@ -383,7 +388,8 @@ describe("Orchestrator.commitSweep", () => {
 
   it("sends commit sweep prompt when dirty", async () => {
     const tdd = fakeAgent();
-    const { orch } = makeOrch({ tddAgent: tdd, git: fakeGit({ hasDirtyTree: vi.fn().mockResolvedValue(true) }) });
+    vi.mocked(hasDirtyTree).mockResolvedValue(true);
+    const { orch } = makeOrch({ tddAgent: tdd });
     await orch.commitSweep("Auth");
     expect(tdd.send).toHaveBeenCalledWith(expect.stringContaining("Auth"), expect.any(Function), expect.any(Function));
     expect(orch.log).toHaveBeenCalledWith(expect.stringContaining("uncommitted changes detected"));
@@ -392,7 +398,8 @@ describe("Orchestrator.commitSweep", () => {
   it("logs success on exit 0", async () => {
     const tdd = fakeAgent();
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
-    const { orch } = makeOrch({ tddAgent: tdd, git: fakeGit({ hasDirtyTree: vi.fn().mockResolvedValue(true) }) });
+    vi.mocked(hasDirtyTree).mockResolvedValue(true);
+    const { orch } = makeOrch({ tddAgent: tdd });
     await orch.commitSweep("Auth");
     expect(orch.log).toHaveBeenCalledWith(expect.stringContaining("commit sweep complete"));
   });
@@ -400,7 +407,8 @@ describe("Orchestrator.commitSweep", () => {
   it("logs failure on non-zero exit", async () => {
     const tdd = fakeAgent();
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
-    const { orch } = makeOrch({ tddAgent: tdd, git: fakeGit({ hasDirtyTree: vi.fn().mockResolvedValue(true) }) });
+    vi.mocked(hasDirtyTree).mockResolvedValue(true);
+    const { orch } = makeOrch({ tddAgent: tdd });
     await orch.commitSweep("Auth");
     expect(orch.log).toHaveBeenCalledWith(expect.stringContaining("uncommitted changes may remain"));
   });
@@ -412,7 +420,8 @@ describe("Orchestrator.commitSweep", () => {
     (tdd.send as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({ exitCode: 0, assistantText: "", resultText: "", needsInput: true, sessionId: "s" })
       .mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
-    const { orch } = makeOrch({ tddAgent: tdd, hud: hudHelper, git: fakeGit({ hasDirtyTree: vi.fn().mockResolvedValue(true) }) });
+    vi.mocked(hasDirtyTree).mockResolvedValue(true);
+    const { orch } = makeOrch({ tddAgent: tdd, hud: hudHelper });
     await orch.commitSweep("Auth");
     expect(hudHelper.hud.askUser).toHaveBeenCalled();
   });
@@ -425,8 +434,8 @@ describe("Orchestrator.commitSweep", () => {
       return { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     });
     // Use a different approach: check interruptTarget is set during send
-    const git = fakeGit({ hasDirtyTree: vi.fn().mockResolvedValue(true) });
-    const { orch } = makeOrch({ tddAgent: tdd, git });
+    vi.mocked(hasDirtyTree).mockResolvedValue(true);
+    const { orch } = makeOrch({ tddAgent: tdd });
     let target: AgentProcess | null = null;
     (tdd.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
       target = orch.interruptTarget;
@@ -446,8 +455,8 @@ describe("Orchestrator.reviewFix", () => {
 
   it("exits when no changes since baseSha", async () => {
     const review = fakeAgent();
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
-    const { orch } = makeOrch({ reviewAgent: review, git });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = makeOrch({ reviewAgent: review });
     await orch.reviewFix("content", "abc123");
     expect(review.send).not.toHaveBeenCalled();
     expect(orch.log).toHaveBeenCalledWith(expect.stringContaining("no diff"));
@@ -467,8 +476,7 @@ describe("Orchestrator.reviewFix", () => {
     const tdd = fakeAgent();
     (review.send as ReturnType<typeof vi.fn>).mockResolvedValue(reviewResult("off-by-one"));
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue(reviewResult("fixed"));
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true) });
-    const { orch } = makeOrch({ reviewAgent: review, tddAgent: tdd, git, config: { maxReviewCycles: 2 } });
+    const { orch } = makeOrch({ reviewAgent: review, tddAgent: tdd, config: { maxReviewCycles: 2 } });
     await orch.reviewFix("content", "sha1");
     expect(review.send).toHaveBeenCalledTimes(2);
   });
@@ -479,8 +487,7 @@ describe("Orchestrator.reviewFix", () => {
     (review.send as ReturnType<typeof vi.fn>).mockResolvedValueOnce(reviewResult("off-by-one error"))
       .mockResolvedValue(reviewResult("REVIEW_CLEAN"));
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue(reviewResult("fixed"));
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true) });
-    const { orch } = makeOrch({ reviewAgent: review, tddAgent: tdd, git, isCleanReview: (t) => t.includes("REVIEW_CLEAN") });
+    const { orch } = makeOrch({ reviewAgent: review, tddAgent: tdd, isCleanReview: (t) => t.includes("REVIEW_CLEAN") });
     await orch.reviewFix("content", "sha1");
     expect(tdd.send).toHaveBeenCalledWith(expect.stringContaining("off-by-one"), expect.any(Function), expect.any(Function));
   });
@@ -498,8 +505,7 @@ describe("Orchestrator.reviewFix", () => {
       tddSends.push(p);
       return reviewResult("fixed");
     });
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true) });
-    const { orch } = makeOrch({ reviewAgent: review, tddAgent: tdd, git, config: { brief: "Project context", maxReviewCycles: 2 } });
+    const { orch } = makeOrch({ reviewAgent: review, tddAgent: tdd, config: { brief: "Project context", maxReviewCycles: 2 } });
     await orch.reviewFix("content", "sha1");
     expect(reviewSends[0]).toContain("Project context");
     expect(tddSends[0]).toContain("Project context");
@@ -511,12 +517,10 @@ describe("Orchestrator.reviewFix", () => {
     const tdd = fakeAgent();
     (review.send as ReturnType<typeof vi.fn>).mockResolvedValue(reviewResult("findings"));
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue(reviewResult("fixed"));
-    const git = fakeGit({
-      hasChanges: vi.fn()
-        .mockResolvedValueOnce(true)   // initial check — there are changes
-        .mockResolvedValueOnce(false), // after fix — no changes
-    });
-    const { orch } = makeOrch({ reviewAgent: review, tddAgent: tdd, git, config: { maxReviewCycles: 3 } });
+    vi.mocked(hasChanges)
+      .mockResolvedValueOnce(true)   // initial check — there are changes
+      .mockResolvedValueOnce(false); // after fix — no changes
+    const { orch } = makeOrch({ reviewAgent: review, tddAgent: tdd, config: { maxReviewCycles: 3 } });
     await orch.reviewFix("content", "sha1");
     expect(review.send).toHaveBeenCalledTimes(1);
   });
@@ -540,8 +544,7 @@ describe("Orchestrator.reviewFix", () => {
     (tdd.send as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({ exitCode: 0, assistantText: "fixed", resultText: "", needsInput: true, sessionId: "s" })
       .mockResolvedValue(reviewResult("done"));
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true) });
-    const { orch } = makeOrch({ reviewAgent: review, tddAgent: tdd, hud: hudHelper, git, isCleanReview: (t) => t.includes("REVIEW_CLEAN") });
+    const { orch } = makeOrch({ reviewAgent: review, tddAgent: tdd, hud: hudHelper, isCleanReview: (t) => t.includes("REVIEW_CLEAN") });
     await orch.reviewFix("content", "sha1");
     expect(hudHelper.hud.askUser).toHaveBeenCalled();
   });
@@ -564,9 +567,8 @@ describe("Orchestrator.reviewFix", () => {
       .mockResolvedValueOnce(reviewResult("findings"))
       .mockResolvedValue(reviewResult("REVIEW_CLEAN"));
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue(reviewResult("fixed"));
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true) });
     const hudHelper = fakeHud();
-    const { orch } = makeOrch({ reviewAgent: review, tddAgent: tdd, git, hud: hudHelper, isCleanReview: (t) => t.includes("REVIEW_CLEAN") });
+    const { orch } = makeOrch({ reviewAgent: review, tddAgent: tdd, hud: hudHelper, isCleanReview: (t) => t.includes("REVIEW_CLEAN") });
     await orch.reviewFix("content", "sha1");
     expect(hudHelper.hud.update).toHaveBeenCalledWith(expect.objectContaining({ activeAgent: "REV" }));
     expect(hudHelper.hud.update).toHaveBeenCalledWith(expect.objectContaining({ activeAgent: "TDD" }));
@@ -669,10 +671,7 @@ describe("runSlice", () => {
     const passText = "### VERIFY_RESULT\n**Status:** PASS";
     const verifyAgent = fakeAgent();
     (verifyAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: passText, resultText: "", needsInput: false, sessionId: "s" });
-    const git = fakeGit({
-      captureRef: vi.fn().mockResolvedValue("newsha"),
-      hasChanges: vi.fn().mockResolvedValue(true),
-    });
+    vi.mocked(captureRef).mockResolvedValue("newsha");
     const tdd = fakeAgent();
     const review = fakeAgent();
     (review.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "REVIEW_CLEAN", resultText: "", needsInput: false, sessionId: "s" });
@@ -680,7 +679,6 @@ describe("runSlice", () => {
     const { orch } = makeOrch({
       tddAgent: tdd,
       reviewAgent: review,
-      git,
       spawnVerify: () => Promise.resolve(verifyAgent),
       isCleanReview: (t) => t.includes("REVIEW_CLEAN"),
       persistState,
@@ -692,10 +690,10 @@ describe("runSlice", () => {
   });
 
   it("skips verify/review when already implemented", async () => {
-    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("samesha") });
+    vi.mocked(captureRef).mockResolvedValue("samesha");
     const review = fakeAgent();
     const persistState = vi.fn().mockResolvedValue(undefined);
-    const { orch } = makeOrch({ reviewAgent: review, git, persistState });
+    const { orch } = makeOrch({ reviewAgent: review, persistState });
     const alreadyResult = { ...tddResult, assistantText: "already fully implemented" };
     const result = await orch.runSlice(testSlice, "samesha", alreadyResult, "vfybase");
     expect(review.send).not.toHaveBeenCalled();
@@ -708,13 +706,12 @@ describe("runSlice", () => {
     const passText = "### VERIFY_RESULT\n**Status:** PASS";
     const verifyAgent = fakeAgent();
     (verifyAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: passText, resultText: "", needsInput: false, sessionId: "s" });
-    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("newsha"), hasChanges: vi.fn().mockResolvedValue(true) });
+    vi.mocked(captureRef).mockResolvedValue("newsha");
     const review = fakeAgent();
     const persistState = vi.fn().mockResolvedValue(undefined);
     const measureDiff = vi.fn().mockResolvedValue({ linesAdded: 2, linesRemoved: 1, total: 3 });
     const { orch } = makeOrch({
       reviewAgent: review,
-      git,
       spawnVerify: () => Promise.resolve(verifyAgent),
       persistState,
       measureDiff,
@@ -753,15 +750,15 @@ describe("runSlice", () => {
 
 describe("run()", () => {
   it("resolves for empty group list", async () => {
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
-    const { orch } = makeOrch({ git });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = makeOrch();
     await expect(orch.run([], 0)).resolves.toBeUndefined();
   });
 
   it("skips group when all slices completed", async () => {
     const group = { name: "Auth", slices: [{ number: 1, title: "a", content: "a" }, { number: 2, title: "b", content: "b" }] };
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
-    const { orch } = makeOrch({ git });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = makeOrch();
     orch.state = { lastCompletedSlice: 2 };
     await orch.run([group], 0);
     expect(orch.slicesCompleted).toBe(2);
@@ -777,8 +774,8 @@ describe("run()", () => {
       ],
     };
     const pte = vi.fn().mockResolvedValue({ tddResult: { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" }, skipped: false });
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
-    const { orch } = makeOrch({ git });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = makeOrch();
     orch.planThenExecute = pte;
     orch.spawnPlanWithSkill = () => fakeAgent();
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
@@ -793,9 +790,9 @@ describe("run()", () => {
     const group = { name: "G", slices: [{ number: 1, title: "Setup auth", content: "c" }] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
+    vi.mocked(hasChanges).mockResolvedValue(false);
     const logFn = vi.fn();
-    const { orch } = makeOrch({ git, runDeps: { planThenExecute: pte } });
+    const { orch } = makeOrch({ runDeps: { planThenExecute: pte } });
     (orch as any).log = logFn;
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
@@ -811,13 +808,14 @@ describe("run()", () => {
     const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
-    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("sha1"), hasChanges: vi.fn().mockResolvedValue(false) });
+    vi.mocked(captureRef).mockResolvedValue("sha1");
+    vi.mocked(hasChanges).mockResolvedValue(false);
     const persistState = vi.fn().mockResolvedValue(undefined);
     const measureDiff = vi.fn().mockResolvedValue({ linesAdded: 100, linesRemoved: 10, total: 110 });
     const tdd = fakeAgent();
     const review = fakeAgent();
     (review.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "LGTM", resultText: "", needsInput: false, sessionId: "s" });
-    const { orch } = makeOrch({ tddAgent: tdd, reviewAgent: review, git, persistState, measureDiff, isCleanReview: () => true });
+    const { orch } = makeOrch({ tddAgent: tdd, reviewAgent: review, persistState, measureDiff, isCleanReview: () => true });
     orch.planThenExecute = pte;
     orch.spawnPlanWithSkill = () => fakeAgent();
 
@@ -834,8 +832,8 @@ describe("run()", () => {
     const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
     const pte = vi.fn().mockResolvedValue({ tddResult: { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" }, skipped: true });
     const persistState = vi.fn().mockResolvedValue(undefined);
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
-    const { orch } = makeOrch({ persistState, git });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = makeOrch({ persistState });
     orch.planThenExecute = pte;
     orch.spawnPlanWithSkill = () => fakeAgent();
 
@@ -855,8 +853,9 @@ describe("run()", () => {
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
     const persistState = vi.fn().mockResolvedValue(undefined);
-    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("sha1"), hasChanges: vi.fn().mockResolvedValue(false) });
-    const { orch } = makeOrch({ persistState, git, config: { auto: true } });
+    vi.mocked(captureRef).mockResolvedValue("sha1");
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = makeOrch({ persistState, config: { auto: true } });
     orch.planThenExecute = pte;
     orch.spawnPlanWithSkill = () => fakeAgent();
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
@@ -876,8 +875,8 @@ describe("run()", () => {
       .mockResolvedValueOnce({ tddResult: okResult, skipped: false, replan: true })
       // After max replans, auto-accepts (noInteraction forced)
       .mockResolvedValueOnce({ tddResult: okResult, skipped: false });
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
-    const { orch } = makeOrch({ git });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = makeOrch();
     orch.planThenExecute = pte;
     orch.spawnPlanWithSkill = () => fakeAgent();
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
@@ -896,10 +895,10 @@ describe("run()", () => {
     const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
     const okResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult: okResult, skipped: false, hardInterrupt: "rewrite the approach" });
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
+    vi.mocked(hasChanges).mockResolvedValue(false);
     const newTdd = fakeAgent();
     const spawnTdd = vi.fn().mockResolvedValue(newTdd);
-    const { orch } = makeOrch({ git, spawnTdd });
+    const { orch } = makeOrch({ spawnTdd });
     orch.planThenExecute = pte;
     orch.spawnPlanWithSkill = () => fakeAgent();
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
@@ -921,8 +920,9 @@ describe("run()", () => {
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
     const persistState = vi.fn().mockResolvedValue(undefined);
-    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("sha1"), hasChanges: vi.fn().mockResolvedValue(false) });
-    const { orch } = makeOrch({ persistState, git, config: { auto: true } });
+    vi.mocked(captureRef).mockResolvedValue("sha1");
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = makeOrch({ persistState, config: { auto: true } });
     orch.planThenExecute = pte;
     orch.spawnPlanWithSkill = () => fakeAgent();
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
@@ -950,9 +950,9 @@ describe("gapAnalysis()", () => {
   });
 
   it("skips when no changes since group base", async () => {
-    const hasChanges = vi.fn().mockResolvedValue(false);
+    vi.mocked(hasChanges).mockResolvedValue(false);
     const spawnGap = vi.fn().mockReturnValue(fakeAgent());
-    const { orch } = makeOrch({ git: fakeGit({ hasChanges }) });
+    const { orch } = makeOrch();
     orch.spawnGap = spawnGap;
 
     await (orch as any).gapAnalysis({ name: "G", slices: [] }, "sha");
@@ -965,8 +965,8 @@ describe("gapAnalysis()", () => {
     const gapAgent = fakeAgent();
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing edge case tests for auth", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true), captureRef: vi.fn().mockResolvedValue("gapsha") });
-    const { orch } = makeOrch({ tddAgent: tdd, git });
+    vi.mocked(captureRef).mockResolvedValue("gapsha");
+    const { orch } = makeOrch({ tddAgent: tdd });
     orch.spawnGap = () => gapAgent;
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
@@ -983,9 +983,8 @@ describe("gapAnalysis()", () => {
     const gapAgent = fakeAgent();
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true) });
     const logFn = vi.fn();
-    const { orch } = makeOrch({ tddAgent: tdd, git });
+    const { orch } = makeOrch({ tddAgent: tdd });
     (orch as any).log = logFn;
     orch.spawnGap = () => gapAgent;
 
@@ -1002,8 +1001,7 @@ describe("gapAnalysis()", () => {
     const gapAgent = fakeAgent();
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true) });
-    const { orch } = makeOrch({ tddAgent: tdd, git });
+    const { orch } = makeOrch({ tddAgent: tdd });
     orch.spawnGap = () => gapAgent;
 
     await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
@@ -1017,9 +1015,9 @@ describe("gapAnalysis()", () => {
 
 describe("finalPasses()", () => {
   it("returns early when no changes since run base", async () => {
-    const hasChanges = vi.fn().mockResolvedValue(false);
+    vi.mocked(hasChanges).mockResolvedValue(false);
     const spawnFinal = vi.fn().mockReturnValue(fakeAgent());
-    const { orch } = makeOrch({ git: fakeGit({ hasChanges }) });
+    const { orch } = makeOrch();
     orch.spawnFinal = spawnFinal;
 
     await (orch as any).finalPasses("runbasesha");
@@ -1032,8 +1030,7 @@ describe("finalPasses()", () => {
     const finalAgent = fakeAgent();
     (finalAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_ISSUES_FOUND", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true) });
-    const { orch } = makeOrch({ tddAgent: tdd, git });
+    const { orch } = makeOrch({ tddAgent: tdd });
     orch.spawnFinal = () => finalAgent;
 
     await (orch as any).finalPasses("sha");
@@ -1046,8 +1043,8 @@ describe("finalPasses()", () => {
     const finalAgent = fakeAgent();
     (finalAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Found type issues in auth.ts", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true), captureRef: vi.fn().mockResolvedValue("fixsha") });
-    const { orch } = makeOrch({ tddAgent: tdd, git });
+    vi.mocked(captureRef).mockResolvedValue("fixsha");
+    const { orch } = makeOrch({ tddAgent: tdd });
     orch.spawnFinal = () => finalAgent;
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
@@ -1065,9 +1062,9 @@ describe("run() full lifecycle", () => {
     const group = { name: "Auth", slices: [{ number: 1, title: "a", content: "c" }] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
-    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("sha1") });
+    vi.mocked(captureRef).mockResolvedValue("sha1");
     const persistState = vi.fn().mockResolvedValue(undefined);
-    const { orch } = makeOrch({ git, persistState, config: { auto: true } });
+    const { orch } = makeOrch({ persistState, config: { auto: true } });
     orch.planThenExecute = pte;
     orch.spawnPlanWithSkill = () => fakeAgent();
     const commitSweepSpy = vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
@@ -1090,11 +1087,12 @@ describe("run() full lifecycle", () => {
     const g2 = { name: "B", slices: [{ number: 2, title: "b", content: "c" }] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
-    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("sha1"), hasChanges: vi.fn().mockResolvedValue(false) });
+    vi.mocked(captureRef).mockResolvedValue("sha1");
+    vi.mocked(hasChanges).mockResolvedValue(false);
     const persistState = vi.fn().mockResolvedValue(undefined);
     const hudHelper = fakeHud();
     (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("y");
-    const { orch } = makeOrch({ persistState, git, hud: hudHelper, config: { auto: false, noInteraction: false } });
+    const { orch } = makeOrch({ persistState, hud: hudHelper, config: { auto: false, noInteraction: false } });
     orch.planThenExecute = pte;
     orch.spawnPlanWithSkill = () => fakeAgent();
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
@@ -1112,11 +1110,12 @@ describe("run() full lifecycle", () => {
     const g2 = { name: "B", slices: [{ number: 2, title: "b", content: "c" }] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
-    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("sha1"), hasChanges: vi.fn().mockResolvedValue(false) });
+    vi.mocked(captureRef).mockResolvedValue("sha1");
+    vi.mocked(hasChanges).mockResolvedValue(false);
     const persistState = vi.fn().mockResolvedValue(undefined);
     const hudHelper = fakeHud();
     (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("n");
-    const { orch } = makeOrch({ persistState, git, hud: hudHelper, config: { auto: false, noInteraction: false } });
+    const { orch } = makeOrch({ persistState, hud: hudHelper, config: { auto: false, noInteraction: false } });
     orch.planThenExecute = pte;
     orch.spawnPlanWithSkill = () => fakeAgent();
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
@@ -1147,9 +1146,8 @@ describe("finalPasses() gap coverage", () => {
       return agent;
     };
     const tdd = fakeAgent();
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true) });
     const logFn = vi.fn();
-    const { orch } = makeOrch({ tddAgent: tdd, git });
+    const { orch } = makeOrch({ tddAgent: tdd });
     (orch as any).log = logFn;
     orch.spawnFinal = spawnFinal;
 
@@ -1167,11 +1165,13 @@ describe("finalPasses() gap coverage", () => {
     (finalAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Found issues", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     // hasChanges returns true for the initial check, false for the post-fix check
-    const hasChangesFn = vi.fn()
+    vi.mocked(hasChanges)
+      .mockReset()
       .mockResolvedValueOnce(true)  // initial: there are changes to review
-      .mockResolvedValueOnce(false); // post-fix: TDD made no changes
-    const git = fakeGit({ hasChanges: hasChangesFn, captureRef: vi.fn().mockResolvedValue("fixsha") });
-    const { orch } = makeOrch({ tddAgent: tdd, git });
+      .mockResolvedValueOnce(false) // post-fix: TDD made no changes
+      .mockResolvedValue(false);    // subsequent passes: no changes
+    vi.mocked(captureRef).mockResolvedValue("fixsha");
+    const { orch } = makeOrch({ tddAgent: tdd });
     orch.spawnFinal = () => finalAgent;
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
@@ -1186,10 +1186,10 @@ describe("finalPasses() gap coverage", () => {
     (finalAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Found issues", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: true, sessionId: "s" });
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true), captureRef: vi.fn().mockResolvedValue("sha") });
+    vi.mocked(captureRef).mockResolvedValue("sha");
     const hudHelper = fakeHud();
     (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("");
-    const { orch } = makeOrch({ tddAgent: tdd, git, hud: hudHelper });
+    const { orch } = makeOrch({ tddAgent: tdd, hud: hudHelper });
     orch.spawnFinal = () => finalAgent;
     vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
@@ -1205,11 +1205,11 @@ describe("gapAnalysis() gap coverage", () => {
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing tests for X", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     // hasChanges: true for initial gap check, false for post-fix check
-    const hasChangesFn = vi.fn()
+    vi.mocked(hasChanges)
       .mockResolvedValueOnce(true)   // initial: changes exist
       .mockResolvedValueOnce(false); // post-fix: no changes from TDD
-    const git = fakeGit({ hasChanges: hasChangesFn, captureRef: vi.fn().mockResolvedValue("gapsha") });
-    const { orch } = makeOrch({ tddAgent: tdd, git });
+    vi.mocked(captureRef).mockResolvedValue("gapsha");
+    const { orch } = makeOrch({ tddAgent: tdd });
     orch.spawnGap = () => gapAgent;
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
@@ -1224,10 +1224,10 @@ describe("gapAnalysis() gap coverage", () => {
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing tests for X", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: true, sessionId: "s" });
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true), captureRef: vi.fn().mockResolvedValue("sha") });
+    vi.mocked(captureRef).mockResolvedValue("sha");
     const hudHelper = fakeHud();
     (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("");
-    const { orch } = makeOrch({ tddAgent: tdd, git, hud: hudHelper });
+    const { orch } = makeOrch({ tddAgent: tdd, hud: hudHelper });
     orch.spawnGap = () => gapAgent;
     vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
@@ -1242,9 +1242,9 @@ describe("commitSweep() gap coverage", () => {
     const tdd = fakeAgent();
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
     const persistState = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(hasDirtyTree).mockResolvedValue(true);
     const { orch } = makeOrch({
       tddAgent: tdd,
-      git: fakeGit({ hasDirtyTree: vi.fn().mockResolvedValue(true) }),
       detectCredit: () => ({ kind: "rejected" as const, message: "Out of credits" }),
       persistState,
     });
@@ -1269,8 +1269,8 @@ describe("reviewFix() gap coverage", () => {
       if (callCount >= 2) return { kind: "rejected" as const, message: "Out of credits" };
       return null;
     };
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true), captureRef: vi.fn().mockResolvedValue("sha") });
-    const { orch } = makeOrch({ tddAgent: tdd, reviewAgent: review, git, detectCredit, persistState });
+    vi.mocked(captureRef).mockResolvedValue("sha");
+    const { orch } = makeOrch({ tddAgent: tdd, reviewAgent: review, detectCredit, persistState });
 
     await expect(orch.reviewFix("content", "basesha")).rejects.toThrow(CreditExhaustedError);
   });
@@ -1284,10 +1284,10 @@ describe("runSlice() gap coverage", () => {
     const passText = "### VERIFY_RESULT\n**Status:** PASS\n**New failures:**\nnone";
     const verifyAgent = fakeAgent();
     (verifyAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: passText, resultText: "", needsInput: false, sessionId: "s" });
-    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("newsha"), hasChanges: vi.fn().mockResolvedValue(true) });
+    vi.mocked(captureRef).mockResolvedValue("newsha");
     const measureDiff = vi.fn().mockResolvedValue({ linesAdded: 100, linesRemoved: 10, total: 110 });
     const persistState = vi.fn().mockResolvedValue(undefined);
-    const { orch } = makeOrch({ git, spawnVerify: () => Promise.resolve(verifyAgent), measureDiff, persistState });
+    const { orch } = makeOrch({ spawnVerify: () => Promise.resolve(verifyAgent), measureDiff, persistState });
 
     // Set skip flag after verify passes (line 250 check)
     const origVerify = orch.verify.bind(orch);
@@ -1308,11 +1308,11 @@ describe("runSlice() gap coverage", () => {
     const review = fakeAgent();
     (review.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Fix this", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
-    const git = fakeGit({ captureRef: vi.fn().mockResolvedValue("newsha"), hasChanges: vi.fn().mockResolvedValue(true) });
+    vi.mocked(captureRef).mockResolvedValue("newsha");
     const measureDiff = vi.fn().mockResolvedValue({ linesAdded: 100, linesRemoved: 10, total: 110 });
     const persistState = vi.fn().mockResolvedValue(undefined);
     const { orch } = makeOrch({
-      tddAgent: tdd, reviewAgent: review, git,
+      tddAgent: tdd, reviewAgent: review,
       spawnVerify: () => Promise.resolve(verifyAgent),
       measureDiff, persistState,
     });
@@ -1332,10 +1332,10 @@ describe("run() gap coverage", () => {
     const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
+    vi.mocked(hasChanges).mockResolvedValue(false);
     const persistState = vi.fn().mockResolvedValue(undefined);
     const { orch } = makeOrch({
-      git, persistState,
+      persistState,
       detectCredit: () => ({ kind: "rejected" as const, message: "Out" }),
     });
     orch.planThenExecute = pte;
@@ -1348,14 +1348,14 @@ describe("run() gap coverage", () => {
     const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: true, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
-    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
+    vi.mocked(hasChanges).mockResolvedValue(false);
     const hudHelper = fakeHud();
     // followUp will ask user, return empty → autonomy fallback → agent returns done
     (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("");
     const tdd = fakeAgent();
     // First call from PTE (mocked), second from followUp
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
-    const { orch } = makeOrch({ tddAgent: tdd, git, hud: hudHelper });
+    const { orch } = makeOrch({ tddAgent: tdd, hud: hudHelper });
     orch.planThenExecute = pte;
     orch.spawnPlanWithSkill = () => fakeAgent();
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
