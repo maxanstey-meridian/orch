@@ -2,12 +2,14 @@ import type { AgentProcess, AgentResult, AgentStyle } from "./agent.js";
 import type { Hud, WriteFn } from "./hud.js";
 import type { OrchestratorState } from "./state.js";
 import { a, ts, BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL, printSliceIntro, printSliceSummary } from "./display.js";
-import { shouldReview, type DiffStats } from "./review-threshold.js";
+import { shouldReview, measureDiff } from "./review-threshold.js";
 import type { Group, Slice } from "./plan-parser.js";
 import { parseVerifyResult } from "./verify.js";
 import type { LogFn } from "./display.js";
 import { buildCommitSweepPrompt, buildFinalPasses, buildGapPrompt, buildPlanPrompt, buildReviewPrompt, buildTddPrompt, withBrief } from "./prompts.js";
-import type { CreditSignal } from "./credit-detection.js";
+import { detectCreditExhaustion, type CreditSignal } from "./credit-detection.js";
+import { saveState } from "./state.js";
+import { isCleanReview } from "./review-check.js";
 import { makeStreamer, type Streamer } from "./streamer.js";
 import { hasDirtyTree, captureRef, hasChanges } from "./git.js";
 import { spawnAgent as spawnAgentFactory, spawnPlanAgentWithSkill } from "./agent-factory.js";
@@ -67,11 +69,7 @@ export class Orchestrator {
     reviewAgent: AgentProcess,
     private readonly spawnTdd: () => Promise<AgentProcess>,
     private readonly spawnReview: () => Promise<AgentProcess>,
-    private readonly detectCredit: (result: AgentResult, stderr: string) => CreditSignal | null,
-    private readonly persistState: (path: string, state: OrchestratorState) => Promise<void>,
-    private readonly _isCleanReview: (text: string) => boolean,
     private readonly spawnVerify: () => Promise<AgentProcess>,
-    private readonly _measureDiff: (cwd: string, since: string) => Promise<DiffStats>,
   ) {
     this.state = initialState;
     this.tddAgent = tddAgent;
@@ -153,10 +151,10 @@ export class Orchestrator {
   }
 
   async checkCredit(result: AgentResult, agent: AgentProcess): Promise<void> {
-    const signal = this.detectCredit(result, agent.stderr);
+    const signal = detectCreditExhaustion(result, agent.stderr);
     if (!signal) return;
     this.log(`Credit exhaustion detected: ${signal.message}`);
-    await this.persistState(this.config.stateFile, this.state);
+    await saveState(this.config.stateFile, this.state);
     throw new CreditExhaustedError(signal.message, signal.kind);
   }
 
@@ -176,7 +174,7 @@ export class Orchestrator {
         lastSliceImplemented: slice.number,
         lastCompletedSlice: slice.number,
       };
-      await this.persistState(this.config.stateFile, this.state);
+      await saveState(this.config.stateFile, this.state);
       this.slicesCompleted++;
       return { reviewBase, skipped: false };
     }
@@ -196,14 +194,14 @@ export class Orchestrator {
       lastSliceImplemented: slice.number,
       reviewBaseSha: verifyBaseSha,
     };
-    await this.persistState(this.config.stateFile, this.state);
+    await saveState(this.config.stateFile, this.state);
 
     // Review-fix loop — gated on minimum diff threshold
-    const diffStats = await this._measureDiff(this.config.cwd, reviewBase);
+    const diffStats = await measureDiff(this.config.cwd, reviewBase);
     if (!shouldReview(diffStats, this.config.reviewThreshold)) {
       this.log(`${ts()} Diff too small (${diffStats.total} lines) — deferring review`);
       this.state = { ...this.state, lastCompletedSlice: slice.number };
-      await this.persistState(this.config.stateFile, this.state);
+      await saveState(this.config.stateFile, this.state);
       this.slicesCompleted++;
       return { reviewBase, skipped: false };
     }
@@ -227,7 +225,7 @@ export class Orchestrator {
     printSliceSummary(this.log, slice.number, summary);
 
     this.state = { ...this.state, lastCompletedSlice: slice.number };
-    await this.persistState(this.config.stateFile, this.state);
+    await saveState(this.config.stateFile, this.state);
     this.slicesCompleted++;
     this.hud.update({ activeAgent: undefined, activeAgentActivity: undefined });
     return { reviewBase: newReviewBase, skipped: false };
@@ -417,7 +415,7 @@ export class Orchestrator {
       this.reviewIsFirst = false;
       const reviewText = reviewResult.assistantText;
 
-      if (!reviewText || this._isCleanReview(reviewText)) {
+      if (!reviewText || isCleanReview(reviewText)) {
         this.log(`${ts()} ${a.green}✓ Review clean — no findings.${a.reset}`);
         break;
       }
@@ -447,7 +445,8 @@ export class Orchestrator {
         break;
       }
 
-      reviewSha = await captureRef(this.config.cwd);
+      // Advance to pre-fix SHA so next cycle reviews the fix delta, not an empty diff
+      reviewSha = preFixSha;
     }
   }
 
@@ -548,7 +547,7 @@ export class Orchestrator {
         if (pteResult.skipped) {
           this.sliceSkipFlag = false;
           this.state = { ...this.state, lastCompletedSlice: slice.number };
-          await this.persistState(this.config.stateFile, this.state);
+          await saveState(this.config.stateFile, this.state);
           await this.respawnTdd();
           this.slicesCompleted++;
           continue;
@@ -595,7 +594,7 @@ export class Orchestrator {
 
       // Mark group complete
       this.state = { ...this.state, lastCompletedGroup: group.name };
-      await this.persistState(this.config.stateFile, this.state);
+      await saveState(this.config.stateFile, this.state);
 
       // Inter-group transition
       if (i < remaining.length - 1) {

@@ -23,7 +23,6 @@ import { parsePlan } from "./plan-parser.js";
 import { generatePlan, isPlanFormat, planFileName, planIdFromPath } from "./plan-generator.js";
 import {
   loadState,
-  saveState,
   clearState,
   statePathForPlan,
   type OrchestratorState,
@@ -43,10 +42,8 @@ import { runInit, profileToMarkdown } from "./init.js";
 import { spawnAgent, spawnTddAgent, spawnReviewAgent, spawnPlanAgentWithSkill, TDD_RULES_REMINDER, REVIEW_RULES_REMINDER } from "./agent-factory.js";
 import { getStatus, stashBackup } from "./git.js";
 import { assertGitRepo } from "./repo-check.js";
-import { isCleanReview } from "./review-check.js";
 
-import { detectCreditExhaustion } from "./credit-detection.js";
-import { measureDiff } from "./review-threshold.js";
+
 import { createHud } from "./hud.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -342,11 +339,7 @@ const main = async () => {
     reviewAgent,
     async () => spawnTddAgent(tddSkill),
     async () => spawnReviewAgent(reviewSkill),
-    detectCreditExhaustion,
-    saveState,
-    isCleanReview,
     async () => spawnAgent(BOT_VERIFY, verifySkill),
-    measureDiff,
   );
   if (interactive) _orch.setupKeyboardHandlers();
 
