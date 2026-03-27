@@ -493,7 +493,7 @@ describe("planThenExecute", () => {
     expect(tddAgent.send).toHaveBeenCalledOnce();
   });
 
-  it("brief dep is accepted but not included in execute prompt (documents current behavior)", async () => {
+  it("brief is prepended to execute prompt via withBrief", async () => {
     const { planThenExecute } = await import("../src/plan-executor.js");
 
     const planAgent = makeAgent({
@@ -516,9 +516,64 @@ describe("planThenExecute", () => {
     });
 
     const tddPrompt = (tddAgent.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    // brief is not currently wired into the execute prompt — caller handles it via withBrief
-    expect(tddPrompt).not.toContain("project brief");
+    expect(tddPrompt).toContain("project brief");
     expect(tddPrompt).toContain("Execute this plan:");
+  });
+
+  it("brief is prepended to plan prompt via withBrief", async () => {
+    const { planThenExecute } = await import("../src/plan-executor.js");
+
+    const planAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText: "the plan" })),
+    });
+    const tddAgent = makeAgent();
+
+    await planThenExecute({
+      sliceContent: "slice",
+      planAgent,
+      tddAgent,
+      brief: "This is the project brief with important context",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => false,
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log: () => {},
+    });
+
+    const planPrompt = (planAgent.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(planPrompt).toContain("project brief");
+    expect(planPrompt).toContain("Plan Slice");
+  });
+
+  it("empty brief does not modify prompts", async () => {
+    const { planThenExecute } = await import("../src/plan-executor.js");
+
+    const planAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText: "the plan" })),
+    });
+    const tddAgent = makeAgent();
+
+    await planThenExecute({
+      sliceContent: "slice",
+      planAgent,
+      tddAgent,
+      brief: "",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => false,
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log: () => {},
+    });
+
+    const planPrompt = (planAgent.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    const tddPrompt = (tddAgent.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    // withBrief with empty string returns prompt unchanged
+    expect(planPrompt).toMatch(/^You are a planning agent/);
+    expect(tddPrompt).toMatch(/^Execute this plan:/);
   });
 
   it("execute prompt contains 'Execute this plan' even when plan is empty", async () => {

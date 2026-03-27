@@ -1,4 +1,5 @@
 import { BOT_PLAN, BOT_TDD } from "./display.js";
+import { withBrief } from "./prompts.js";
 import type { PlanThenExecuteDeps, PlanThenExecuteResult } from "./orchestrator.js";
 
 // ─── Plan-then-execute ──────────────────────────────────────────────────────
@@ -18,7 +19,7 @@ export const planThenExecute = async (
   deps: PlanThenExecuteDeps,
 ): Promise<PlanThenExecuteResult> => {
   // ── Plan phase ──
-  const planPrompt = buildPlanPrompt(deps.sliceContent);
+  const planPrompt = withBrief(buildPlanPrompt(deps.sliceContent), deps.brief);
   const ps = deps.makePlanStreamer();
   const planResult = await deps.withInterrupt(deps.planAgent, () =>
     deps.planAgent.send(planPrompt, ps, deps.onToolUse),
@@ -65,9 +66,10 @@ export const planThenExecute = async (
 
   // ── Execute phase ──
   deps.log(`${BOT_TDD.badge} executing plan...`);
-  const executePrompt = operatorGuidance
+  const rawExecutePrompt = operatorGuidance
     ? `Operator guidance: ${operatorGuidance}\n\nExecute this plan:\n\n${plan}`
     : `Execute this plan:\n\n${plan}`;
+  const executePrompt = withBrief(rawExecutePrompt, deps.brief);
   const es = deps.makeExecuteStreamer();
   const tddResult = await deps.withInterrupt(deps.tddAgent, () =>
     deps.tddAgent.send(executePrompt, es, deps.onToolUse),

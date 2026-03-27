@@ -514,6 +514,7 @@ export class Orchestrator {
             log: this.log,
             noInteraction: this.config.noInteraction,
             askUser: this.config.noInteraction ? undefined : this.hud.askUser,
+            onPlanReady: () => this.hud.update({ activeAgent: "TDD", activeAgentActivity: "executing plan..." }),
           });
           replanAttempts++;
         } while (pteResult.replan && replanAttempts < MAX_REPLANS);
@@ -734,6 +735,5 @@ export class Orchestrator {
     this.tddAgent.kill();
     this.tddAgent = await this.spawnTdd();
     this.tddIsFirst = true;
-    this.reviewIsFirst = true;
   }
 }
