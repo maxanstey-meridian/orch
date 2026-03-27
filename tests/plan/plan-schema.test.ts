@@ -67,6 +67,11 @@ describe("PlanSchema", () => {
     expect(PlanSchema.safeParse(input).success).toBe(false);
   });
 
+  it("rejects slice number 0", () => {
+    const input = { groups: [validGroup("G", [validSlice(0)])] };
+    expect(PlanSchema.safeParse(input).success).toBe(false);
+  });
+
   it("rejects negative slice number", () => {
     const input = { groups: [validGroup("G", [validSlice(-1)])] };
     expect(PlanSchema.safeParse(input).success).toBe(false);
@@ -210,6 +215,10 @@ describe("parsePlanJson", () => {
 
   it("throws on empty string", () => {
     expect(() => parsePlanJson("")).toThrow();
+  });
+
+  it("uses default source '<json>' in error when source arg is omitted", () => {
+    expect(() => parsePlanJson("{bad")).toThrow("<json>");
   });
 
   it("surfaces Zod field path on validation error", () => {

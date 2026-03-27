@@ -195,6 +195,20 @@ describe("extractJson", () => {
   it("returns empty string for empty input", () => {
     expect(extractJson("")).toBe("");
   });
+
+  it("handles stray } before the JSON object", () => {
+    const input = 'some text } preamble {"groups":[]} end';
+    const result = extractJson(input);
+    // Extracts from first { to last } — may span the stray }, but result includes the valid object
+    expect(result).toContain('{"groups":[]}');
+  });
+
+  it("spans from first { to last } when multiple JSON objects exist", () => {
+    const input = 'example: {"a":1} real plan: {"groups":[]}';
+    const result = extractJson(input);
+    // Documents current behavior: extracts from first { to last }, spanning both objects
+    expect(result).toBe('{"a":1} real plan: {"groups":[]}');
+  });
 });
 
 // ─── isPlanFormat ───────────────────────────────────────────────────────────
@@ -403,6 +417,24 @@ describe("generatePlan", () => {
     expect(parsed.groups[0].slices[0].files[0].path).toBe("src/auth.ts");
   });
 
+  it("written file round-trips through parsePlanJson matching result.groups", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_PLAN);
+
+    const result = await generatePlan(inventoryPath, "", agent, outputDir);
+
+    const written = readFileSync(result.planPath, "utf-8");
+    const reparsed = parsePlanJson(written, "round-trip");
+    expect(reparsed).toHaveLength(result.groups.length);
+    expect(reparsed[0].name).toBe(result.groups[0].name);
+    expect(reparsed[0].slices).toHaveLength(result.groups[0].slices.length);
+    expect(reparsed[0].slices[0].title).toBe(result.groups[0].slices[0].title);
+    expect(reparsed[1].name).toBe(result.groups[1].name);
+  });
+
   it("creates deeply nested output directories that do not exist", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
@@ -486,6 +518,17 @@ describe("planSummaryLines", () => {
     const lines = planSummaryLines(groups);
     expect(lines[0]).toContain("2 groups");
     expect(lines[0]).toContain("3 slices");
+  });
+
+  it("uses singular 'slice' in per-group line for a group with exactly one slice", () => {
+    const singleSliceGroups = parsePlanJson(JSON.stringify({
+      groups: [{ name: "Solo", slices: [{ number: 1, title: "Only one", why: "Just one.", files: [{ path: "a.ts", action: "new" }], details: "d", tests: "t" }] }],
+    }));
+    const lines = planSummaryLines(singleSliceGroups);
+    // Per-group line uses correct singular form
+    const groupLine = lines.find((l) => l.includes("Solo"));
+    expect(groupLine).toContain("1 slice");
+    expect(groupLine).not.toContain("1 slices");
   });
 
   it("lists each group with name, slice count, and titles", () => {

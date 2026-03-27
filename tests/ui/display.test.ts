@@ -224,6 +224,31 @@ describe("formatPlanSummary", () => {
     expect(text).toContain("Slice 3: Widgets");
   });
 
+  it("prints multiple files comma-separated", () => {
+    const { lines, log } = collect();
+    const multiFileGroups = [{
+      name: "Multi",
+      slices: [{
+        number: 1,
+        title: "Multi-file slice",
+        content: "",
+        why: "Need multiple files",
+        files: [
+          { path: "src/a.ts", action: "new" as const },
+          { path: "src/b.ts", action: "edit" as const },
+          { path: "src/c.ts", action: "delete" as const },
+        ],
+        details: "Details here.",
+        tests: "Tests here.",
+      }],
+    }];
+    formatPlanSummary(log, multiFileGroups);
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("src/a.ts (new)");
+    expect(text).toContain("src/b.ts (edit)");
+    expect(text).toContain("src/c.ts (delete)");
+  });
+
   it("prints group name as header", () => {
     const { lines, log } = collect();
     formatPlanSummary(log, groups);
