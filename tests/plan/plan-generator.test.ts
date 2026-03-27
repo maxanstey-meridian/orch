@@ -203,11 +203,10 @@ describe("extractJson", () => {
     expect(result).toContain('{"groups":[]}');
   });
 
-  it("spans from first { to last } when multiple JSON objects exist", () => {
+  it("finds valid JSON when multiple objects exist in text", () => {
     const input = 'example: {"a":1} real plan: {"groups":[]}';
     const result = extractJson(input);
-    // Documents current behavior: extracts from first { to last }, spanning both objects
-    expect(result).toBe('{"a":1} real plan: {"groups":[]}');
+    expect(() => JSON.parse(result)).not.toThrow();
   });
 });
 
