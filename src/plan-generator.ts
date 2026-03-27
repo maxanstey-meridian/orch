@@ -97,7 +97,16 @@ export const generatePlan = async (
   const prompt = parts.join("\n\n---\n\n");
   const result = await agent.send(prompt);
 
-  const planText = stripPreamble(result.assistantText).trim();
+  const raw = result.assistantText ?? "";
+  const planFromExit = result.planText ?? "";
+  const best = planFromExit || raw;
+  const planText = stripPreamble(best).trim();
+
+  if (!planText) {
+    throw new Error(
+      `Plan agent returned empty output.\nassistantText length: ${raw.length}\nplanText length: ${planFromExit.length}\nFirst 500 chars of assistantText:\n${raw.slice(0, 500)}`,
+    );
+  }
 
   // Validate — parsePlanText throws if no groups found
   parsePlanText(planText, "generated plan");

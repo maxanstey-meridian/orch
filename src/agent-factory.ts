@@ -61,14 +61,3 @@ export const REVIEW_RULES_REMINDER = `[ORCHESTRATOR] Non-negotiable rules for yo
 2. DO NOT SUGGEST REVERTING unrelated files (skill files, config, HUD changes) that weren't part of the slice.
 3. If the diff is empty and HEAD hasn't moved, respond with REVIEW_CLEAN. Do not claim work is missing if it was committed in prior commits.`;
 
-export const spawnTddAgent = async (skill: string): Promise<AgentProcess> => {
-  const agent = spawnAgent(BOT_TDD, skill);
-  await agent.sendQuiet(TDD_RULES_REMINDER);
-  return agent;
-};
-
-export const spawnReviewAgent = async (skill: string): Promise<AgentProcess> => {
-  const agent = spawnAgent(BOT_REVIEW, skill);
-  await agent.sendQuiet(REVIEW_RULES_REMINDER);
-  return agent;
-};

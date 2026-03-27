@@ -12,7 +12,7 @@ import { saveState } from "./state.js";
 import { isCleanReview } from "./review-check.js";
 import { makeStreamer, type Streamer } from "./streamer.js";
 import { hasDirtyTree, captureRef, hasChanges } from "./git.js";
-import { spawnAgent as spawnAgentFactory, spawnPlanAgentWithSkill } from "./agent-factory.js";
+import { spawnAgent as spawnAgentFactory, spawnPlanAgentWithSkill, TDD_RULES_REMINDER, REVIEW_RULES_REMINDER } from "./agent-factory.js";
 
 export type OrchestratorConfig = {
   readonly cwd: string;
@@ -67,9 +67,6 @@ export class Orchestrator {
     readonly log: LogFn,
     tddAgent: AgentProcess,
     reviewAgent: AgentProcess,
-    private readonly spawnTdd: () => Promise<AgentProcess>,
-    private readonly spawnReview: () => Promise<AgentProcess>,
-    private readonly spawnVerify: () => Promise<AgentProcess>,
   ) {
     this.state = initialState;
     this.tddAgent = tddAgent;
@@ -314,7 +311,7 @@ export class Orchestrator {
     this.hud.update({ activeAgent: "VFY", activeAgentActivity: "verifying..." });
     this.log(`${ts()} ${BOT_VERIFY.badge} verifying slice ${slice.number}...`);
 
-    const verifyAgent = await this.spawnVerify();
+    const verifyAgent = await this.spawnVerifyAgent();
     const verifyPrompt = withBrief(
       `Verify the changes since commit ${verifyBaseSha}. Context: TDD implementation of Slice ${slice.number}.`,
       this.config.brief,
@@ -494,8 +491,8 @@ export class Orchestrator {
   async respawnBoth(): Promise<void> {
     this.tddAgent.kill();
     this.reviewAgent.kill();
-    this.tddAgent = await this.spawnTdd();
-    this.reviewAgent = await this.spawnReview();
+    this.tddAgent = await this.spawnTddAgent();
+    this.reviewAgent = await this.spawnReviewAgent();
     this.tddIsFirst = true;
     this.reviewIsFirst = true;
   }
@@ -737,9 +734,25 @@ export class Orchestrator {
     }
   }
 
+  private async spawnTddAgent(): Promise<AgentProcess> {
+    const agent = spawnAgentFactory(BOT_TDD, this.config.tddSkill);
+    await agent.sendQuiet(TDD_RULES_REMINDER);
+    return agent;
+  }
+
+  private async spawnReviewAgent(): Promise<AgentProcess> {
+    const agent = spawnAgentFactory(BOT_REVIEW, this.config.reviewSkill);
+    await agent.sendQuiet(REVIEW_RULES_REMINDER);
+    return agent;
+  }
+
+  private async spawnVerifyAgent(): Promise<AgentProcess> {
+    return spawnAgentFactory(BOT_VERIFY, this.config.verifySkill);
+  }
+
   async respawnTdd(): Promise<void> {
     this.tddAgent.kill();
-    this.tddAgent = await this.spawnTdd();
+    this.tddAgent = await this.spawnTddAgent();
     this.tddIsFirst = true;
   }
 }
