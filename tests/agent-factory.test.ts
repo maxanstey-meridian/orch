@@ -149,6 +149,29 @@ describe("spawnReviewAgent", () => {
   });
 });
 
+describe("spawnPlanAgentWithSkill", () => {
+  beforeEach(() => {
+    mockedCreateAgent.mockClear();
+  });
+
+  it("spawns a plan agent with plan.md content as system prompt", async () => {
+    const { spawnPlanAgentWithSkill } = await loadModule();
+
+    spawnPlanAgentWithSkill();
+
+    expect(mockedCreateAgent).toHaveBeenCalledOnce();
+    const callArgs = mockedCreateAgent.mock.calls[0][0];
+    const args: string[] = callArgs.args;
+
+    // Should use plan permissions, not dangerously-skip-permissions
+    expect(args).toContain("--permission-mode");
+    // Should pass plan.md content as system prompt
+    expect(args).toContain("--append-system-prompt");
+    const prompt = args[args.indexOf("--append-system-prompt") + 1];
+    expect(prompt.length).toBeGreaterThan(0);
+  });
+});
+
 describe("rule constants", () => {
   it("TDD_RULES_REMINDER contains 'RUN TESTS WITH BASH'", async () => {
     const { TDD_RULES_REMINDER } = await loadModule();

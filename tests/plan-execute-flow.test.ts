@@ -578,4 +578,40 @@ describe("planThenExecute", () => {
     // TDD agent SHOULD have been called (plan phase passed)
     expect(tddAgent.send).toHaveBeenCalledOnce();
   });
+
+  it("fires onPlanReady callback before askUser in interactive mode", async () => {
+    const { planThenExecute } = await import("../src/plan-executor.js");
+
+    const callOrder: string[] = [];
+    const onPlanReady = vi.fn(() => { callOrder.push("onPlanReady"); });
+    const askUser = vi.fn().mockImplementation(async () => {
+      callOrder.push("askUser");
+      return "y";
+    });
+    const planAgent = makeAgent({
+      send: vi.fn().mockResolvedValue(makeResult({ planText: "the plan" })),
+    });
+    const tddAgent = makeAgent();
+
+    await planThenExecute({
+      sliceContent: "slice",
+      planAgent,
+      tddAgent,
+      brief: "",
+      makePlanStreamer: () => noopStreamer,
+      makeExecuteStreamer: () => noopStreamer,
+      withInterrupt: (_agent, fn) => fn(),
+      isSkipped: () => false,
+      isHardInterrupted: () => null,
+      onToolUse: () => {},
+      log: () => {},
+      noInteraction: false,
+      askUser,
+      onPlanReady,
+    });
+
+    expect(onPlanReady).toHaveBeenCalledOnce();
+    expect(askUser).toHaveBeenCalled();
+    expect(callOrder.indexOf("onPlanReady")).toBeLessThan(callOrder.indexOf("askUser"));
+  });
 });
