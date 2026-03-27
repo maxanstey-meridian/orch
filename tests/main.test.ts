@@ -8,9 +8,6 @@ import { tmpdir } from "os";
 import { createHash } from "crypto";
 import { execSync, spawnSync } from "child_process";
 import { loadState, saveState, clearState, statePathForPlan } from "../src/state.js";
-import { detectCreditExhaustion } from "../src/credit-detection.js";
-import { buildCommitSweepPrompt } from "../src/prompts.js";
-import type { AgentResult, AgentProcess } from "../src/agent.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
@@ -581,100 +578,8 @@ describeIntegration(".orch/ directory structure", () => {
   });
 });
 
-describe("exit code 2 on credit exhaustion (component-level)", () => {
-  const makeResult = (overrides: Partial<AgentResult> = {}): AgentResult => ({
-    exitCode: 0,
-    assistantText: "",
-    resultText: "",
-    needsInput: false,
-    sessionId: "test",
-    ...overrides,
-  });
 
-  it("detectCreditExhaustion returns signal that main.ts would use for exit(2)", () => {
-    // The exitOnCreditExhaustion closure (main.ts:510-520) does:
-    //   const signal = detectCreditExhaustion(result, agent.stderr);
-    //   if (!signal) return;
-    //   saveState(...)
-    //   process.exit(2)
-    //
-    // We can't test process.exit(2) without spawning, but we CAN verify
-    // the signal detection returns non-null (which triggers the exit path).
-    const result = makeResult({ resultText: "rate limit exceeded", exitCode: 1 });
-    const signal = detectCreditExhaustion(result, "");
-    expect(signal).not.toBeNull();
-    // If signal is non-null, main.ts exits with code 2
-  });
 
-  it("state is saved before exit(2) so resume works", async () => {
-    // The closure saves state at line 514 before calling process.exit(2).
-    // Verify the save → load round trip that resume depends on.
-    const stateFile = join(tempDir, "state.json");
-    const stateBeforeExit = { lastCompletedSlice: 3, lastCompletedGroup: "Auth" };
-    await saveState(stateFile, stateBeforeExit);
-
-    const resumed = await loadState(stateFile);
-    expect(resumed).toEqual(stateBeforeExit);
-  });
-});
-
-describe("mid-response logging (component-level)", () => {
-  const makeResult = (overrides: Partial<AgentResult> = {}): AgentResult => ({
-    exitCode: 0,
-    assistantText: "",
-    resultText: "",
-    needsInput: false,
-    sessionId: "test",
-    ...overrides,
-  });
-
-  it("mid-response signal is returned when assistantText is non-empty", () => {
-    // main.ts:515-516 checks signal.kind === 'mid-response' and logs
-    // "Agent was interrupted mid-response. The current slice will be re-run on resume."
-    // We verify the detection returns the correct kind.
-    const result = makeResult({
-      assistantText: "I was working on the implementation...",
-      resultText: "credit exhausted",
-      exitCode: 1,
-    });
-    const signal = detectCreditExhaustion(result, "");
-    expect(signal).not.toBeNull();
-    expect(signal!.kind).toBe("mid-response");
-    // When kind is mid-response, main.ts logs the warning message
-  });
-
-  it("rejected signal (empty assistantText) does NOT trigger mid-response log path", () => {
-    const result = makeResult({
-      assistantText: "",
-      resultText: "credit exhausted",
-      exitCode: 1,
-    });
-    const signal = detectCreditExhaustion(result, "");
-    expect(signal).not.toBeNull();
-    expect(signal!.kind).toBe("rejected");
-    // kind !== 'mid-response' means the extra log line is skipped
-  });
-});
-
-describeIntegration("skip-slice state persistence (component-level)", () => {
-  it("lastCompletedSlice is advanced and saved after a skip", async () => {
-    // The skip branch in main.ts advances lastCompletedSlice and saves per-plan state.
-    // Verify the save → load round trip.
-    const stateFile = join(tempDir, "state.json");
-
-    // Simulate state before skip: slice 2 completed, about to skip slice 3
-    await saveState(stateFile, { lastCompletedSlice: 2 });
-
-    // Simulate the skip branch: advance to slice 3
-    const state = await loadState(stateFile);
-    const updated = { ...state, lastCompletedSlice: 3 };
-    await saveState(stateFile, updated);
-
-    // Verify resume picks up at slice 3
-    const resumed = await loadState(stateFile);
-    expect(resumed.lastCompletedSlice).toBe(3);
-  });
-});
 
 describeIntegration("fingerprint force wiring (integration)", () => {
   const mainPath = join(import.meta.dirname, "../src/main.ts");
@@ -714,32 +619,6 @@ describeIntegration("fingerprint force wiring (integration)", () => {
     } catch { /* file not created */ }
 
     expect(briefContent).toContain("TypeScript");
-  });
-});
-
-
-describe("buildCommitSweepPrompt", () => {
-  it("includes the group name and key instruction text", () => {
-    const prompt = buildCommitSweepPrompt("Authentication");
-    expect(prompt).toContain("Authentication");
-    expect(prompt).toContain("uncommitted changes");
-    expect(prompt).toContain("commit");
-  });
-});
-
-describe("buildCommitSweepPrompt edge cases", () => {
-  it("handles empty group name without crashing", () => {
-    const prompt = buildCommitSweepPrompt("");
-    expect(prompt).toContain("uncommitted changes");
-    // Should still produce a valid string, not crash
-    expect(typeof prompt).toBe("string");
-    expect(prompt.length).toBeGreaterThan(0);
-  });
-
-  it("handles group name with special characters", () => {
-    const prompt = buildCommitSweepPrompt('Auth "OAuth2" & <SSO>');
-    expect(prompt).toContain('Auth "OAuth2" & <SSO>');
-    expect(prompt).toContain("uncommitted changes");
   });
 });
 

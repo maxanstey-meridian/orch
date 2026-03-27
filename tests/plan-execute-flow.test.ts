@@ -28,7 +28,7 @@ const noopStreamer = Object.assign(() => {}, { flush: () => {} });
 
 describe("planThenExecute", () => {
   it("sends plan text to TDD agent as 'Execute this plan' prompt", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const planAgent = makeAgent({
       send: vi.fn().mockResolvedValue(
@@ -68,7 +68,7 @@ describe("planThenExecute", () => {
   });
 
   it("falls back to assistantText when planText is undefined", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const planAgent = makeAgent({
       send: vi.fn().mockResolvedValue(
@@ -98,7 +98,7 @@ describe("planThenExecute", () => {
   });
 
   it("kills the plan agent after extracting the plan", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const planAgent = makeAgent({
       send: vi.fn().mockResolvedValue(
@@ -126,7 +126,7 @@ describe("planThenExecute", () => {
   });
 
   it("returns skipped=true when skip flag is set during plan phase", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const planAgent = makeAgent({
       send: vi.fn().mockResolvedValue(makeResult({ planText: "plan" })),
@@ -154,7 +154,7 @@ describe("planThenExecute", () => {
   });
 
   it("returns hardInterrupt guidance when plan phase is interrupted", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const planAgent = makeAgent({
       send: vi.fn().mockResolvedValue(makeResult({ planText: "partial plan" })),
@@ -182,7 +182,7 @@ describe("planThenExecute", () => {
   });
 
   it("skips confirmation when noInteraction is true", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const askUser = vi.fn();
     const planAgent = makeAgent({
@@ -211,7 +211,7 @@ describe("planThenExecute", () => {
   });
 
   it("asks for confirmation and proceeds on 'y'", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const askUser = vi.fn().mockResolvedValue("y");
     const planAgent = makeAgent({
@@ -242,7 +242,7 @@ describe("planThenExecute", () => {
   });
 
   it("proceeds on empty input (Enter key)", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const askUser = vi.fn().mockResolvedValue("");
     const planAgent = makeAgent({
@@ -271,7 +271,7 @@ describe("planThenExecute", () => {
   });
 
   it("logs truncated plan text before asking", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const lines = Array.from({ length: 50 }, (_, i) => `Step ${i + 1}`);
     const planText = lines.join("\n");
@@ -306,7 +306,7 @@ describe("planThenExecute", () => {
   });
 
   it("asks for guidance on 'e' and prepends to execute prompt", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const askUser = vi.fn()
       .mockResolvedValueOnce("e")
@@ -340,7 +340,7 @@ describe("planThenExecute", () => {
   });
 
   it("kills plan agent even when replanning", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const askUser = vi.fn().mockResolvedValue("r");
     const planAgent = makeAgent({
@@ -368,7 +368,7 @@ describe("planThenExecute", () => {
   });
 
   it("returns replan signal on 'r' input", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const askUser = vi.fn().mockResolvedValue("r");
     const planAgent = makeAgent({
@@ -398,7 +398,7 @@ describe("planThenExecute", () => {
   });
 
   it("auto-accepts after max replans (caller loop simulation)", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const MAX_REPLANS = 2;
     const askUser = vi.fn().mockResolvedValue("r");
@@ -459,7 +459,7 @@ describe("planThenExecute", () => {
   });
 
   it("returns hardInterrupt guidance when execute phase is interrupted", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     let callCount = 0;
     const planAgent = makeAgent({
@@ -494,7 +494,7 @@ describe("planThenExecute", () => {
   });
 
   it("brief dep is accepted but not included in execute prompt (documents current behavior)", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const planAgent = makeAgent({
       send: vi.fn().mockResolvedValue(makeResult({ planText: "the plan" })),
@@ -522,7 +522,7 @@ describe("planThenExecute", () => {
   });
 
   it("execute prompt contains 'Execute this plan' even when plan is empty", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     const planAgent = makeAgent({
       send: vi.fn().mockResolvedValue(makeResult({ planText: undefined, assistantText: "" })),
@@ -548,7 +548,7 @@ describe("planThenExecute", () => {
   });
 
   it("returns skipped=true when skip flag is set during execute phase", async () => {
-    const { planThenExecute } = await import("../src/main.js");
+    const { planThenExecute } = await import("../src/plan-executor.js");
 
     let callCount = 0;
     const planAgent = makeAgent({
