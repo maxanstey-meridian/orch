@@ -1,20 +1,10 @@
-import { execFile } from "child_process";
 import { stat, access } from "fs/promises";
-import { promisify } from "util";
 import { resolve } from "path";
-import { captureRef } from "./git.js";
+import { git, captureRef } from "./git.js";
 import { clearState, type OrchestratorState } from "./state.js";
 
-const run = promisify(execFile);
-
-const git = async (args: string[], cwd: string): Promise<string> => {
-  const { stdout } = await run("git", args, { cwd });
-  return stdout.trim();
-};
-
-export const removeWorktree = async (worktreePath: string): Promise<void> => {
-  const cwd = resolve(worktreePath, "..");
-  await git(["worktree", "remove", worktreePath], cwd);
+export const removeWorktree = async (worktreePath: string, repoRoot: string): Promise<void> => {
+  await git(["worktree", "remove", worktreePath], repoRoot);
 };
 
 export type WorktreeStatus =
@@ -43,24 +33,37 @@ export const verifyWorktree = async (
     return { ok: false, reason: "missing", detail: `${worktreePath} is not a git worktree` };
   }
   if (actual !== expectedBranch) {
-    return { ok: false, reason: "wrong-branch", detail: `expected "${expectedBranch}", got "${actual}"`, actual };
+    return {
+      ok: false,
+      reason: "wrong-branch",
+      detail: `expected "${expectedBranch}", got "${actual}"`,
+      actual,
+    };
   }
   return { ok: true };
 };
 
-export type ResumeCheck =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly message: string };
+export type ResumeCheck = { readonly ok: true } | { readonly ok: false; readonly message: string };
 
 export const checkWorktreeResume = async (
   branchFlag: string | undefined,
   state: OrchestratorState,
 ): Promise<ResumeCheck> => {
   if (!branchFlag && state.worktree) {
-    return { ok: false, message: `Previous run used --branch ${state.worktree.branch}. Pass --branch again to resume, or --reset to start fresh.` };
+    return {
+      ok: false,
+      message: `Previous run used --branch ${state.worktree.branch}. Pass --branch again to resume, or --reset to start fresh.`,
+    };
   }
-  if (branchFlag && !state.worktree && (state.lastCompletedSlice != null || state.lastCompletedGroup != null)) {
-    return { ok: false, message: `Previous run was in-place (no --branch). Use --reset to start fresh before switching to worktree mode.` };
+  if (
+    branchFlag &&
+    !state.worktree &&
+    (state.lastCompletedSlice != null || state.lastCompletedGroup != null)
+  ) {
+    return {
+      ok: false,
+      message: `Previous run was in-place (no --branch). Use --reset to start fresh before switching to worktree mode.`,
+    };
   }
   if (branchFlag && state.worktree) {
     const status = await verifyWorktree(state.worktree.path, state.worktree.branch);
@@ -68,26 +71,35 @@ export const checkWorktreeResume = async (
       if (state.lastCompletedSlice != null && state.lastCompletedSlice > 0) {
         const currentHead = await captureRef(state.worktree.path);
         if (currentHead === state.worktree.baseSha) {
-          return { ok: false, message: `Commits missing: HEAD is still at baseSha (${state.worktree.baseSha.slice(0, 8)}) but ${state.lastCompletedSlice} slice(s) are marked complete. Worktree may have been reset.` };
+          return {
+            ok: false,
+            message: `Commits missing: HEAD is still at baseSha (${state.worktree.baseSha.slice(0, 8)}) but ${state.lastCompletedSlice} slice(s) are marked complete. Worktree may have been reset.`,
+          };
         }
       }
       return { ok: true };
     }
     if (status.reason === "missing") {
-      return { ok: false, message: `Worktree missing at ${state.worktree.path}. Use --reset to start fresh.` };
+      return {
+        ok: false,
+        message: `Worktree missing at ${state.worktree.path}. Use --reset to start fresh.`,
+      };
     }
     if (status.reason === "wrong-branch") {
-      return { ok: false, message: `Worktree at ${state.worktree.path} is on branch ${status.actual}, expected ${state.worktree.branch}.` };
+      return {
+        ok: false,
+        message: `Worktree at ${state.worktree.path} is on branch ${status.actual}, expected ${state.worktree.branch}.`,
+      };
     }
   }
   return { ok: true };
 };
 
-export const runCleanup = async (stateFile: string, state: OrchestratorState): Promise<string> => {
+export const runCleanup = async (stateFile: string, state: OrchestratorState, repoRoot: string): Promise<string> => {
   let removedWorktree = false;
   if (state.worktree) {
     try {
-      await removeWorktree(state.worktree.path);
+      await removeWorktree(state.worktree.path, repoRoot);
       removedWorktree = true;
     } catch {
       // Worktree already removed or missing — proceed with state cleanup

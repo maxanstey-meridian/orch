@@ -160,7 +160,7 @@ const main = async () => {
 
   if (cleanupMode) {
     const state = await loadState(stateFile);
-    const message = await runCleanup(stateFile, state);
+    const message = await runCleanup(stateFile, state, cwd);
     for (const line of earlyLog) origLog(line);
     origLog(message);
     process.exit(0);
@@ -190,8 +190,18 @@ const main = async () => {
     origLog(resumeCheck.message);
     process.exit(1);
   }
-  const { cwd: effectiveCwd, worktreeInfo, skipStash, updatedState } = await resolveWorktree({
-    branchName, cwd, activePlanId, state, stateFile, log,
+  const {
+    cwd: effectiveCwd,
+    worktreeInfo,
+    skipStash,
+    updatedState,
+  } = await resolveWorktree({
+    branchName,
+    cwd,
+    activePlanId,
+    state,
+    stateFile,
+    log,
   });
   const interactive = !noInteraction && isTTY;
 
@@ -206,8 +216,14 @@ const main = async () => {
       hud.teardown();
     }
   };
-  process.on("SIGINT", () => { cleanup(); process.exit(130); });
-  process.on("SIGTERM", () => { cleanup(); process.exit(143); });
+  process.on("SIGINT", () => {
+    cleanup();
+    process.exit(130);
+  });
+  process.on("SIGTERM", () => {
+    cleanup();
+    process.exit(143);
+  });
 
   // 8. Validate group filter
   const startIdx = groupFilter
@@ -228,15 +244,35 @@ const main = async () => {
 
   // 9. Construct Orchestrator — spawns + reminds agents internally
   _orch = await Orchestrator.create(
-    { cwd: effectiveCwd, planPath, planContent, brief, noInteraction, auto, reviewThreshold, maxReviewCycles: 3, stateFile, tddSkill, reviewSkill, verifySkill } satisfies OrchestratorConfig,
-    updatedState, hud, log,
+    {
+      cwd: effectiveCwd,
+      planPath,
+      planContent,
+      brief,
+      noInteraction,
+      auto,
+      reviewThreshold,
+      maxReviewCycles: 3,
+      stateFile,
+      tddSkill,
+      reviewSkill,
+      verifySkill,
+    } satisfies OrchestratorConfig,
+    updatedState,
+    hud,
+    log,
   );
   if (interactive) _orch.setupKeyboardHandlers();
 
   // 10. Banner + group list
   const remaining = groups.slice(startIdx);
   printStartupBanner(log, {
-    planPath, brief, auto, interactive, groupFilter, worktree: worktreeInfo,
+    planPath,
+    brief,
+    auto,
+    interactive,
+    groupFilter,
+    worktree: worktreeInfo,
     tddSessionId: _orch.tddAgent.sessionId,
     reviewSessionId: _orch.reviewAgent.sessionId,
     groups: remaining,

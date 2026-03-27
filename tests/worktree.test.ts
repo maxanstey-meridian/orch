@@ -133,7 +133,7 @@ describe("runCleanup", () => {
     await mkdir(join(repoDir, ".orch/state"), { recursive: true });
     await saveState(stateFile, state);
 
-    const message = await runCleanup(stateFile, state);
+    const message = await runCleanup(stateFile, state, repoDir);
 
     await expect(stat(treePath)).rejects.toThrow();
     await expect(stat(stateFile)).rejects.toThrow();
@@ -147,7 +147,7 @@ describe("runCleanup", () => {
     await mkdir(join(repoDir, ".orch/state"), { recursive: true });
     await saveState(stateFile, state);
 
-    const message = await runCleanup(stateFile, state);
+    const message = await runCleanup(stateFile, state, repoDir);
 
     await expect(stat(stateFile)).rejects.toThrow();
     expect(message).toContain("No worktree to clean up");
@@ -161,17 +161,30 @@ describe("runCleanup", () => {
     await mkdir(join(repoDir, ".orch/state"), { recursive: true });
     await saveState(stateFile, state);
     // Manually remove the worktree before cleanup
-    await removeWorktree(treePath);
+    await removeWorktree(treePath, repoDir);
 
-    const message = await runCleanup(stateFile, state);
+    const message = await runCleanup(stateFile, state, repoDir);
 
     await expect(stat(stateFile)).rejects.toThrow();
+    expect(message).toContain("No worktree to clean up");
     expect(message).toContain("State cleared");
+  });
+
+  it("does not remove worktree when state has been cleared before cleanup (--reset --cleanup interaction)", async () => {
+    const treePath = await createWorktree(repoDir, "plan-reset-cleanup", "orch/plan-reset-cleanup");
+    // State was cleared by --reset, so runCleanup sees empty state
+    const stateFile = join(repoDir, ".orch/state/plan-reset-cleanup.json");
+    const message = await runCleanup(stateFile, {}, repoDir);
+
+    // Worktree still exists — runCleanup didn't know about it
+    const s = await stat(treePath);
+    expect(s.isDirectory()).toBe(true);
+    expect(message).toContain("No worktree to clean up");
   });
 
   it("succeeds when state file does not exist", async () => {
     const stateFile = "/tmp/nonexistent-state-" + Date.now() + ".json";
-    const message = await runCleanup(stateFile, {});
+    const message = await runCleanup(stateFile, {}, repoDir);
     expect(message).toContain("No worktree to clean up");
   });
 });
@@ -204,12 +217,12 @@ describe("worktree", () => {
   });
 
   it("removeWorktree throws when path does not exist", async () => {
-    await expect(removeWorktree("/tmp/nonexistent-" + Date.now())).rejects.toThrow();
+    await expect(removeWorktree("/tmp/nonexistent-" + Date.now(), repoDir)).rejects.toThrow();
   });
 
   it("removeWorktree removes the worktree directory", async () => {
     const path = await createWorktree(repoDir, "plan-rm", "orch/plan-rm");
-    await removeWorktree(path);
+    await removeWorktree(path, repoDir);
 
     await expect(stat(path)).rejects.toThrow();
     const list = exec("git worktree list", repoDir);
