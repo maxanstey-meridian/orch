@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Orchestrator, CreditExhaustedError, type OrchestratorConfig, type GitPort } from "../src/orchestrator.js";
+import { Orchestrator, CreditExhaustedError, type OrchestratorConfig, type GitPort, type RunDeps } from "../src/orchestrator.js";
 import type { AgentProcess, AgentResult, AgentStyle } from "../src/agent.js";
 import type { Hud, KeyHandler, InterruptSubmitHandler } from "../src/hud.js";
 import type { Slice } from "../src/plan-parser.js";
@@ -62,6 +62,13 @@ const fakeHud = () => {
   };
 };
 
+const defaultRunDeps = (): RunDeps => ({
+  planThenExecute: vi.fn().mockResolvedValue({ tddResult: { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" }, skipped: false }),
+  spawnPlanWithSkill: () => fakeAgent(),
+  spawnGap: () => fakeAgent(),
+  spawnFinal: () => fakeAgent(),
+});
+
 const makeOrch = (overrides?: {
   config?: Partial<OrchestratorConfig>;
   tddAgent?: AgentProcess;
@@ -75,6 +82,7 @@ const makeOrch = (overrides?: {
   isCleanReview?: (text: string) => boolean;
   spawnVerify?: () => Promise<AgentProcess>;
   measureDiff?: (cwd: string, since: string) => Promise<DiffStats>;
+  runDeps?: Partial<RunDeps>;
 }) => {
   const tdd = overrides?.tddAgent ?? fakeAgent();
   const review = overrides?.reviewAgent ?? fakeAgent();
@@ -94,6 +102,7 @@ const makeOrch = (overrides?: {
     overrides?.isCleanReview ?? (() => false),
     overrides?.spawnVerify ?? (() => Promise.resolve(fakeAgent())),
     overrides?.measureDiff ?? vi.fn().mockResolvedValue({ linesAdded: 100, linesRemoved: 10, total: 110 }),
+    { ...defaultRunDeps(), ...overrides?.runDeps },
   );
   return { orch, tdd, review, ...hudHelper };
 };
@@ -726,6 +735,17 @@ describe("runSlice", () => {
     const result = await orch.runSlice(testSlice, "oldbase", tddResult, "vfybase");
     expect(result.skipped).toBe(true);
   });
+
+  it("kills verifyAgent when operator chooses retry", async () => {
+    const failText = "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- broke";
+    const verifyAgent = fakeAgent();
+    (verifyAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: failText, resultText: "", needsInput: false, sessionId: "s" });
+    const hudHelper = fakeHud();
+    (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("r");
+    const { orch } = makeOrch({ hud: hudHelper, spawnVerify: () => Promise.resolve(verifyAgent) });
+    await orch.runSlice(testSlice, "oldbase", tddResult, "vfybase");
+    expect(verifyAgent.kill).toHaveBeenCalled();
+  });
 });
 
 // ─── run() ────────────────────────────────────────────────────────────────────
@@ -766,6 +786,24 @@ describe("run()", () => {
     await orch.run([group], 0);
     // Slice 1 skipped, slices 2 and 3 went through pipeline
     expect(pte).toHaveBeenCalledTimes(2);
+  });
+
+  it("logs slice intro for non-skipped slices", async () => {
+    const group = { name: "G", slices: [{ number: 1, title: "Setup auth", content: "c" }] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
+    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
+    const logFn = vi.fn();
+    const { orch } = makeOrch({ git, runDeps: { planThenExecute: pte } });
+    (orch as any).log = logFn;
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
+
+    await orch.run([group], 0);
+
+    const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+    expect(allLogs).toContain("Slice 1");
+    expect(allLogs).toContain("Setup auth");
   });
 
   it("calls commitSweep and runSlice for each slice", async () => {
@@ -829,6 +867,54 @@ describe("run()", () => {
     expect(respawnBothSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("retries planThenExecute when replan is true (up to MAX_REPLANS)", async () => {
+    const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
+    const okResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn()
+      .mockResolvedValueOnce({ tddResult: okResult, skipped: false, replan: true })
+      .mockResolvedValueOnce({ tddResult: okResult, skipped: false, replan: true })
+      // After max replans, auto-accepts (noInteraction forced)
+      .mockResolvedValueOnce({ tddResult: okResult, skipped: false });
+    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
+    const { orch } = makeOrch({ git });
+    orch.planThenExecute = pte;
+    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
+
+    await orch.run([group], 0);
+
+    // 2 replan attempts + 1 auto-accept = 3 total calls
+    expect(pte).toHaveBeenCalledTimes(3);
+    // The third call should have noInteraction: true (auto-accept)
+    const thirdCallDeps = pte.mock.calls[2][0];
+    expect(thirdCallDeps.noInteraction).toBe(true);
+  });
+
+  it("handles hardInterrupt by respawning TDD with guidance", async () => {
+    const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
+    const okResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult: okResult, skipped: false, hardInterrupt: "rewrite the approach" });
+    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(false) });
+    const newTdd = fakeAgent();
+    const spawnTdd = vi.fn().mockResolvedValue(newTdd);
+    const { orch } = makeOrch({ git, spawnTdd });
+    orch.planThenExecute = pte;
+    orch.spawnPlanWithSkill = () => fakeAgent();
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
+
+    await orch.run([group], 0);
+
+    // TDD agent was respawned
+    expect(spawnTdd).toHaveBeenCalled();
+    expect(orch.tddAgent).toBe(newTdd);
+    // Guidance was sent to the new TDD agent
+    expect(newTdd.send).toHaveBeenCalled();
+    const sentPrompt = (newTdd.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(sentPrompt).toContain("rewrite the approach");
+  });
+
   it("saves lastCompletedGroup after group completes", async () => {
     const group = { name: "Auth", slices: [{ number: 1, title: "a", content: "c" }] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
@@ -890,6 +976,25 @@ describe("gapAnalysis()", () => {
     expect(tdd.send).toHaveBeenCalled();
     expect(reviewFixSpy).toHaveBeenCalled();
     expect(gapAgent.kill).toHaveBeenCalled();
+  });
+
+  it("logs warning when gap agent fails (not success)", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    const git = fakeGit({ hasChanges: vi.fn().mockResolvedValue(true) });
+    const logFn = vi.fn();
+    const { orch } = makeOrch({ tddAgent: tdd, git });
+    (orch as any).log = logFn;
+    orch.spawnGap = () => gapAgent;
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    // Should log a warning, NOT "No coverage gaps found"
+    const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+    expect(allLogs).toContain("failed");
+    expect(allLogs).not.toContain("No coverage gaps found");
+    expect(tdd.send).not.toHaveBeenCalled();
   });
 
   it("does not call TDD bot when NO_GAPS_FOUND", async () => {
