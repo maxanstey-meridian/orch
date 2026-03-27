@@ -26,7 +26,8 @@ import {
   buildTddPrompt,
   withBrief,
 } from "./plan/prompts.js";
-import { detectCreditExhaustion, type CreditSignal } from "./agent/credit-detection.js";
+import type { CreditSignal } from "./agent/credit-detection.js";
+import { detectApiError } from "./agent/api-errors.js";
 import { saveState } from "./state/state.js";
 import { isCleanReview } from "./cli/review-check.js";
 import { makeStreamer, type Streamer } from "./agent/streamer.js";
@@ -81,6 +82,7 @@ export class Orchestrator {
   hardInterruptPending: string | null = null;
   slicesCompleted = 0;
   activityShowing = false;
+  retryDelayMs = 5_000;
 
   private readonly hudWriter: WriteFn;
 
@@ -195,11 +197,47 @@ export class Orchestrator {
   }
 
   async checkCredit(result: AgentResult, agent: AgentProcess): Promise<void> {
-    const signal = detectCreditExhaustion(result, agent.stderr);
-    if (!signal) return;
-    this.log(`Credit exhaustion detected: ${signal.message}`);
+    const apiError = detectApiError(result, agent.stderr);
+    if (!apiError || apiError.retryable) return;
+    this.log(`Terminal API error detected: ${apiError.kind}`);
     await saveState(this.config.stateFile, this.state);
-    throw new CreditExhaustedError(signal.message, signal.kind);
+    throw new CreditExhaustedError(
+      `Terminal API error: ${apiError.kind}`,
+      result.assistantText.length > 0 ? "mid-response" : "rejected",
+    );
+  }
+
+  async withRetry(
+    fn: () => Promise<AgentResult>,
+    agent: AgentProcess,
+    label: string,
+    maxRetries = 2,
+    delayMs = this.retryDelayMs,
+  ): Promise<AgentResult> {
+    let attempt = 0;
+    while (true) {
+      const result = await fn();
+      const apiError = detectApiError(result, agent.stderr);
+
+      if (!apiError) return result;
+
+      if (!apiError.retryable) {
+        await saveState(this.config.stateFile, this.state);
+        throw new CreditExhaustedError(
+          `Terminal API error during ${label}: ${apiError.kind}`,
+          result.assistantText.length > 0 ? "mid-response" : "rejected",
+        );
+      }
+
+      attempt++;
+      if (attempt > maxRetries) {
+        throw new Error(`Max retries (${maxRetries}) exceeded for ${label}: ${apiError.kind}`);
+      }
+
+      this.log(`${label}: ${apiError.kind} — retrying (${attempt}/${maxRetries})...`);
+      this.hud.setActivity(`waiting to retry (${apiError.kind})...`);
+      await new Promise((r) => setTimeout(r, delayMs * attempt));
+    }
   }
 
   async runSlice(
@@ -288,8 +326,12 @@ export class Orchestrator {
     const tddBrief = this.tddIsFirst ? this.config.brief : "";
     const planAgent = spawnPlanAgentWithSkill(this.config.cwd);
     const ps = this.streamer(BOT_PLAN);
-    const planResult = await this.withInterrupt(planAgent, () =>
-      planAgent.send(planPrompt, ps, (s) => this.onToolUse(s)),
+    const planResult = await this.withRetry(
+      () => this.withInterrupt(planAgent, () =>
+        planAgent.send(planPrompt, ps, (s) => this.onToolUse(s)),
+      ),
+      planAgent,
+      "plan",
     );
     ps.flush();
 
@@ -337,8 +379,12 @@ export class Orchestrator {
       : `Execute this plan:\n\n${plan}`;
     const executePrompt = withBrief(rawExecutePrompt, tddBrief);
     const es = this.streamer(BOT_TDD);
-    const tddResult = await this.withInterrupt(this.tddAgent, () =>
-      this.tddAgent.send(executePrompt, es, (s) => this.onToolUse(s)),
+    const tddResult = await this.withRetry(
+      () => this.withInterrupt(this.tddAgent, () =>
+        this.tddAgent.send(executePrompt, es, (s) => this.onToolUse(s)),
+      ),
+      this.tddAgent,
+      "tdd-execute",
     );
     es.flush();
 

@@ -6,6 +6,7 @@ import type { Slice } from "../src/plan/plan-parser.js";
 import { hasDirtyTree, captureRef, hasChanges } from "../src/git/git.js";
 import { spawnAgent, spawnPlanAgentWithSkill } from "../src/agent/agent-factory.js";
 import { detectCreditExhaustion } from "../src/agent/credit-detection.js";
+import { detectApiError } from "../src/agent/api-errors.js";
 import { saveState } from "../src/state/state.js";
 import { isCleanReview } from "../src/cli/review-check.js";
 import { measureDiff } from "../src/cli/review-threshold.js";
@@ -28,6 +29,10 @@ vi.mock("../src/agent/agent-factory.js", async (importOriginal) => {
 
 vi.mock("../src/agent/credit-detection.js", () => ({
   detectCreditExhaustion: vi.fn().mockReturnValue(null),
+}));
+
+vi.mock("../src/agent/api-errors.js", () => ({
+  detectApiError: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock("../src/state/state.js", () => ({
@@ -121,6 +126,7 @@ beforeEach(() => {
   vi.mocked(spawnAgent).mockReset().mockReturnValue(fakeAgent());
   vi.mocked(spawnPlanAgentWithSkill).mockReset().mockReturnValue(fakeAgent());
   vi.mocked(detectCreditExhaustion).mockReset().mockReturnValue(null);
+  vi.mocked(detectApiError).mockReset().mockReturnValue(null);
   vi.mocked(saveState).mockReset().mockResolvedValue(undefined);
   vi.mocked(isCleanReview).mockReset().mockReturnValue(false);
   vi.mocked(measureDiff).mockReset().mockResolvedValue({ linesAdded: 100, linesRemoved: 10, total: 110 });
@@ -478,7 +484,7 @@ describe("checkCredit", () => {
   });
 
   it("saves state and throws CreditExhaustedError on signal", async () => {
-    vi.mocked(detectCreditExhaustion).mockReturnValue({ kind: "rejected" as const, message: "Credits exhausted." });
+    vi.mocked(detectApiError).mockReturnValue({ kind: "credit-exhausted", retryable: false });
     const { orch, tdd } = await makeOrch();
     const result = { exitCode: 1, assistantText: "", resultText: "credit limit", needsInput: false, sessionId: "s" };
     await expect(orch.checkCredit(result, tdd)).rejects.toThrow(CreditExhaustedError);
@@ -725,7 +731,7 @@ describe("Orchestrator.reviewFix", () => {
     const review = fakeAgent();
     const badResult = reviewResult("", { exitCode: 1 });
     (review.send as ReturnType<typeof vi.fn>).mockResolvedValue(badResult);
-    vi.mocked(detectCreditExhaustion).mockReturnValue({ kind: "rejected" as const, message: "Credits gone" });
+    vi.mocked(detectApiError).mockReturnValue({ kind: "credit-exhausted", retryable: false });
     const { orch } = await makeOrch({ reviewAgent: review });
     await expect(orch.reviewFix("content", "sha1")).rejects.toThrow(CreditExhaustedError);
   });
@@ -1419,7 +1425,7 @@ describe("commitSweep() gap coverage", () => {
   it("throws CreditExhaustedError when credit signal detected", async () => {
     const tdd = fakeAgent();
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
-    vi.mocked(detectCreditExhaustion).mockReturnValue({ kind: "rejected" as const, message: "Out of credits" });
+    vi.mocked(detectApiError).mockReturnValue({ kind: "credit-exhausted", retryable: false });
     vi.mocked(hasDirtyTree).mockResolvedValue(true);
     const { orch } = await makeOrch({ tddAgent: tdd });
 
@@ -1434,11 +1440,11 @@ describe("reviewFix() gap coverage", () => {
     (review.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Fix this", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
-    // detectCredit fires on second call (the TDD fix result)
+    // detectApiError fires on second call (the TDD fix result)
     let callCount = 0;
-    vi.mocked(detectCreditExhaustion).mockImplementation(() => {
+    vi.mocked(detectApiError).mockImplementation(() => {
       callCount++;
-      if (callCount >= 2) return { kind: "rejected" as const, message: "Out of credits" };
+      if (callCount >= 2) return { kind: "credit-exhausted", retryable: false };
       return null;
     });
     vi.mocked(captureRef).mockResolvedValue("sha");
@@ -1499,7 +1505,7 @@ describe("run() gap coverage", () => {
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
     vi.mocked(hasChanges).mockResolvedValue(false);
-    vi.mocked(detectCreditExhaustion).mockReturnValue({ kind: "rejected" as const, message: "Out" });
+    vi.mocked(detectApiError).mockReturnValue({ kind: "credit-exhausted", retryable: false });
     const { orch } = await makeOrch();
     vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
 
@@ -1840,5 +1846,129 @@ describe("finalPasses uses imported spawnAgent", () => {
     await orch.finalPasses("sha");
 
     expect(spawnAgent).toHaveBeenCalled();
+  });
+});
+
+describe("withRetry", () => {
+  it("retries on retryable error then succeeds", async () => {
+    const agent = fakeAgent();
+    const failResult: AgentResult = { exitCode: 1, assistantText: "", resultText: "529 overloaded", needsInput: false, sessionId: "s" };
+    const okResult: AgentResult = { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
+    const fn = vi.fn().mockResolvedValueOnce(failResult).mockResolvedValueOnce(okResult);
+    vi.mocked(detectApiError)
+      .mockReturnValueOnce({ kind: "overloaded", retryable: true })
+      .mockReturnValueOnce(null);
+
+    const { orch, hud } = await makeOrch();
+    const result = await orch.withRetry(fn, agent, "plan", 2, 0);
+
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(result).toBe(okResult);
+    expect(hud.setActivity).toHaveBeenCalledWith(expect.stringContaining("retry"));
+  });
+
+  it("throws on terminal error without retrying", async () => {
+    const agent = fakeAgent();
+    const failResult: AgentResult = { exitCode: 1, assistantText: "", resultText: "credit exhausted", needsInput: false, sessionId: "s" };
+    const fn = vi.fn().mockResolvedValue(failResult);
+    vi.mocked(detectApiError).mockReturnValue({ kind: "credit-exhausted", retryable: false });
+
+    const { orch } = await makeOrch();
+    await expect(orch.withRetry(fn, agent, "plan", 2, 0)).rejects.toThrow(CreditExhaustedError);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(saveState).toHaveBeenCalled();
+  });
+
+  it("gives up after max retries", async () => {
+    const agent = fakeAgent();
+    const failResult: AgentResult = { exitCode: 1, assistantText: "", resultText: "529", needsInput: false, sessionId: "s" };
+    const fn = vi.fn().mockResolvedValue(failResult);
+    vi.mocked(detectApiError).mockReturnValue({ kind: "overloaded", retryable: true });
+
+    const { orch } = await makeOrch();
+    await expect(orch.withRetry(fn, agent, "plan", 2, 0)).rejects.toThrow(/max retries.*2/i);
+    expect(fn).toHaveBeenCalledTimes(3); // initial + 2 retries
+  });
+
+  it("planThenExecute retries plan agent on 529", async () => {
+    const planAgent = fakeAgent();
+    const fail529: AgentResult = { exitCode: 1, assistantText: "", resultText: "529 overloaded", needsInput: false, sessionId: "s" };
+    const okPlan: AgentResult = { exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s" };
+    (planAgent.send as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(fail529)
+      .mockResolvedValueOnce(okPlan);
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    vi.mocked(detectApiError)
+      .mockReturnValueOnce({ kind: "overloaded", retryable: true })
+      .mockReturnValueOnce(null) // plan retry succeeds
+      .mockReturnValueOnce(null); // tdd send succeeds
+    const { orch, hud } = await makeOrch({ config: { noInteraction: true } });
+    orch.retryDelayMs = 0;
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(planAgent.send).toHaveBeenCalledTimes(2);
+    expect(result.skipped).toBe(false);
+  });
+
+  it("planThenExecute retries TDD execution on 529", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const tdd = fakeAgent();
+    const fail529: AgentResult = { exitCode: 1, assistantText: "", resultText: "overloaded", needsInput: false, sessionId: "s" };
+    const okResult: AgentResult = { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
+    (tdd.send as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(fail529)
+      .mockResolvedValueOnce(okResult);
+    vi.mocked(detectApiError)
+      .mockReturnValueOnce(null) // plan send succeeds
+      .mockReturnValueOnce({ kind: "overloaded", retryable: true }) // tdd first attempt
+      .mockReturnValueOnce(null); // tdd retry succeeds
+    const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+    orch.retryDelayMs = 0;
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(tdd.send).toHaveBeenCalledTimes(2);
+    expect(result.tddResult).toBe(okResult);
+  });
+
+  it("checkCredit ignores retryable errors", async () => {
+    const agent = fakeAgent();
+    const result: AgentResult = { exitCode: 1, assistantText: "", resultText: "rate limit", needsInput: false, sessionId: "s" };
+    // detectCreditExhaustion would normally signal this as a credit issue
+    vi.mocked(detectCreditExhaustion).mockReturnValue({ kind: "rejected", message: "Rate limited. Wait and retry." });
+    vi.mocked(detectApiError).mockReturnValue({ kind: "rate-limited", retryable: true });
+
+    const { orch } = await makeOrch();
+    // checkCredit should use detectApiError and ignore retryable — NOT throw
+    await expect(orch.checkCredit(result, agent)).resolves.toBeUndefined();
+  });
+
+  it("checkCredit throws on terminal errors via detectApiError", async () => {
+    const agent = fakeAgent();
+    const result: AgentResult = { exitCode: 1, assistantText: "", resultText: "credit exhausted", needsInput: false, sessionId: "s" };
+    vi.mocked(detectApiError).mockReturnValue({ kind: "credit-exhausted", retryable: false });
+
+    const { orch } = await makeOrch();
+    await expect(orch.checkCredit(result, agent)).rejects.toThrow(CreditExhaustedError);
+  });
+
+  it("updates HUD activity during retry wait", async () => {
+    const agent = fakeAgent();
+    const failResult: AgentResult = { exitCode: 1, assistantText: "", resultText: "529", needsInput: false, sessionId: "s" };
+    const okResult: AgentResult = { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
+    const fn = vi.fn().mockResolvedValueOnce(failResult).mockResolvedValueOnce(okResult);
+    vi.mocked(detectApiError)
+      .mockReturnValueOnce({ kind: "overloaded", retryable: true })
+      .mockReturnValueOnce(null);
+
+    const { orch, hud } = await makeOrch();
+    await orch.withRetry(fn, agent, "plan", 2, 0);
+
+    expect(hud.setActivity).toHaveBeenCalledWith("waiting to retry (overloaded)...");
   });
 });

@@ -1,0 +1,43 @@
+import { describe, it, expect } from "vitest";
+import { detectApiError } from "../../src/agent/api-errors.js";
+import type { AgentResult } from "../../src/agent/agent.js";
+
+const makeResult = (overrides: Partial<AgentResult> = {}): AgentResult => ({
+  exitCode: 0,
+  assistantText: "",
+  resultText: "",
+  needsInput: false,
+  sessionId: "test",
+  ...overrides,
+});
+
+describe("detectApiError", () => {
+  it("classifies 529 overloaded as retryable", () => {
+    const result = makeResult({ exitCode: 1, resultText: "Error 529 overloaded" });
+    const error = detectApiError(result, "");
+    expect(error).toEqual({ kind: "overloaded", retryable: true });
+  });
+
+  it("classifies rate limit as retryable", () => {
+    const result = makeResult({ exitCode: 1, resultText: "rate limit exceeded" });
+    const error = detectApiError(result, "");
+    expect(error).toEqual({ kind: "rate-limited", retryable: true });
+  });
+
+  it("classifies credit exhaustion as terminal", () => {
+    const result = makeResult({ exitCode: 1, resultText: "credit exhausted for this account" });
+    const error = detectApiError(result, "");
+    expect(error).toEqual({ kind: "credit-exhausted", retryable: false });
+  });
+
+  it("classifies unknown error as terminal", () => {
+    const result = makeResult({ exitCode: 1, resultText: "something unexpected happened" });
+    const error = detectApiError(result, "");
+    expect(error).toEqual({ kind: "unknown", retryable: false });
+  });
+
+  it("returns null on successful exit regardless of text", () => {
+    const result = makeResult({ exitCode: 0, resultText: "529 overloaded" });
+    expect(detectApiError(result, "rate limit")).toBeNull();
+  });
+});
