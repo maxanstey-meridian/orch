@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { printStartupBanner, printSliceIntro } from "../../src/ui/display.js";
+import { printStartupBanner, printSliceIntro, formatPlanSummary } from "../../src/ui/display.js";
 
 const collect = () => {
   const lines: string[] = [];
@@ -126,18 +126,18 @@ describe("printStartupBanner", () => {
   });
 });
 
-describe("printSliceIntro", () => {
-  const makeSlice = (overrides: Partial<{ number: number; title: string; why: string; content: string }> = {}) => ({
-    number: 1,
-    title: "User login",
-    content: "",
-    why: "Users need authentication before accessing resources",
-    files: [{ path: "src/auth.ts", action: "new" as const }],
-    details: "Implement login flow.",
-    tests: "Login works.",
-    ...overrides,
-  });
+const makeSlice = (overrides: Partial<{ number: number; title: string; why: string; content: string; tests: string }> = {}) => ({
+  number: 1,
+  title: "User login",
+  content: "",
+  why: "Users need authentication before accessing resources",
+  files: [{ path: "src/auth.ts", action: "new" as const }],
+  details: "Implement login flow.",
+  tests: "Login works.",
+  ...overrides,
+});
 
+describe("printSliceIntro", () => {
   it("shows slice.why as the intro line", () => {
     const { lines, log } = collect();
     printSliceIntro(log, makeSlice());
@@ -161,5 +161,76 @@ describe("printSliceIntro", () => {
     expect(middleLine).toBeDefined();
     expect(middleLine).toContain("\x1b[2m");  // dim
     expect(middleLine).toContain("\x1b[0m");  // reset
+  });
+});
+
+describe("formatPlanSummary", () => {
+  const groups = [
+    {
+      name: "Auth",
+      slices: [
+        makeSlice({ number: 1, title: "Login", why: "Auth needed" }),
+        makeSlice({ number: 2, title: "Session", why: "Persistence required" }),
+      ],
+    },
+    {
+      name: "Dashboard",
+      slices: [
+        makeSlice({ number: 3, title: "Widgets", why: "", content: "", tests: "Widget renders." }),
+      ],
+    },
+  ];
+
+  it("omits why line when why is empty", () => {
+    const { lines, log } = collect();
+    // Dashboard group has slice 3 with empty why
+    const singleGroup = [{ name: "Test", slices: [makeSlice({ number: 1, why: "" })] }];
+    formatPlanSummary(log, singleGroup);
+    const text = strip(lines.join("\n"));
+    // Should have group header, slice title, files, tests, footer — no blank why line
+    expect(text).toContain("Slice 1:");
+    expect(text).not.toMatch(/│\s*\n.*│\s*Files:/); // no empty line between title and files
+  });
+
+  it("prints tests summary", () => {
+    const { lines, log } = collect();
+    formatPlanSummary(log, groups);
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Login works.");
+    expect(text).toContain("Widget renders.");
+  });
+
+  it("prints file paths with actions", () => {
+    const { lines, log } = collect();
+    formatPlanSummary(log, groups);
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("src/auth.ts (new)");
+  });
+
+  it("prints why line for each slice", () => {
+    const { lines, log } = collect();
+    formatPlanSummary(log, groups);
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Auth needed");
+    expect(text).toContain("Persistence required");
+  });
+
+  it("prints slice number and title", () => {
+    const { lines, log } = collect();
+    formatPlanSummary(log, groups);
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Slice 1: Login");
+    expect(text).toContain("Slice 2: Session");
+    expect(text).toContain("Slice 3: Widgets");
+  });
+
+  it("prints group name as header", () => {
+    const { lines, log } = collect();
+    formatPlanSummary(log, groups);
+    const text = strip(lines.join("\n"));
+    const authIdx = text.indexOf("Auth");
+    const dashIdx = text.indexOf("Dashboard");
+    expect(authIdx).toBeGreaterThan(-1);
+    expect(dashIdx).toBeGreaterThan(authIdx);
   });
 });

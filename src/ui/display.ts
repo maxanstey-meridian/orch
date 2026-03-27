@@ -81,6 +81,20 @@ export const printSliceSummary = (log: LogFn, sliceNumber: number, summary: stri
   log(`${a.bold}${a.green}└──────────────────────────────────────────────${a.reset}`);
 };
 
+export const formatPlanSummary = (log: LogFn, groups: readonly Group[]): void => {
+  for (const g of groups) {
+    log(`\n${a.bold}${a.cyan}┌─ ${g.name}${a.reset}`);
+    for (const s of g.slices) {
+      log(`${a.dim}│${a.reset}  ${a.bold}Slice ${s.number}: ${s.title}${a.reset}`);
+      if (s.why) log(`${a.dim}│     ${s.why}${a.reset}`);
+      const fileList = s.files.map((f) => `${f.path} (${f.action})`).join(", ");
+      log(`${a.dim}│     Files: ${fileList}${a.reset}`);
+      if (s.tests) log(`${a.dim}│     Tests: ${s.tests}${a.reset}`);
+    }
+    log(`${a.dim}└──${a.reset}`);
+  }
+};
+
 export type BannerOpts = {
   readonly planPath: string;
   readonly brief: string;
