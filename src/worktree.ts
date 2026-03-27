@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { stat } from "fs/promises";
 import { promisify } from "util";
 import { resolve } from "path";
 
@@ -12,6 +13,26 @@ const git = async (args: string[], cwd: string): Promise<string> => {
 export const removeWorktree = async (worktreePath: string): Promise<void> => {
   const cwd = resolve(worktreePath, "..");
   await git(["worktree", "remove", worktreePath], cwd);
+};
+
+export type WorktreeStatus =
+  | { ok: true }
+  | { ok: false; reason: "missing" | "wrong-branch"; detail: string };
+
+export const verifyWorktree = async (
+  worktreePath: string,
+  expectedBranch: string,
+): Promise<WorktreeStatus> => {
+  try {
+    await stat(worktreePath);
+  } catch {
+    return { ok: false, reason: "missing", detail: `${worktreePath} does not exist` };
+  }
+  const actual = await git(["branch", "--show-current"], worktreePath);
+  if (actual !== expectedBranch) {
+    return { ok: false, reason: "wrong-branch", detail: `expected "${expectedBranch}", got "${actual}"` };
+  }
+  return { ok: true };
 };
 
 export const createWorktree = async (
