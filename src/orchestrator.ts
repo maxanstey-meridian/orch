@@ -49,9 +49,9 @@ export type OrchestratorConfig = {
   readonly reviewThreshold: number;
   readonly maxReviewCycles: number;
   readonly stateFile: string;
-  readonly tddSkill: string;
-  readonly reviewSkill: string;
-  readonly verifySkill: string;
+  readonly tddSkill: string | null;
+  readonly reviewSkill: string | null;
+  readonly verifySkill: string | null;
 };
 
 type PlanThenExecuteResult = {
@@ -100,10 +100,10 @@ export class Orchestrator {
     const reviewResuming = !agents && !!initialState.reviewSessionId;
     const tddAgent =
       agents?.tdd ??
-      spawnAgentFactory(BOT_TDD, config.tddSkill, initialState.tddSessionId, config.cwd);
+      spawnAgentFactory(BOT_TDD, config.tddSkill ?? undefined, initialState.tddSessionId, config.cwd);
     const reviewAgent =
       agents?.review ??
-      spawnAgentFactory(BOT_REVIEW, config.reviewSkill, initialState.reviewSessionId, config.cwd);
+      spawnAgentFactory(BOT_REVIEW, config.reviewSkill ?? undefined, initialState.reviewSessionId, config.cwd);
     const reminders: Promise<string>[] = [];
     if (!tddResuming) reminders.push(tddAgent.sendQuiet(TDD_RULES_REMINDER));
     if (!reviewResuming) reminders.push(reviewAgent.sendQuiet(REVIEW_RULES_REMINDER));
@@ -928,19 +928,19 @@ export class Orchestrator {
   }
 
   private async spawnTddAgent(): Promise<AgentProcess> {
-    const agent = spawnAgentFactory(BOT_TDD, this.config.tddSkill, undefined, this.config.cwd);
+    const agent = spawnAgentFactory(BOT_TDD, this.config.tddSkill ?? undefined, undefined, this.config.cwd);
     await agent.sendQuiet(TDD_RULES_REMINDER);
     return agent;
   }
 
   private async spawnReviewAgent(): Promise<AgentProcess> {
-    const agent = spawnAgentFactory(BOT_REVIEW, this.config.reviewSkill, undefined, this.config.cwd);
+    const agent = spawnAgentFactory(BOT_REVIEW, this.config.reviewSkill ?? undefined, undefined, this.config.cwd);
     await agent.sendQuiet(REVIEW_RULES_REMINDER);
     return agent;
   }
 
   private async spawnVerifyAgent(): Promise<AgentProcess> {
-    return spawnAgentFactory(BOT_VERIFY, this.config.verifySkill, undefined, this.config.cwd);
+    return spawnAgentFactory(BOT_VERIFY, this.config.verifySkill ?? undefined, undefined, this.config.cwd);
   }
 
   async respawnTdd(): Promise<void> {

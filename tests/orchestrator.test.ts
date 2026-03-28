@@ -146,6 +146,42 @@ describe("OrchestratorConfig", () => {
     expect(typeof config.noInteraction).toBe("boolean");
     expect(Orchestrator).toBeDefined();
   });
+
+  it("accepts null for skill fields", () => {
+    const config = makeConfig({ tddSkill: null, reviewSkill: null, verifySkill: null });
+    expect(config.tddSkill).toBeNull();
+    expect(config.reviewSkill).toBeNull();
+    expect(config.verifySkill).toBeNull();
+  });
+
+  it("passes undefined to spawnAgent when tddSkill is null", async () => {
+    await Orchestrator.create(makeConfig({ tddSkill: null }), {}, fakeHud().hud, vi.fn());
+    expect(spawnAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ label: "TDD" }),
+      undefined,
+      undefined,
+      "/tmp",
+    );
+  });
+
+  it("respawnTdd passes undefined when tddSkill is null", async () => {
+    const { orch } = await makeOrch({ config: { tddSkill: null } });
+    vi.mocked(spawnAgent).mockClear();
+    await orch.respawnTdd();
+    expect(spawnAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ label: "TDD" }),
+      undefined,
+      undefined,
+      "/tmp",
+    );
+  });
+
+  it("passes undefined to spawnAgent when reviewSkill is null", async () => {
+    await Orchestrator.create(makeConfig({ reviewSkill: null }), {}, fakeHud().hud, vi.fn());
+    const calls = vi.mocked(spawnAgent).mock.calls;
+    const reviewCall = calls.find((c) => (c[0] as { label: string }).label === "REVIEW");
+    expect(reviewCall?.[1]).toBeUndefined();
+  });
 });
 
 describe("Orchestrator.create", () => {

@@ -28,6 +28,7 @@ import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./o
 import { runInit, profileToMarkdown } from "./ui/init.js";
 import { spawnPlanAgentWithSkill, spawnGeneratePlanAgent } from "./agent/agent-factory.js";
 import { getStatus, stashBackup } from "./git/git.js";
+import { loadAndResolveOrchrConfig, resolveSkillValue, buildOrchrSummary } from "./config/orchrc.js";
 import { assertGitRepo } from "./git/repo-check.js";
 import { parseBranchFlag } from "./cli/cli-args.js";
 import { resolveWorktree } from "./git/worktree-setup.js";
@@ -106,11 +107,16 @@ const main = async () => {
 
   // 1. Load skill prompts
   const skillsDir = resolve(import.meta.dirname, "..", "skills");
-  const tddSkill = readFileSync(resolve(skillsDir, "tdd.md"), "utf-8");
-  const reviewSkill = readFileSync(resolve(skillsDir, "deep-review.md"), "utf-8");
-  const verifySkill = readFileSync(resolve(skillsDir, "verify.md"), "utf-8");
+  const builtInTdd = readFileSync(resolve(skillsDir, "tdd.md"), "utf-8");
+  const builtInReview = readFileSync(resolve(skillsDir, "deep-review.md"), "utf-8");
+  const builtInVerify = readFileSync(resolve(skillsDir, "verify.md"), "utf-8");
 
   const cwd = process.cwd();
+  const orchrc = loadAndResolveOrchrConfig(cwd);
+  const tddSkill = resolveSkillValue(orchrc.skills.tdd, builtInTdd);
+  const reviewSkill = resolveSkillValue(orchrc.skills.review, builtInReview);
+  const verifySkill = resolveSkillValue(orchrc.skills.verify, builtInVerify);
+  const orchrcSummary = buildOrchrSummary(orchrc);
   const orchDir = resolve(cwd, ".orch");
 
   // 2. Init (if requested) → fingerprint + brief
@@ -286,6 +292,7 @@ const main = async () => {
     interactive,
     groupFilter,
     worktree: worktreeInfo,
+    orchrcSummary,
     tddSessionId: _orch.tddAgent.sessionId,
     reviewSessionId: _orch.reviewAgent.sessionId,
     groups: remaining,

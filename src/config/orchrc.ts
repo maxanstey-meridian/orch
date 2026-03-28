@@ -87,6 +87,21 @@ export const resolveOrchrConfig = (raw: OrchrConfig, cwd: string): ResolvedOrchr
   return { skills, rules, config: raw.config ?? {} };
 };
 
+export const buildOrchrSummary = (config: ResolvedOrchrConfig): string | undefined => {
+  const labels: string[] = [];
+  for (const [key, value] of Object.entries(config.skills)) {
+    if ("disabled" in value) labels.push(`${key}: disabled`);
+    else if ("content" in value) labels.push(`${key}: custom`);
+  }
+  return labels.length > 0 ? labels.join(", ") : undefined;
+};
+
+export const resolveSkillValue = (resolved: ResolvedSkill, builtIn: string): string | null => {
+  if ("disabled" in resolved) return null;
+  if ("content" in resolved) return resolved.content;
+  return builtIn;
+};
+
 export const loadAndResolveOrchrConfig = (cwd: string): ResolvedOrchrConfig =>
   resolveOrchrConfig(loadOrchrConfig(cwd), cwd);
 

@@ -4,7 +4,7 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn(),
 }));
 
-import { loadOrchrConfig, resolveOrchrConfig, loadAndResolveOrchrConfig } from "../../src/config/orchrc.js";
+import { loadOrchrConfig, resolveOrchrConfig, loadAndResolveOrchrConfig, resolveSkillValue, buildOrchrSummary } from "../../src/config/orchrc.js";
 import { readFileSync } from "node:fs";
 
 describe("loadOrchrConfig", () => {
@@ -213,6 +213,26 @@ describe("resolveOrchrConfig", () => {
   it("handles empty rules array", () => {
     const result = resolveOrchrConfig({ rules: { review: [] } }, "/fake");
     expect(result.rules.review).toBe("");
+  });
+
+  it("buildOrchrSummary returns undefined when all default", () => {
+    const config = resolveOrchrConfig({}, "/fake");
+    expect(buildOrchrSummary(config)).toBeUndefined();
+  });
+
+  it("buildOrchrSummary labels disabled and custom skills", () => {
+    const config = resolveOrchrConfig({}, "/fake");
+    config.skills.tdd = { disabled: true };
+    config.skills.review = { content: "x" };
+    const summary = buildOrchrSummary(config);
+    expect(summary).toContain("tdd: disabled");
+    expect(summary).toContain("review: custom");
+  });
+
+  it("resolveSkillValue returns built-in for default, null for disabled, custom content for content", () => {
+    expect(resolveSkillValue({ default: true }, "built-in")).toBe("built-in");
+    expect(resolveSkillValue({ disabled: true }, "built-in")).toBeNull();
+    expect(resolveSkillValue({ content: "custom" }, "built-in")).toBe("custom");
   });
 
   it("loadAndResolveOrchrConfig loads and resolves", () => {
