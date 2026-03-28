@@ -4,7 +4,7 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn(),
 }));
 
-import { loadOrchrConfig } from "../../src/config/orchrc.js";
+import { loadOrchrConfig, resolveOrchrConfig, loadAndResolveOrchrConfig } from "../../src/config/orchrc.js";
 import { readFileSync } from "node:fs";
 
 describe("loadOrchrConfig", () => {
@@ -91,5 +91,100 @@ describe("loadOrchrConfig", () => {
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ skills: { tdd: 42 } }));
 
     expect(() => loadOrchrConfig("/fake")).toThrow("Invalid .orchrc.json");
+  });
+});
+
+describe("resolveOrchrConfig", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("marks missing skills as default", () => {
+    const result = resolveOrchrConfig({}, "/fake");
+    expect(result.skills.tdd).toEqual({ default: true });
+    expect(result.skills.review).toEqual({ default: true });
+    expect(result.skills.verify).toEqual({ default: true });
+    expect(result.skills.plan).toEqual({ default: true });
+    expect(result.skills.gap).toEqual({ default: true });
+  });
+
+  it("marks null skills as disabled", () => {
+    const result = resolveOrchrConfig({ skills: { tdd: null } }, "/fake");
+    expect(result.skills.tdd).toEqual({ disabled: true });
+    expect(result.skills.review).toEqual({ default: true });
+  });
+
+  it("throws on missing skill file", () => {
+    const err: NodeJS.ErrnoException = new Error("ENOENT");
+    err.code = "ENOENT";
+    vi.mocked(readFileSync).mockImplementation(() => { throw err; });
+
+    expect(() => resolveOrchrConfig({ skills: { review: "./missing.md" } }, "/fake"))
+      .toThrow("/fake/missing.md");
+  });
+
+  it("resolves skill path to file content", () => {
+    vi.mocked(readFileSync).mockImplementation((p) => {
+      if (p === "/fake/custom.md") return "custom content";
+      throw new Error(`unexpected read: ${p}`);
+    });
+
+    const result = resolveOrchrConfig({ skills: { review: "./custom.md" } }, "/fake");
+    expect(result.skills.review).toEqual({ content: "custom content" });
+  });
+
+  it("resolves single rule file", () => {
+    vi.mocked(readFileSync).mockImplementation((p) => {
+      if (p === "/fake/rule.md") return "rule content";
+      throw new Error(`unexpected read: ${p}`);
+    });
+
+    const result = resolveOrchrConfig({ rules: { tdd: "./rule.md" } }, "/fake");
+    expect(result.rules.tdd).toBe("rule content");
+  });
+
+  it("concatenates array rule files", () => {
+    vi.mocked(readFileSync).mockImplementation((p) => {
+      if (p === "/fake/a.md") return "contentA";
+      if (p === "/fake/b.md") return "contentB";
+      throw new Error(`unexpected read: ${p}`);
+    });
+
+    const result = resolveOrchrConfig({ rules: { review: ["./a.md", "./b.md"] } }, "/fake");
+    expect(result.rules.review).toBe("contentA\n\ncontentB");
+  });
+
+  it("missing rules are undefined", () => {
+    const result = resolveOrchrConfig({}, "/fake");
+    expect(result.rules.tdd).toBeUndefined();
+    expect(result.rules.review).toBeUndefined();
+  });
+
+  it("passes config values through", () => {
+    const result = resolveOrchrConfig({ config: { maxReviewCycles: 5, reviewThreshold: 0 } }, "/fake");
+    expect(result.config.maxReviewCycles).toBe(5);
+    expect(result.config.reviewThreshold).toBe(0);
+  });
+
+  it("throws on missing rule file", () => {
+    const err: NodeJS.ErrnoException = new Error("ENOENT");
+    err.code = "ENOENT";
+    vi.mocked(readFileSync).mockImplementation(() => { throw err; });
+
+    expect(() => resolveOrchrConfig({ rules: { tdd: "./missing.md" } }, "/fake"))
+      .toThrow("/fake/missing.md");
+  });
+
+  it("loadAndResolveOrchrConfig loads and resolves", () => {
+    vi.mocked(readFileSync).mockImplementation((p) => {
+      if (String(p).endsWith(".orchrc.json")) {
+        return JSON.stringify({ skills: { tdd: "./tdd.md" } });
+      }
+      if (p === "/fake/tdd.md") return "tdd content";
+      throw new Error(`unexpected read: ${p}`);
+    });
+
+    const result = loadAndResolveOrchrConfig("/fake");
+    expect(result.skills.tdd).toEqual({ content: "tdd content" });
   });
 });
