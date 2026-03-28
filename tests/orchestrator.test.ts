@@ -73,6 +73,7 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   verifySkill: "skill-verify",
   gapDisabled: false,
   planDisabled: false,
+  maxReplans: 2,
   ...overrides,
 });
 
@@ -154,6 +155,11 @@ describe("OrchestratorConfig", () => {
     const config = makeConfig({ tddRules: "no mocking", reviewRules: "check types" });
     expect(config.tddRules).toBe("no mocking");
     expect(config.reviewRules).toBe("check types");
+  });
+
+  it("includes maxReplans in OrchestratorConfig", () => {
+    const config = makeConfig();
+    expect(typeof config.maxReplans).toBe("number");
   });
 
   it("accepts null for skill fields", () => {
@@ -1500,6 +1506,27 @@ describe("run()", () => {
     // The third call should have forceAccept: true (auto-accept)
     const thirdCallForceAccept = pte.mock.calls[2][1];
     expect(thirdCallForceAccept).toBe(true);
+  });
+
+  it("uses maxReplans from config", async () => {
+    const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
+    const okResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn()
+      .mockResolvedValueOnce({ tddResult: okResult, skipped: false, replan: true })
+      // After 1 replan attempt, auto-accepts
+      .mockResolvedValueOnce({ tddResult: okResult, skipped: false });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = await makeOrch({ config: { maxReplans: 1 } });
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
+
+    await orch.run([group], 0);
+
+    // 1 replan attempt + 1 auto-accept = 2 total calls
+    expect(pte).toHaveBeenCalledTimes(2);
+    // The second call should have forceAccept: true
+    expect(pte.mock.calls[1][1]).toBe(true);
   });
 
   it("handles hardInterrupt by respawning TDD with guidance", async () => {

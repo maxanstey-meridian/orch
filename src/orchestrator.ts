@@ -55,6 +55,7 @@ export type OrchestratorConfig = {
   readonly verifySkill: string | null;
   readonly gapDisabled: boolean;
   readonly planDisabled: boolean;
+  readonly maxReplans: number;
   readonly tddRules?: string;
   readonly reviewRules?: string;
 };
@@ -708,13 +709,13 @@ export class Orchestrator {
         const verifyBaseSha = await captureRef(this.config.cwd);
 
         // Plan-then-execute with replan loop
-        const MAX_REPLANS = 2;
+        const maxReplans = this.config.maxReplans;
         let replanAttempts = 0;
         let pteResult: PlanThenExecuteResult;
         do {
           pteResult = await this.planThenExecute(slice.content);
           replanAttempts++;
-        } while (pteResult.replan && replanAttempts < MAX_REPLANS);
+        } while (pteResult.replan && replanAttempts < maxReplans);
 
         // After max replans, auto-accept
         if (pteResult.replan) {
