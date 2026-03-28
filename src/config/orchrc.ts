@@ -93,6 +93,9 @@ export const buildOrchrSummary = (config: ResolvedOrchrConfig): string | undefin
     if ("disabled" in value) labels.push(`${key}: disabled`);
     else if ("content" in value) labels.push(`${key}: custom`);
   }
+  for (const [key, value] of Object.entries(config.config)) {
+    if (value !== undefined) labels.push(`${key}: ${value}`);
+  }
   return labels.length > 0 ? labels.join(", ") : undefined;
 };
 

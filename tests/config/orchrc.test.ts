@@ -229,6 +229,21 @@ describe("resolveOrchrConfig", () => {
     expect(summary).toContain("review: custom");
   });
 
+  it("buildOrchrSummary lists config overrides", () => {
+    const config = resolveOrchrConfig({}, "/fake");
+    config.config = { maxReplans: 1 };
+    const summary = buildOrchrSummary(config);
+    expect(summary).toBe("maxReplans: 1");
+  });
+
+  it("buildOrchrSummary combines skill and config overrides", () => {
+    const config = resolveOrchrConfig({}, "/fake");
+    config.skills.review = { content: "x" };
+    config.config = { maxReplans: 1 };
+    const summary = buildOrchrSummary(config);
+    expect(summary).toBe("review: custom, maxReplans: 1");
+  });
+
   it("resolveSkillValue returns built-in for default, null for disabled, custom content for content", () => {
     expect(resolveSkillValue({ default: true }, "built-in")).toBe("built-in");
     expect(resolveSkillValue({ disabled: true }, "built-in")).toBeNull();
