@@ -64,6 +64,9 @@ export const spawnPlanAgentWithSkill = (cwd?: string): AgentProcess =>
 export const spawnGeneratePlanAgent = (cwd?: string): AgentProcess =>
   spawnAgent(BOT_PLAN, generatePlanSkillContent, undefined, cwd);
 
+export const buildRulesReminder = (baseRules: string, extraRules?: string): string =>
+  !extraRules ? baseRules : `${baseRules}\n\n[PROJECT] Additional rules from .orchrc.json:\n${extraRules}`;
+
 export const TDD_RULES_REMINDER = `[ORCHESTRATOR] Non-negotiable rules for your operation. Acknowledge silently — do not respond to this message.
 
 1. RUN TESTS WITH BASH. Use your Bash tool to execute tests. Read the actual output. Do not narrate "RED confirmed" or "GREEN" without executing. No exceptions.

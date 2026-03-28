@@ -37,6 +37,7 @@ import {
   spawnPlanAgentWithSkill,
   TDD_RULES_REMINDER,
   REVIEW_RULES_REMINDER,
+  buildRulesReminder,
 } from "./agent/agent-factory.js";
 
 export type OrchestratorConfig = {
@@ -54,6 +55,8 @@ export type OrchestratorConfig = {
   readonly verifySkill: string | null;
   readonly gapDisabled: boolean;
   readonly planDisabled: boolean;
+  readonly tddRules?: string;
+  readonly reviewRules?: string;
 };
 
 type PlanThenExecuteResult = {
@@ -107,8 +110,8 @@ export class Orchestrator {
       agents?.review ??
       spawnAgentFactory(BOT_REVIEW, config.reviewSkill ?? undefined, initialState.reviewSessionId, config.cwd);
     const reminders: Promise<string>[] = [];
-    if (!tddResuming) reminders.push(tddAgent.sendQuiet(TDD_RULES_REMINDER));
-    if (!reviewResuming) reminders.push(reviewAgent.sendQuiet(REVIEW_RULES_REMINDER));
+    if (!tddResuming) reminders.push(tddAgent.sendQuiet(buildRulesReminder(TDD_RULES_REMINDER, config.tddRules)));
+    if (!reviewResuming) reminders.push(reviewAgent.sendQuiet(buildRulesReminder(REVIEW_RULES_REMINDER, config.reviewRules)));
     await Promise.all(reminders);
     const orch = new Orchestrator(config, initialState, hud, log, tddAgent, reviewAgent);
     if (tddResuming) orch.tddIsFirst = false;
@@ -965,13 +968,13 @@ export class Orchestrator {
 
   private async spawnTddAgent(): Promise<AgentProcess> {
     const agent = spawnAgentFactory(BOT_TDD, this.config.tddSkill ?? undefined, undefined, this.config.cwd);
-    await agent.sendQuiet(TDD_RULES_REMINDER);
+    await agent.sendQuiet(buildRulesReminder(TDD_RULES_REMINDER, this.config.tddRules));
     return agent;
   }
 
   private async spawnReviewAgent(): Promise<AgentProcess> {
     const agent = spawnAgentFactory(BOT_REVIEW, this.config.reviewSkill ?? undefined, undefined, this.config.cwd);
-    await agent.sendQuiet(REVIEW_RULES_REMINDER);
+    await agent.sendQuiet(buildRulesReminder(REVIEW_RULES_REMINDER, this.config.reviewRules));
     return agent;
   }
 

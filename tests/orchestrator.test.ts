@@ -30,6 +30,7 @@ vi.mock("../src/agent/agent-factory.js", async (importOriginal) => {
     spawnPlanAgentWithSkill: vi.fn(),
     TDD_RULES_REMINDER: actual.TDD_RULES_REMINDER,
     REVIEW_RULES_REMINDER: actual.REVIEW_RULES_REMINDER,
+    buildRulesReminder: actual.buildRulesReminder,
   };
 });
 
@@ -147,6 +148,12 @@ describe("OrchestratorConfig", () => {
     expect(typeof config.reviewThreshold).toBe("number");
     expect(typeof config.noInteraction).toBe("boolean");
     expect(Orchestrator).toBeDefined();
+  });
+
+  it("accepts tddRules and reviewRules", () => {
+    const config = makeConfig({ tddRules: "no mocking", reviewRules: "check types" });
+    expect(config.tddRules).toBe("no mocking");
+    expect(config.reviewRules).toBe("check types");
   });
 
   it("accepts null for skill fields", () => {
@@ -337,6 +344,60 @@ describe("Orchestrator.create", () => {
     expect(orch.reviewIsFirst).toBe(false);
   });
 
+  it("sends base TDD rules when tddRules is undefined", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+
+    await Orchestrator.create(makeConfig(), {}, fakeHud().hud, vi.fn(), { tdd, review });
+
+    expect(tdd.sendQuiet).toHaveBeenCalledWith(
+      expect.stringContaining("RUN TESTS WITH BASH"),
+    );
+    expect(tdd.sendQuiet).not.toHaveBeenCalledWith(
+      expect.stringContaining("[PROJECT]"),
+    );
+  });
+
+  it("sends extended TDD rules when tddRules is set", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+
+    await Orchestrator.create(
+      makeConfig({ tddRules: "no mocking" }),
+      {},
+      fakeHud().hud,
+      vi.fn(),
+      { tdd, review },
+    );
+
+    expect(tdd.sendQuiet).toHaveBeenCalledWith(
+      expect.stringContaining("[PROJECT] Additional rules from .orchrc.json:\nno mocking"),
+    );
+    expect(tdd.sendQuiet).toHaveBeenCalledWith(
+      expect.stringContaining("RUN TESTS WITH BASH"),
+    );
+  });
+
+  it("sends extended review rules when reviewRules is set", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+
+    await Orchestrator.create(
+      makeConfig({ reviewRules: "check types" }),
+      {},
+      fakeHud().hud,
+      vi.fn(),
+      { tdd, review },
+    );
+
+    expect(review.sendQuiet).toHaveBeenCalledWith(
+      expect.stringContaining("[PROJECT] Additional rules from .orchrc.json:\ncheck types"),
+    );
+    expect(review.sendQuiet).toHaveBeenCalledWith(
+      expect.stringContaining("ONLY REVIEW THE DIFF"),
+    );
+  });
+
   it("uses provided agents when given, skipping spawn but still sending reminders", async () => {
     const tdd = fakeAgent();
     const review = fakeAgent();
@@ -403,6 +464,16 @@ describe("respawnTdd", () => {
     expect(newTdd.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("RUN TESTS WITH BASH"));
   });
 
+  it("sends extended TDD rules when tddRules is set", async () => {
+    const newTdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(newTdd);
+    const { orch } = await makeOrch({ config: { tddRules: "no mocking" } });
+    await orch.respawnTdd();
+    expect(newTdd.sendQuiet).toHaveBeenCalledWith(
+      expect.stringContaining("[PROJECT] Additional rules from .orchrc.json:\nno mocking"),
+    );
+  });
+
   it("saves new tddSessionId to state after spawning", async () => {
     const newTdd = { ...fakeAgent(), sessionId: "new-tdd-sess" };
     vi.mocked(spawnAgent).mockReturnValue(newTdd);
@@ -447,6 +518,17 @@ describe("respawnBoth", () => {
     const { orch } = await makeOrch();
     await orch.respawnBoth();
     expect(newReview.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("ONLY REVIEW THE DIFF"));
+  });
+
+  it("sends extended review rules when reviewRules is set", async () => {
+    const newTdd = fakeAgent();
+    const newReview = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(newTdd).mockReturnValueOnce(newReview);
+    const { orch } = await makeOrch({ config: { reviewRules: "check types" } });
+    await orch.respawnBoth();
+    expect(newReview.sendQuiet).toHaveBeenCalledWith(
+      expect.stringContaining("[PROJECT] Additional rules from .orchrc.json:\ncheck types"),
+    );
   });
 
   it("saves both session IDs to state after spawning", async () => {

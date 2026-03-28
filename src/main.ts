@@ -280,6 +280,8 @@ const main = async () => {
       verifySkill,
       gapDisabled,
       planDisabled,
+      tddRules: orchrc.rules.tdd,
+      reviewRules: orchrc.rules.review,
     } satisfies OrchestratorConfig,
     updatedState,
     hud,
