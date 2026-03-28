@@ -358,6 +358,20 @@ describe("Orchestrator.create", () => {
     );
   });
 
+  it("sends base review rules when reviewRules is undefined", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+
+    await Orchestrator.create(makeConfig(), {}, fakeHud().hud, vi.fn(), { tdd, review });
+
+    expect(review.sendQuiet).toHaveBeenCalledWith(
+      expect.stringContaining("ONLY REVIEW THE DIFF"),
+    );
+    expect(review.sendQuiet).not.toHaveBeenCalledWith(
+      expect.stringContaining("[PROJECT]"),
+    );
+  });
+
   it("sends extended TDD rules when tddRules is set", async () => {
     const tdd = fakeAgent();
     const review = fakeAgent();
