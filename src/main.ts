@@ -116,6 +116,8 @@ const main = async () => {
   const tddSkill = resolveSkillValue(orchrc.skills.tdd, builtInTdd);
   const reviewSkill = resolveSkillValue(orchrc.skills.review, builtInReview);
   const verifySkill = resolveSkillValue(orchrc.skills.verify, builtInVerify);
+  const gapDisabled = "disabled" in orchrc.skills.gap;
+  const planDisabled = "disabled" in orchrc.skills.plan;
   const orchrcSummary = buildOrchrSummary(orchrc);
   const orchDir = resolve(cwd, ".orch");
 
@@ -276,6 +278,8 @@ const main = async () => {
       tddSkill,
       reviewSkill,
       verifySkill,
+      gapDisabled,
+      planDisabled,
     } satisfies OrchestratorConfig,
     updatedState,
     hud,

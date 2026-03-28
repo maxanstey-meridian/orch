@@ -52,6 +52,8 @@ export type OrchestratorConfig = {
   readonly tddSkill: string | null;
   readonly reviewSkill: string | null;
   readonly verifySkill: string | null;
+  readonly gapDisabled: boolean;
+  readonly planDisabled: boolean;
 };
 
 type PlanThenExecuteResult = {
@@ -272,9 +274,13 @@ export class Orchestrator {
     }
 
     // Verify gate
-    const verified = await this.verify(slice, verifyBaseSha);
-    if (!verified) {
-      return { reviewBase, skipped: true };
+    if (this.config.verifySkill === null) {
+      this.log(`${ts()} ⏩ Verify skipped (disabled)`);
+    } else {
+      const verified = await this.verify(slice, verifyBaseSha);
+      if (!verified) {
+        return { reviewBase, skipped: true };
+      }
     }
 
     if (this.sliceSkipFlag) {
@@ -302,7 +308,11 @@ export class Orchestrator {
       return { reviewBase, skipped: true };
     }
 
-    await this.reviewFix(slice.content, reviewBase);
+    if (this.config.reviewSkill !== null) {
+      await this.reviewFix(slice.content, reviewBase);
+    } else {
+      this.log(`${ts()} ⏩ Review skipped (disabled)`);
+    }
     const newReviewBase = await captureRef(this.config.cwd);
 
     if (this.sliceSkipFlag) {
@@ -329,6 +339,23 @@ export class Orchestrator {
   }
 
   async planThenExecute(sliceContent: string, forceAccept = false): Promise<PlanThenExecuteResult> {
+    if (this.config.planDisabled) {
+      this.log(`${ts()} ⏩ Plan skipped (disabled) — sending slice directly to TDD`);
+      const tddBrief = this.tddIsFirst ? this.config.brief : "";
+      const tddPrompt = withBrief(buildTddPrompt(sliceContent), tddBrief);
+      const es = this.streamer(BOT_TDD);
+      const tddResult = await this.withRetry(
+        () => this.withInterrupt(this.tddAgent, () =>
+          this.tddAgent.send(tddPrompt, es, (s) => this.onToolUse(s)),
+        ),
+        this.tddAgent,
+        "tdd-direct",
+      );
+      es.flush();
+      this.tddIsFirst = false;
+      return { tddResult, skipped: false };
+    }
+
     // ── Plan phase ──
     // Plan agent is always fresh — always needs the brief
     const planPrompt = withBrief(buildPlanPrompt(sliceContent), this.config.brief);
@@ -786,6 +813,11 @@ export class Orchestrator {
       return;
     }
 
+    if (this.config.gapDisabled) {
+      this.log(`${ts()} ⏩ Gap analysis skipped (disabled)`);
+      return;
+    }
+
     this.log(`${ts()} ${BOT_GAP.badge} scanning for coverage gaps across group...`);
     const groupContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
     const gapAgent = spawnAgentFactory(BOT_GAP, undefined, undefined, this.config.cwd);
@@ -859,9 +891,13 @@ export class Orchestrator {
     }
 
     if (await hasChanges(this.config.cwd, gapBaseSha)) {
-      await this.reviewFix(groupContent, gapBaseSha);
+      if (this.config.reviewSkill !== null) {
+        await this.reviewFix(groupContent, gapBaseSha);
+      } else {
+        this.log(`${ts()} ⏩ Gap review skipped (disabled)`);
+      }
       this.hud.update({ activeAgent: undefined, activeAgentActivity: undefined });
-      this.log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
+      this.log(`${ts()} ${a.green}✓ Gap tests added${this.config.reviewSkill !== null ? " and reviewed" : ""}${a.reset}`);
     }
 
     gapAgent.kill();

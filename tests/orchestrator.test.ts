@@ -70,6 +70,8 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   tddSkill: "skill-tdd",
   reviewSkill: "skill-review",
   verifySkill: "skill-verify",
+  gapDisabled: false,
+  planDisabled: false,
   ...overrides,
 });
 
@@ -1080,6 +1082,52 @@ describe("runSlice", () => {
     await orch.runSlice(testSlice, "oldbase", tddResult, "vfybase");
     expect(verifyAgent.kill).toHaveBeenCalled();
   });
+
+  it("logs skip messages for disabled verify and review", async () => {
+    vi.mocked(captureRef).mockResolvedValue("newsha");
+    const logFn = vi.fn();
+    const review = fakeAgent();
+    const { orch } = await makeOrch({
+      reviewAgent: review,
+      config: { verifySkill: null, reviewSkill: null },
+    });
+    (orch as any).log = logFn;
+    await orch.runSlice(testSlice, "oldbase", tddResult, "vfybase");
+    const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+    expect(allLogs).toContain("Verify skipped");
+    expect(allLogs).toContain("Review skipped");
+  });
+
+  it("skips review when reviewSkill is null", async () => {
+    const passText = "### VERIFY_RESULT\n**Status:** PASS";
+    const verifyAgent = fakeAgent();
+    (verifyAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: passText, resultText: "", needsInput: false, sessionId: "s" });
+    vi.mocked(captureRef).mockResolvedValue("newsha");
+    vi.mocked(spawnAgent).mockReturnValue(verifyAgent);
+    const review = fakeAgent();
+    const { orch } = await makeOrch({
+      reviewAgent: review,
+      config: { reviewSkill: null },
+    });
+    const result = await orch.runSlice(testSlice, "oldbase", tddResult, "vfybase");
+    expect(review.send).not.toHaveBeenCalled();
+    expect(result.skipped).toBe(false);
+  });
+
+  it("skips verify when verifySkill is null", async () => {
+    vi.mocked(captureRef).mockResolvedValue("newsha");
+    const review = fakeAgent();
+    (review.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "REVIEW_CLEAN", resultText: "", needsInput: false, sessionId: "s" });
+    vi.mocked(isCleanReview).mockImplementation((t) => t.includes("REVIEW_CLEAN"));
+    vi.mocked(spawnAgent).mockReset();
+    const { orch } = await makeOrch({
+      reviewAgent: review,
+      config: { verifySkill: null },
+    });
+    const result = await orch.runSlice(testSlice, "oldbase", tddResult, "vfybase");
+    expect(spawnAgent).not.toHaveBeenCalled();
+    expect(result.skipped).toBe(false);
+  });
 });
 
 // ─── run() ────────────────────────────────────────────────────────────────────
@@ -1392,6 +1440,42 @@ describe("gapAnalysis()", () => {
 
     expect(spawnAgent).not.toHaveBeenCalled();
     expect(orch.sliceSkipFlag).toBe(false);
+  });
+
+  it("logs skip message when gapDisabled is true", async () => {
+    const logFn = vi.fn();
+    const { orch } = await makeOrch({ config: { gapDisabled: true } });
+    (orch as any).log = logFn;
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+    expect(allLogs).toContain("Gap analysis skipped");
+  });
+
+  it("skips gap analysis when gapDisabled is true", async () => {
+    vi.mocked(spawnAgent).mockReset();
+    const { orch } = await makeOrch({ config: { gapDisabled: true } });
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    expect(spawnAgent).not.toHaveBeenCalled();
+  });
+
+  it("skips reviewFix after gap fixes when reviewSkill is null", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing edge case tests", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    vi.mocked(captureRef).mockResolvedValue("gapsha");
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    const { orch } = await makeOrch({ tddAgent: tdd, config: { reviewSkill: null } });
+    const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
+
+    const group = { name: "G", slices: [{ number: 1, title: "a", content: "slice content" }] };
+    await (orch as any).gapAnalysis(group, "basesha");
+
+    expect(reviewFixSpy).not.toHaveBeenCalled();
+    expect(gapAgent.kill).toHaveBeenCalled();
   });
 
   it("skips when no changes since group base", async () => {
@@ -2291,6 +2375,33 @@ describe("Orchestrator.planThenExecute (method)", () => {
     expect(orch.tddAgent).toBe(freshTdd);
     expect(freshTdd.send).toHaveBeenCalledOnce();
     expect(result.tddResult.exitCode).toBe(0);
+  });
+
+  it("logs skip message when planDisabled is true", async () => {
+    const logFn = vi.fn();
+    const tdd = fakeAgent();
+    const { orch } = await makeOrch({ config: { planDisabled: true, noInteraction: true }, tddAgent: tdd });
+    (orch as any).log = logFn;
+
+    await orch.planThenExecute("slice content");
+
+    const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+    expect(allLogs).toContain("Plan skipped");
+  });
+
+  it("skips plan agent and sends slice directly to TDD when planDisabled is true", async () => {
+    vi.mocked(spawnPlanAgentWithSkill).mockReset();
+    const tdd = fakeAgent();
+    const { orch } = await makeOrch({ config: { planDisabled: true, noInteraction: true }, tddAgent: tdd });
+
+    const result = await orch.planThenExecute("slice content");
+
+    expect(spawnPlanAgentWithSkill).not.toHaveBeenCalled();
+    expect(tdd.send).toHaveBeenCalledOnce();
+    const prompt = (tdd.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(prompt).toContain("slice content");
+    expect(result.skipped).toBe(false);
+    expect((result as any).replan).toBeUndefined();
   });
 });
 
