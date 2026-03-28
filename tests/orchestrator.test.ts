@@ -6,9 +6,16 @@ import type { Slice } from "../src/plan/plan-parser.js";
 import { hasDirtyTree, captureRef, hasChanges } from "../src/git/git.js";
 import { spawnAgent, spawnPlanAgentWithSkill } from "../src/agent/agent-factory.js";
 import { detectCreditExhaustion } from "../src/agent/credit-detection.js";
+import { detectApiError } from "../src/agent/api-errors.js";
 import { saveState } from "../src/state/state.js";
 import { isCleanReview } from "../src/cli/review-check.js";
 import { measureDiff } from "../src/cli/review-threshold.js";
+import { printSliceIntro } from "../src/ui/display.js";
+
+vi.mock("../src/ui/display.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/ui/display.js")>();
+  return { ...actual, printSliceIntro: vi.fn() };
+});
 
 vi.mock("../src/git/git.js", () => ({
   hasDirtyTree: vi.fn().mockResolvedValue(false),
@@ -28,6 +35,10 @@ vi.mock("../src/agent/agent-factory.js", async (importOriginal) => {
 
 vi.mock("../src/agent/credit-detection.js", () => ({
   detectCreditExhaustion: vi.fn().mockReturnValue(null),
+}));
+
+vi.mock("../src/agent/api-errors.js", () => ({
+  detectApiError: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock("../src/state/state.js", () => ({
@@ -121,6 +132,7 @@ beforeEach(() => {
   vi.mocked(spawnAgent).mockReset().mockReturnValue(fakeAgent());
   vi.mocked(spawnPlanAgentWithSkill).mockReset().mockReturnValue(fakeAgent());
   vi.mocked(detectCreditExhaustion).mockReset().mockReturnValue(null);
+  vi.mocked(detectApiError).mockReset().mockReturnValue(null);
   vi.mocked(saveState).mockReset().mockResolvedValue(undefined);
   vi.mocked(isCleanReview).mockReset().mockReturnValue(false);
   vi.mocked(measureDiff).mockReset().mockResolvedValue({ linesAdded: 100, linesRemoved: 10, total: 110 });
@@ -216,6 +228,75 @@ describe("Orchestrator.create", () => {
 
     expect(tdd.sendQuiet).not.toHaveBeenCalled();
     expect(review.sendQuiet).not.toHaveBeenCalled();
+  });
+
+  it("sends review rules when only tddSessionId is present (partial resume)", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    const orch = await Orchestrator.create(
+      makeConfig(),
+      { tddSessionId: "tdd-sess-1" },
+      fakeHud().hud,
+      vi.fn(),
+    );
+
+    // TDD is resuming — no rules reminder
+    expect(tdd.sendQuiet).not.toHaveBeenCalled();
+    // Review is fresh — needs rules reminder
+    expect(review.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("ONLY REVIEW THE DIFF"));
+    // Only TDD should have isFirst false
+    expect(orch.tddIsFirst).toBe(false);
+    expect(orch.reviewIsFirst).toBe(true);
+  });
+
+  it("sends TDD rules when only reviewSessionId is present (partial resume)", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    const orch = await Orchestrator.create(
+      makeConfig(),
+      { reviewSessionId: "rev-sess-1" },
+      fakeHud().hud,
+      vi.fn(),
+    );
+
+    // TDD is fresh — needs rules reminder
+    expect(tdd.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("RUN TESTS WITH BASH"));
+    // Review is resuming — no rules reminder
+    expect(review.sendQuiet).not.toHaveBeenCalled();
+    // Only review should have isFirst false
+    expect(orch.tddIsFirst).toBe(true);
+    expect(orch.reviewIsFirst).toBe(false);
+  });
+
+  it("keeps tddIsFirst and reviewIsFirst true on fresh start", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    const orch = await Orchestrator.create(makeConfig(), {}, fakeHud().hud, vi.fn());
+
+    expect(orch.tddIsFirst).toBe(true);
+    expect(orch.reviewIsFirst).toBe(true);
+  });
+
+  it("sets tddIsFirst and reviewIsFirst to false when resuming with session IDs", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    const orch = await Orchestrator.create(
+      makeConfig(),
+      { tddSessionId: "tdd-sess-1", reviewSessionId: "rev-sess-1" },
+      fakeHud().hud,
+      vi.fn(),
+    );
+
+    expect(orch.tddIsFirst).toBe(false);
+    expect(orch.reviewIsFirst).toBe(false);
   });
 
   it("uses provided agents when given, skipping spawn but still sending reminders", async () => {
@@ -386,6 +467,44 @@ describe("setupKeyboardHandlers", () => {
     expect(exitSpy).toHaveBeenCalledWith(130);
     exitSpy.mockRestore();
   });
+
+  it("key 'c' with no currentSlice does not log", async () => {
+    const { orch, pressKey } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    expect(orch.currentSlice).toBeNull();
+    pressKey("c");
+    expect(vi.mocked(printSliceIntro)).not.toHaveBeenCalled();
+  });
+
+  it("key 'c' with currentSlice calls printSliceIntro", async () => {
+    const { orch, pressKey } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    vi.mocked(printSliceIntro).mockReset();
+    const slice: Slice = { number: 3, title: "Test slice", content: "slice body" };
+    orch.currentSlice = slice;
+    pressKey("c");
+    expect(vi.mocked(printSliceIntro)).toHaveBeenCalledWith(orch.log, slice);
+  });
+
+  it("key 'p' with no currentPlanText does not log", async () => {
+    const { orch, pressKey } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    expect(orch.currentPlanText).toBeNull();
+    const logSpy = vi.fn();
+    (orch as any).log = logSpy;
+    pressKey("p");
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+
+  it("key 'p' with currentPlanText logs plan", async () => {
+    const { orch, pressKey } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    orch.currentPlanText = "## Step 1\nDo the thing";
+    const logSpy = vi.fn();
+    (orch as any).log = logSpy;
+    pressKey("p");
+    expect(logSpy).toHaveBeenCalledWith("## Step 1\nDo the thing");
+  });
 });
 
 describe("onInterruptSubmit", () => {
@@ -478,7 +597,7 @@ describe("checkCredit", () => {
   });
 
   it("saves state and throws CreditExhaustedError on signal", async () => {
-    vi.mocked(detectCreditExhaustion).mockReturnValue({ kind: "rejected" as const, message: "Credits exhausted." });
+    vi.mocked(detectApiError).mockReturnValue({ kind: "credit-exhausted", retryable: false });
     const { orch, tdd } = await makeOrch();
     const result = { exitCode: 1, assistantText: "", resultText: "credit limit", needsInput: false, sessionId: "s" };
     await expect(orch.checkCredit(result, tdd)).rejects.toThrow(CreditExhaustedError);
@@ -725,7 +844,7 @@ describe("Orchestrator.reviewFix", () => {
     const review = fakeAgent();
     const badResult = reviewResult("", { exitCode: 1 });
     (review.send as ReturnType<typeof vi.fn>).mockResolvedValue(badResult);
-    vi.mocked(detectCreditExhaustion).mockReturnValue({ kind: "rejected" as const, message: "Credits gone" });
+    vi.mocked(detectApiError).mockReturnValue({ kind: "credit-exhausted", retryable: false });
     const { orch } = await makeOrch({ reviewAgent: review });
     await expect(orch.reviewFix("content", "sha1")).rejects.toThrow(CreditExhaustedError);
   });
@@ -988,23 +1107,121 @@ describe("run()", () => {
     expect(pte).toHaveBeenCalledTimes(2);
   });
 
-  it("logs slice intro for non-skipped slices", async () => {
-    const group = { name: "G", slices: [{ number: 1, title: "Setup auth", content: "c" }] };
+  it("sets currentSlice during processing and clears after", async () => {
+    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const group = { name: "G", slices: [slice] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
-    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
+    let capturedSlice: unknown = "not-set";
+    const pte = vi.fn().mockImplementation(async () => {
+      capturedSlice = orch.currentSlice;
+      return { tddResult, skipped: false };
+    });
     vi.mocked(hasChanges).mockResolvedValue(false);
-    const logFn = vi.fn();
     const { orch } = await makeOrch();
     vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
-    (orch as any).log = logFn;
     vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
     vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
 
     await orch.run([group], 0);
 
-    const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
-    expect(allLogs).toContain("Slice 1");
-    expect(allLogs).toContain("Setup auth");
+    expect(capturedSlice).toEqual(slice);
+    expect(orch.currentSlice).toBeNull();
+  });
+
+  it("clears currentSlice when slice is skipped", async () => {
+    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const group = { name: "G", slices: [slice] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: true });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = await makeOrch();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
+    vi.spyOn(orch as any, "respawnTdd").mockResolvedValue(undefined);
+
+    await orch.run([group], 0);
+
+    expect(orch.currentSlice).toBeNull();
+  });
+
+  it("currentPlanText persists through hard interrupt path and clears after runSlice", async () => {
+    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const group = { name: "G", slices: [slice] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false, hardInterrupt: "fix this", planText: "the plan" });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const tdd = fakeAgent();
+    const { orch } = await makeOrch({ tddAgent: tdd });
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch as any, "respawnTdd").mockResolvedValue(undefined);
+    vi.spyOn(orch as any, "checkCredit").mockResolvedValue(undefined);
+    let capturedPlanText: unknown = "not-set";
+    vi.spyOn(orch, "runSlice").mockImplementation(async () => {
+      capturedPlanText = orch.currentPlanText;
+      return { reviewBase: "sha", skipped: false };
+    });
+
+    await orch.run([group], 0);
+
+    expect(capturedPlanText).toBe("the plan");
+    expect(orch.currentPlanText).toBeNull();
+  });
+
+  it("clears currentPlanText when slice is skipped", async () => {
+    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const group = { name: "G", slices: [slice] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: true, planText: "skip plan" });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = await makeOrch();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
+    vi.spyOn(orch as any, "respawnTdd").mockResolvedValue(undefined);
+
+    await orch.run([group], 0);
+
+    expect(orch.currentPlanText).toBeNull();
+  });
+
+  it("sets currentPlanText from planThenExecute result and clears after slice", async () => {
+    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const group = { name: "G", slices: [slice] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false, planText: "the plan" });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    const { orch } = await makeOrch();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    let capturedPlanText: unknown = "not-set";
+    vi.spyOn(orch, "runSlice").mockImplementation(async () => {
+      capturedPlanText = orch.currentPlanText;
+      return { reviewBase: "sha", skipped: false };
+    });
+
+    await orch.run([group], 0);
+
+    expect(capturedPlanText).toBe("the plan");
+    expect(orch.currentPlanText).toBeNull();
+  });
+
+  it("logs slice intro for non-skipped slices", async () => {
+    const slice = { number: 1, title: "Setup auth", content: "c" };
+    const group = { name: "G", slices: [slice] };
+    const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
+    vi.mocked(hasChanges).mockResolvedValue(false);
+    vi.mocked(printSliceIntro).mockReset();
+    const { orch } = await makeOrch();
+    vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
+    vi.spyOn(orch, "commitSweep").mockResolvedValue(undefined);
+    vi.spyOn(orch, "runSlice").mockResolvedValue({ reviewBase: "sha", skipped: false });
+
+    await orch.run([group], 0);
+
+    expect(vi.mocked(printSliceIntro)).toHaveBeenCalledWith(expect.any(Function), slice);
   });
 
   it("calls commitSweep and runSlice for each slice", async () => {
@@ -1186,6 +1403,112 @@ describe("gapAnalysis()", () => {
     expect(allLogs).toContain("failed");
     expect(allLogs).not.toContain("No coverage gaps found");
     expect(tdd.send).not.toHaveBeenCalled();
+  });
+
+  it("returns cleanly when hardInterruptPending set during TDD fix phase", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing edge case tests", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(captureRef).mockResolvedValue("gapsha");
+    const { orch } = await makeOrch({ tddAgent: tdd });
+    const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
+
+    const origWithInterrupt = orch.withInterrupt.bind(orch);
+    vi.spyOn(orch, "withInterrupt").mockImplementation(async (agent, fn) => {
+      const result = await origWithInterrupt(agent, fn);
+      if (agent === tdd) orch.hardInterruptPending = "stop";
+      return result;
+    });
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    expect(gapAgent.kill).toHaveBeenCalled();
+    expect(reviewFixSpy).not.toHaveBeenCalled();
+    expect(orch.hardInterruptPending).toBeNull();
+  });
+
+  it("returns cleanly when sliceSkipFlag set during TDD fix phase", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing edge case tests", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(captureRef).mockResolvedValue("gapsha");
+    const { orch } = await makeOrch({ tddAgent: tdd });
+    const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
+
+    const origWithInterrupt = orch.withInterrupt.bind(orch);
+    vi.spyOn(orch, "withInterrupt").mockImplementation(async (agent, fn) => {
+      const result = await origWithInterrupt(agent, fn);
+      if (agent === tdd) orch.sliceSkipFlag = true;
+      return result;
+    });
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    expect(gapAgent.kill).toHaveBeenCalled();
+    expect(reviewFixSpy).not.toHaveBeenCalled();
+    expect(orch.sliceSkipFlag).toBe(false);
+  });
+
+  it("returns cleanly when sliceSkipFlag set during gap agent phase", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    const { orch } = await makeOrch({ tddAgent: tdd });
+
+    const origWithInterrupt = orch.withInterrupt.bind(orch);
+    vi.spyOn(orch, "withInterrupt").mockImplementation(async (agent, fn) => {
+      const result = await origWithInterrupt(agent, fn);
+      if (agent === gapAgent) orch.sliceSkipFlag = true;
+      return result;
+    });
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    expect(gapAgent.kill).toHaveBeenCalled();
+    expect(tdd.send).not.toHaveBeenCalled();
+    expect(orch.sliceSkipFlag).toBe(false);
+  });
+
+  it("logs interrupted (not failed) when hardInterruptPending is set after gap agent", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 143, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
+    const tdd = fakeAgent();
+    const logFn = vi.fn();
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    const { orch } = await makeOrch({ tddAgent: tdd });
+    (orch as any).log = logFn;
+
+    // Simulate interrupt handler having fired during gap agent run
+    const origWithInterrupt = orch.withInterrupt.bind(orch);
+    vi.spyOn(orch, "withInterrupt").mockImplementation(async (agent, fn) => {
+      const result = await origWithInterrupt(agent, fn);
+      if (agent === gapAgent) orch.hardInterruptPending = "skip this";
+      return result;
+    });
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+    expect(allLogs).toContain("interrupted");
+    expect(allLogs).not.toContain("failed");
+    expect(gapAgent.kill).toHaveBeenCalled();
+    expect(tdd.send).not.toHaveBeenCalled();
+    expect(orch.hardInterruptPending).toBeNull();
+  });
+
+  it("sets activeAgent to GAP during gap scan", async () => {
+    const gapAgent = fakeAgent();
+    (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s" });
+    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    const hudHelper = fakeHud();
+    const { orch } = await makeOrch({ hud: hudHelper });
+
+    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+
+    expect(hudHelper.hud.update).toHaveBeenCalledWith(expect.objectContaining({ activeAgent: "GAP", activeAgentActivity: "scanning for gaps..." }));
   });
 
   it("does not call TDD bot when NO_GAPS_FOUND", async () => {
@@ -1419,7 +1742,7 @@ describe("commitSweep() gap coverage", () => {
   it("throws CreditExhaustedError when credit signal detected", async () => {
     const tdd = fakeAgent();
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
-    vi.mocked(detectCreditExhaustion).mockReturnValue({ kind: "rejected" as const, message: "Out of credits" });
+    vi.mocked(detectApiError).mockReturnValue({ kind: "credit-exhausted", retryable: false });
     vi.mocked(hasDirtyTree).mockResolvedValue(true);
     const { orch } = await makeOrch({ tddAgent: tdd });
 
@@ -1434,11 +1757,11 @@ describe("reviewFix() gap coverage", () => {
     (review.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Fix this", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
-    // detectCredit fires on second call (the TDD fix result)
+    // detectApiError fires on second call (the TDD fix result)
     let callCount = 0;
-    vi.mocked(detectCreditExhaustion).mockImplementation(() => {
+    vi.mocked(detectApiError).mockImplementation(() => {
       callCount++;
-      if (callCount >= 2) return { kind: "rejected" as const, message: "Out of credits" };
+      if (callCount >= 2) return { kind: "credit-exhausted", retryable: false };
       return null;
     });
     vi.mocked(captureRef).mockResolvedValue("sha");
@@ -1499,7 +1822,7 @@ describe("run() gap coverage", () => {
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
     vi.mocked(hasChanges).mockResolvedValue(false);
-    vi.mocked(detectCreditExhaustion).mockReturnValue({ kind: "rejected" as const, message: "Out" });
+    vi.mocked(detectApiError).mockReturnValue({ kind: "credit-exhausted", retryable: false });
     const { orch } = await makeOrch();
     vi.spyOn(orch, "planThenExecute").mockImplementation(pte);
 
@@ -1560,6 +1883,22 @@ describe("Orchestrator.planThenExecute (method)", () => {
     const result = await orch.planThenExecute("slice");
 
     expect(result.replan).toBe(true);
+  });
+
+  it("auto-accepts plan without prompting when config.auto is true", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    const hudHelper = fakeHud();
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = await makeOrch({ config: { auto: true, noInteraction: false }, hud: hudHelper, tddAgent: tdd });
+
+    await orch.planThenExecute("slice");
+
+    expect(hudHelper.hud.askUser).not.toHaveBeenCalled();
+    expect(tdd.send).toHaveBeenCalledOnce();
   });
 
   it("sends plan to TDD agent for execution", async () => {
@@ -1788,6 +2127,36 @@ describe("Orchestrator.planThenExecute (method)", () => {
     expect(tddPrompt).toContain("the plan text");
   });
 
+  it("returns planText in normal exit path", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "fallback", planText: "the real plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(result.planText).toBe("the real plan");
+  });
+
+  it("returns planText when skip flag set during plan phase", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "fallback", planText: "skipped plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    const tdd = fakeAgent();
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+    orch.sliceSkipFlag = true;
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(result.planText).toBe("skipped plan");
+    expect(result.skipped).toBe(true);
+  });
+
   it("fires onPlanReady (hud.update) before askUser in interactive mode", async () => {
     const planAgent = fakeAgent();
     (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -1810,6 +2179,82 @@ describe("Orchestrator.planThenExecute (method)", () => {
     const askIdx = callOrder.indexOf("askUser");
     expect(updateIdx).toBeGreaterThanOrEqual(0);
     expect(askIdx).toBeGreaterThan(updateIdx);
+  });
+
+  it("respawns TDD agent and retries when agent dies during execute", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+
+    const tdd = fakeAgent();
+    // First send: agent dies (exitCode 1, alive becomes false)
+    let sendCount = 0;
+    (tdd.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      sendCount++;
+      if (sendCount === 1) {
+        (tdd as { alive: boolean }).alive = false;
+        return { exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+      }
+      return { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
+    });
+
+    const freshTdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(freshTdd);
+
+    const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+
+    const result = await orch.planThenExecute("slice");
+
+    // Should have respawned: the orchestrator's tddAgent should now be the fresh one
+    expect(orch.tddAgent).toBe(freshTdd);
+    // Fresh agent should have received rules reminder
+    expect(freshTdd.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("RUN TESTS WITH BASH"));
+    // Fresh agent should have been sent the execute prompt
+    expect(freshTdd.send).toHaveBeenCalledOnce();
+    // Result should be from the fresh agent
+    expect(result.tddResult.exitCode).toBe(0);
+  });
+
+  it("dead session fallback works with real detectApiError", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+
+    const tdd = fakeAgent();
+    let sendCount = 0;
+    (tdd.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      sendCount++;
+      if (sendCount === 1) {
+        (tdd as { alive: boolean }).alive = false;
+        return { exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+      }
+      return { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
+    });
+
+    // Use real detectApiError logic — exitCode 1 + empty text → { kind: "unknown", retryable: false }
+    vi.mocked(detectApiError).mockImplementation((result, stderr) => {
+      if (result.exitCode === 0) return null;
+      const combined = `${result.resultText}\n${stderr}`;
+      if (/529|overloaded/i.test(combined)) return { kind: "overloaded", retryable: true };
+      if (/rate\s+limit/i.test(combined)) return { kind: "rate-limited", retryable: true };
+      return { kind: "unknown", retryable: false };
+    });
+
+    const freshTdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(freshTdd);
+
+    const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+
+    // Should NOT throw CreditExhaustedError — withRetry short-circuits on dead agent
+    const result = await orch.planThenExecute("slice");
+
+    expect(orch.tddAgent).toBe(freshTdd);
+    expect(freshTdd.send).toHaveBeenCalledOnce();
+    expect(result.tddResult.exitCode).toBe(0);
   });
 });
 
@@ -1840,5 +2285,145 @@ describe("finalPasses uses imported spawnAgent", () => {
     await orch.finalPasses("sha");
 
     expect(spawnAgent).toHaveBeenCalled();
+  });
+});
+
+describe("withRetry", () => {
+  it("retries on retryable error then succeeds", async () => {
+    const agent = fakeAgent();
+    const failResult: AgentResult = { exitCode: 1, assistantText: "", resultText: "529 overloaded", needsInput: false, sessionId: "s" };
+    const okResult: AgentResult = { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
+    const fn = vi.fn().mockResolvedValueOnce(failResult).mockResolvedValueOnce(okResult);
+    vi.mocked(detectApiError)
+      .mockReturnValueOnce({ kind: "overloaded", retryable: true })
+      .mockReturnValueOnce(null);
+
+    const { orch, hud } = await makeOrch();
+    const result = await orch.withRetry(fn, agent, "plan", 2, 0);
+
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(result).toBe(okResult);
+    expect(hud.setActivity).toHaveBeenCalledWith(expect.stringContaining("retry"));
+  });
+
+  it("throws on terminal error without retrying", async () => {
+    const agent = fakeAgent();
+    const failResult: AgentResult = { exitCode: 1, assistantText: "", resultText: "credit exhausted", needsInput: false, sessionId: "s" };
+    const fn = vi.fn().mockResolvedValue(failResult);
+    vi.mocked(detectApiError).mockReturnValue({ kind: "credit-exhausted", retryable: false });
+
+    const { orch } = await makeOrch();
+    await expect(orch.withRetry(fn, agent, "plan", 2, 0)).rejects.toThrow(CreditExhaustedError);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(saveState).toHaveBeenCalled();
+  });
+
+  it("gives up after max retries", async () => {
+    const agent = fakeAgent();
+    const failResult: AgentResult = { exitCode: 1, assistantText: "", resultText: "529", needsInput: false, sessionId: "s" };
+    const fn = vi.fn().mockResolvedValue(failResult);
+    vi.mocked(detectApiError).mockReturnValue({ kind: "overloaded", retryable: true });
+
+    const { orch } = await makeOrch();
+    await expect(orch.withRetry(fn, agent, "plan", 2, 0)).rejects.toThrow(/max retries.*2/i);
+    expect(fn).toHaveBeenCalledTimes(3); // initial + 2 retries
+  });
+
+  it("planThenExecute retries plan agent on 529", async () => {
+    const planAgent = fakeAgent();
+    const fail529: AgentResult = { exitCode: 1, assistantText: "", resultText: "529 overloaded", needsInput: false, sessionId: "s" };
+    const okPlan: AgentResult = { exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s" };
+    (planAgent.send as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(fail529)
+      .mockResolvedValueOnce(okPlan);
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    vi.mocked(detectApiError)
+      .mockReturnValueOnce({ kind: "overloaded", retryable: true })
+      .mockReturnValueOnce(null) // plan retry succeeds
+      .mockReturnValueOnce(null); // tdd send succeeds
+    const { orch, hud } = await makeOrch({ config: { noInteraction: true } });
+    orch.retryDelayMs = 0;
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(planAgent.send).toHaveBeenCalledTimes(2);
+    expect(result.skipped).toBe(false);
+  });
+
+  it("planThenExecute retries TDD execution on 529", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+    const tdd = fakeAgent();
+    const fail529: AgentResult = { exitCode: 1, assistantText: "", resultText: "overloaded", needsInput: false, sessionId: "s" };
+    const okResult: AgentResult = { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
+    (tdd.send as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(fail529)
+      .mockResolvedValueOnce(okResult);
+    vi.mocked(detectApiError)
+      .mockReturnValueOnce(null) // plan send succeeds
+      .mockReturnValueOnce({ kind: "overloaded", retryable: true }) // tdd first attempt
+      .mockReturnValueOnce(null); // tdd retry succeeds
+    const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+    orch.retryDelayMs = 0;
+
+    const result = await orch.planThenExecute("slice");
+
+    expect(tdd.send).toHaveBeenCalledTimes(2);
+    expect(result.tddResult).toBe(okResult);
+  });
+
+  it("checkCredit ignores retryable errors", async () => {
+    const agent = fakeAgent();
+    const result: AgentResult = { exitCode: 1, assistantText: "", resultText: "rate limit", needsInput: false, sessionId: "s" };
+    // detectCreditExhaustion would normally signal this as a credit issue
+    vi.mocked(detectCreditExhaustion).mockReturnValue({ kind: "rejected", message: "Rate limited. Wait and retry." });
+    vi.mocked(detectApiError).mockReturnValue({ kind: "rate-limited", retryable: true });
+
+    const { orch } = await makeOrch();
+    // checkCredit should use detectApiError and ignore retryable — NOT throw
+    await expect(orch.checkCredit(result, agent)).resolves.toBeUndefined();
+  });
+
+  it("checkCredit throws on terminal errors via detectApiError", async () => {
+    const agent = fakeAgent();
+    const result: AgentResult = { exitCode: 1, assistantText: "", resultText: "credit exhausted", needsInput: false, sessionId: "s" };
+    vi.mocked(detectApiError).mockReturnValue({ kind: "credit-exhausted", retryable: false });
+
+    const { orch } = await makeOrch();
+    await expect(orch.checkCredit(result, agent)).rejects.toThrow(CreditExhaustedError);
+  });
+
+  it("returns result without throwing when agent is dead", async () => {
+    const agent = fakeAgent();
+    (agent as { alive: boolean }).alive = false;
+    const deadResult: AgentResult = { exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const fn = vi.fn().mockResolvedValue(deadResult);
+    // Real detectApiError returns { kind: "unknown", retryable: false } for exitCode 1
+    // which normally throws CreditExhaustedError. Dead agent should short-circuit.
+    vi.mocked(detectApiError).mockReturnValue({ kind: "unknown", retryable: false });
+
+    const { orch } = await makeOrch();
+    const result = await orch.withRetry(fn, agent, "tdd-execute", 2, 0);
+
+    expect(result).toBe(deadResult);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates HUD activity during retry wait", async () => {
+    const agent = fakeAgent();
+    const failResult: AgentResult = { exitCode: 1, assistantText: "", resultText: "529", needsInput: false, sessionId: "s" };
+    const okResult: AgentResult = { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
+    const fn = vi.fn().mockResolvedValueOnce(failResult).mockResolvedValueOnce(okResult);
+    vi.mocked(detectApiError)
+      .mockReturnValueOnce({ kind: "overloaded", retryable: true })
+      .mockReturnValueOnce(null);
+
+    const { orch, hud } = await makeOrch();
+    await orch.withRetry(fn, agent, "plan", 2, 0);
+
+    expect(hud.setActivity).toHaveBeenCalledWith("waiting to retry (overloaded)...");
   });
 });
