@@ -19,7 +19,7 @@ const rulesSchema = z.object({
 
 const configSchema = z.object({
   maxReviewCycles: z.number().int().positive().optional(),
-  reviewThreshold: z.number().int().positive().optional(),
+  reviewThreshold: z.number().int().nonnegative().optional(),
   maxReplans: z.number().int().positive().optional(),
 });
 

@@ -68,6 +68,13 @@ describe("loadOrchrConfig", () => {
     expect(result).toEqual(full);
   });
 
+  it("accepts reviewThreshold of zero", () => {
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ config: { reviewThreshold: 0 } }));
+
+    const result = loadOrchrConfig("/fake");
+    expect(result.config?.reviewThreshold).toBe(0);
+  });
+
   it("rejects invalid config values", () => {
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ config: { maxReviewCycles: -1 } }));
 
