@@ -26,7 +26,8 @@ import {
   buildTddPrompt,
   withBrief,
 } from "./plan/prompts.js";
-import { detectCreditExhaustion, type CreditSignal } from "./agent/credit-detection.js";
+import type { CreditSignal } from "./agent/credit-detection.js";
+import { detectApiError } from "./agent/api-errors.js";
 import { saveState } from "./state/state.js";
 import { isCleanReview } from "./cli/review-check.js";
 import { makeStreamer, type Streamer } from "./agent/streamer.js";
@@ -58,6 +59,7 @@ type PlanThenExecuteResult = {
   readonly skipped: boolean;
   readonly hardInterrupt?: string;
   readonly replan?: boolean;
+  readonly planText?: string;
 };
 
 export class CreditExhaustedError extends Error {
@@ -81,6 +83,9 @@ export class Orchestrator {
   hardInterruptPending: string | null = null;
   slicesCompleted = 0;
   activityShowing = false;
+  retryDelayMs = 5_000;
+  currentSlice: Slice | null = null;
+  currentPlanText: string | null = null;
 
   private readonly hudWriter: WriteFn;
 
@@ -91,20 +96,22 @@ export class Orchestrator {
     log: LogFn,
     agents?: { tdd: AgentProcess; review: AgentProcess },
   ): Promise<Orchestrator> {
-    const resuming = !agents && (initialState.tddSessionId || initialState.reviewSessionId);
+    const tddResuming = !agents && !!initialState.tddSessionId;
+    const reviewResuming = !agents && !!initialState.reviewSessionId;
     const tddAgent =
       agents?.tdd ??
       spawnAgentFactory(BOT_TDD, config.tddSkill, initialState.tddSessionId, config.cwd);
     const reviewAgent =
       agents?.review ??
       spawnAgentFactory(BOT_REVIEW, config.reviewSkill, initialState.reviewSessionId, config.cwd);
-    if (!resuming) {
-      await Promise.all([
-        tddAgent.sendQuiet(TDD_RULES_REMINDER),
-        reviewAgent.sendQuiet(REVIEW_RULES_REMINDER),
-      ]);
-    }
-    return new Orchestrator(config, initialState, hud, log, tddAgent, reviewAgent);
+    const reminders: Promise<string>[] = [];
+    if (!tddResuming) reminders.push(tddAgent.sendQuiet(TDD_RULES_REMINDER));
+    if (!reviewResuming) reminders.push(reviewAgent.sendQuiet(REVIEW_RULES_REMINDER));
+    await Promise.all(reminders);
+    const orch = new Orchestrator(config, initialState, hud, log, tddAgent, reviewAgent);
+    if (tddResuming) orch.tddIsFirst = false;
+    if (reviewResuming) orch.reviewIsFirst = false;
+    return orch;
   }
 
   private constructor(
@@ -143,6 +150,10 @@ export class Orchestrator {
       } else if (key === "s" && this.sliceSkippable) {
         this.sliceSkipFlag = !this.sliceSkipFlag;
         this.hud.setSkipping(this.sliceSkipFlag);
+      } else if (key === "c" && this.currentSlice) {
+        printSliceIntro(this.log, this.currentSlice);
+      } else if (key === "p" && this.currentPlanText) {
+        this.log(this.currentPlanText);
       } else if (key === "q" || key === "\x03") {
         this.cleanup();
         process.exit(130);
@@ -195,11 +206,48 @@ export class Orchestrator {
   }
 
   async checkCredit(result: AgentResult, agent: AgentProcess): Promise<void> {
-    const signal = detectCreditExhaustion(result, agent.stderr);
-    if (!signal) return;
-    this.log(`Credit exhaustion detected: ${signal.message}`);
+    const apiError = detectApiError(result, agent.stderr);
+    if (!apiError || apiError.retryable) return;
+    this.log(`Terminal API error detected: ${apiError.kind}`);
     await saveState(this.config.stateFile, this.state);
-    throw new CreditExhaustedError(signal.message, signal.kind);
+    throw new CreditExhaustedError(
+      `Terminal API error: ${apiError.kind}`,
+      result.assistantText.length > 0 ? "mid-response" : "rejected",
+    );
+  }
+
+  async withRetry(
+    fn: () => Promise<AgentResult>,
+    agent: AgentProcess,
+    label: string,
+    maxRetries = 2,
+    delayMs = this.retryDelayMs,
+  ): Promise<AgentResult> {
+    let attempt = 0;
+    while (true) {
+      const result = await fn();
+      if (!agent.alive) return result;
+      const apiError = detectApiError(result, agent.stderr);
+
+      if (!apiError) return result;
+
+      if (!apiError.retryable) {
+        await saveState(this.config.stateFile, this.state);
+        throw new CreditExhaustedError(
+          `Terminal API error during ${label}: ${apiError.kind}`,
+          result.assistantText.length > 0 ? "mid-response" : "rejected",
+        );
+      }
+
+      attempt++;
+      if (attempt > maxRetries) {
+        throw new Error(`Max retries (${maxRetries}) exceeded for ${label}: ${apiError.kind}`);
+      }
+
+      this.log(`${label}: ${apiError.kind} — retrying (${attempt}/${maxRetries})...`);
+      this.hud.setActivity(`waiting to retry (${apiError.kind})...`);
+      await new Promise((r) => setTimeout(r, delayMs * attempt));
+    }
   }
 
   async runSlice(
@@ -288,29 +336,33 @@ export class Orchestrator {
     const tddBrief = this.tddIsFirst ? this.config.brief : "";
     const planAgent = spawnPlanAgentWithSkill(this.config.cwd);
     const ps = this.streamer(BOT_PLAN);
-    const planResult = await this.withInterrupt(planAgent, () =>
-      planAgent.send(planPrompt, ps, (s) => this.onToolUse(s)),
+    const planResult = await this.withRetry(
+      () => this.withInterrupt(planAgent, () =>
+        planAgent.send(planPrompt, ps, (s) => this.onToolUse(s)),
+      ),
+      planAgent,
+      "plan",
     );
     ps.flush();
 
+    const plan = planResult.planText ?? planResult.assistantText ?? "";
+
     if (this.sliceSkipFlag) {
       planAgent.kill();
-      return { tddResult: planResult, skipped: true };
+      return { tddResult: planResult, skipped: true, planText: plan };
     }
 
     const hardInterruptGuidance = this.hardInterruptPending;
     if (hardInterruptGuidance) {
       planAgent.kill();
-      return { tddResult: planResult, skipped: false, hardInterrupt: hardInterruptGuidance };
+      return { tddResult: planResult, skipped: false, hardInterrupt: hardInterruptGuidance, planText: plan };
     }
 
     planAgent.kill();
 
-    const plan = planResult.planText ?? planResult.assistantText ?? "";
-
     // ── Confirmation gate ──
     let operatorGuidance = "";
-    const noInteraction = forceAccept || this.config.noInteraction;
+    const noInteraction = forceAccept || this.config.noInteraction || this.config.auto;
     if (!noInteraction) {
       const planLines = plan.split("\n");
       const MAX_PREVIEW = 30;
@@ -323,7 +375,7 @@ export class Orchestrator {
       }
       const answer = await this.hud.askUser("Accept plan? (y)es / (e)dit / (r)eplan: ");
       if (answer.startsWith("r")) {
-        return { tddResult: planResult, skipped: false, replan: true };
+        return { tddResult: planResult, skipped: false, replan: true, planText: plan };
       }
       if (answer.startsWith("e")) {
         operatorGuidance = await this.hud.askUser("Guidance for execution: ");
@@ -337,21 +389,42 @@ export class Orchestrator {
       : `Execute this plan:\n\n${plan}`;
     const executePrompt = withBrief(rawExecutePrompt, tddBrief);
     const es = this.streamer(BOT_TDD);
-    const tddResult = await this.withInterrupt(this.tddAgent, () =>
-      this.tddAgent.send(executePrompt, es, (s) => this.onToolUse(s)),
+    const tddResult = await this.withRetry(
+      () => this.withInterrupt(this.tddAgent, () =>
+        this.tddAgent.send(executePrompt, es, (s) => this.onToolUse(s)),
+      ),
+      this.tddAgent,
+      "tdd-execute",
     );
     es.flush();
 
+    // Dead session fallback: if the TDD agent died (e.g. expired resumed session),
+    // respawn fresh and retry the execute send once
+    if (!this.tddAgent.alive) {
+      this.log(`${ts()} ⚠ TDD agent died during execute — respawning fresh agent`);
+      await this.respawnTdd();
+      const retryEs = this.streamer(BOT_TDD);
+      const retryResult = await this.withRetry(
+        () => this.withInterrupt(this.tddAgent, () =>
+          this.tddAgent.send(executePrompt, retryEs, (s) => this.onToolUse(s)),
+        ),
+        this.tddAgent,
+        "tdd-execute-retry",
+      );
+      retryEs.flush();
+      return { tddResult: retryResult, skipped: false, planText: plan };
+    }
+
     if (this.sliceSkipFlag) {
-      return { tddResult, skipped: true };
+      return { tddResult, skipped: true, planText: plan };
     }
 
     const execInterrupt = this.hardInterruptPending;
     if (execInterrupt) {
-      return { tddResult, skipped: false, hardInterrupt: execInterrupt };
+      return { tddResult, skipped: false, hardInterrupt: execInterrupt, planText: plan };
     }
 
-    return { tddResult, skipped: false };
+    return { tddResult, skipped: false, planText: plan };
   }
 
   async verify(slice: Slice, verifyBaseSha: string): Promise<boolean> {
@@ -599,6 +672,7 @@ export class Orchestrator {
           currentSlice: { number: slice.number },
           completedSlices: this.slicesCompleted,
         });
+        this.currentSlice = slice;
         printSliceIntro(this.log, slice);
 
         const verifyBaseSha = await captureRef(this.config.cwd);
@@ -618,8 +692,12 @@ export class Orchestrator {
           pteResult = await this.planThenExecute(slice.content, true);
         }
 
+        this.currentPlanText = pteResult.planText || null;
+
         if (pteResult.skipped) {
           this.sliceSkipFlag = false;
+          this.currentSlice = null;
+          this.currentPlanText = null;
           this.state = { ...this.state, lastCompletedSlice: slice.number };
           await saveState(this.config.stateFile, this.state);
           await this.respawnTdd();
@@ -659,6 +737,8 @@ export class Orchestrator {
         // Post-TDD pipeline: verify → review → summary
         const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
         reviewBase = sliceResult.reviewBase;
+        this.currentSlice = null;
+        this.currentPlanText = null;
         if (!sliceResult.skipped) {
           groupCompleted++;
           this.hud.update({ completedSlices: this.slicesCompleted, groupCompleted });
@@ -712,11 +792,24 @@ export class Orchestrator {
     const gapPrompt = withBrief(buildGapPrompt(groupContent, groupBaseSha), this.config.brief);
     const onTool = (s: string) => this.onToolUse(s);
     const gs = this.streamer(BOT_GAP);
+    this.hud.update({ activeAgent: "GAP", activeAgentActivity: "scanning for gaps..." });
     const gapResult = await this.withInterrupt(gapAgent, () =>
       gapAgent.send(gapPrompt, gs, onTool),
     );
     gs.flush();
     await this.checkCredit(gapResult, gapAgent);
+
+    if (this.sliceSkipFlag) {
+      this.sliceSkipFlag = false;
+      gapAgent.kill();
+      return;
+    }
+    if (this.hardInterruptPending) {
+      this.hardInterruptPending = null;
+      this.log(`${ts()} ${a.yellow}⚠ Gap analysis interrupted — skipping${a.reset}`);
+      gapAgent.kill();
+      return;
+    }
 
     const gapText = gapResult.assistantText ?? "";
 
@@ -748,6 +841,18 @@ export class Orchestrator {
     ts2.flush();
     this.tddIsFirst = false;
     await this.checkCredit(fixResult, this.tddAgent);
+
+    if (this.sliceSkipFlag) {
+      this.sliceSkipFlag = false;
+      gapAgent.kill();
+      return;
+    }
+    if (this.hardInterruptPending) {
+      this.hardInterruptPending = null;
+      this.log(`${ts()} ${a.yellow}⚠ Gap analysis interrupted — skipping${a.reset}`);
+      gapAgent.kill();
+      return;
+    }
 
     if (fixResult.needsInput) {
       await this.followUp(fixResult, this.tddAgent);

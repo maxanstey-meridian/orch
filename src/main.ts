@@ -26,7 +26,7 @@ import { runFingerprint } from "./state/fingerprint.js";
 import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "./ui/display.js";
 import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
 import { runInit, profileToMarkdown } from "./ui/init.js";
-import { spawnPlanAgentWithSkill } from "./agent/agent-factory.js";
+import { spawnPlanAgentWithSkill, spawnGeneratePlanAgent } from "./agent/agent-factory.js";
 import { getStatus, stashBackup } from "./git/git.js";
 import { assertGitRepo } from "./git/repo-check.js";
 import { parseBranchFlag } from "./cli/cli-args.js";
@@ -149,7 +149,7 @@ const main = async () => {
       log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
       planPath = inputPath;
     } else {
-      planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnPlanAgentWithSkill);
+      planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnGeneratePlanAgent);
     }
   }
 

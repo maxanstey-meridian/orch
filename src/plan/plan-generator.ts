@@ -167,8 +167,17 @@ export const generatePlan = async (
   }
 
   // Parse, validate via Zod, and map to Group[]
-  // parsePlanJson throws with descriptive errors on invalid JSON or schema violations
-  const groups = parsePlanJson(planText, "generated plan");
+  let groups: readonly Group[];
+  try {
+    groups = parsePlanJson(planText, "generated plan");
+  } catch (e) {
+    console.error("--- RAW AGENT OUTPUT ---");
+    console.error(best);
+    console.error("--- EXTRACTED JSON ---");
+    console.error(planText);
+    console.error("------------------------");
+    throw e;
+  }
 
   // Pretty-print the validated JSON for disk
   const formatted = JSON.stringify(JSON.parse(planText), null, 2);
