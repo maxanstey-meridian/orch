@@ -910,6 +910,16 @@ describe("Orchestrator.reviewFix", () => {
     expect(review.send).toHaveBeenCalledTimes(2);
   });
 
+  it("uses maxReviewCycles from config (single cycle)", async () => {
+    const review = fakeAgent();
+    const tdd = fakeAgent();
+    (review.send as ReturnType<typeof vi.fn>).mockResolvedValue(reviewResult("off-by-one"));
+    (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue(reviewResult("fixed"));
+    const { orch } = await makeOrch({ reviewAgent: review, tddAgent: tdd, config: { maxReviewCycles: 1 } });
+    await orch.reviewFix("content", "sha1");
+    expect(review.send).toHaveBeenCalledTimes(1);
+  });
+
   it("forwards review findings to TDD agent", async () => {
     const review = fakeAgent();
     const tdd = fakeAgent();

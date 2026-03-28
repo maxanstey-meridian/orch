@@ -236,6 +236,13 @@ describe("resolveOrchrConfig", () => {
     expect(summary).toBe("maxReplans: 1");
   });
 
+  it("buildOrchrSummary includes reviewThreshold: 0", () => {
+    const config = resolveOrchrConfig({}, "/fake");
+    config.config = { reviewThreshold: 0 };
+    const summary = buildOrchrSummary(config);
+    expect(summary).toBe("reviewThreshold: 0");
+  });
+
   it("buildOrchrSummary combines skill and config overrides", () => {
     const config = resolveOrchrConfig({}, "/fake");
     config.skills.review = { content: "x" };
