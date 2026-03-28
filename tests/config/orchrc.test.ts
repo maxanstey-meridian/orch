@@ -92,6 +92,32 @@ describe("loadOrchrConfig", () => {
 
     expect(() => loadOrchrConfig("/fake")).toThrow("Invalid .orchrc.json");
   });
+
+  it("throws descriptive error on malformed JSON", () => {
+    vi.mocked(readFileSync).mockReturnValue("{ not json");
+
+    expect(() => loadOrchrConfig("/fake")).toThrow();
+  });
+
+  it("re-throws non-ENOENT errors", () => {
+    const err: NodeJS.ErrnoException = new Error("EACCES");
+    err.code = "EACCES";
+    vi.mocked(readFileSync).mockImplementation(() => { throw err; });
+
+    expect(() => loadOrchrConfig("/fake")).toThrow("EACCES");
+  });
+
+  it("rejects non-integer config values", () => {
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ config: { maxReviewCycles: 2.5 } }));
+
+    expect(() => loadOrchrConfig("/fake")).toThrow("maxReviewCycles");
+  });
+
+  it("rejects zero for maxReplans", () => {
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ config: { maxReplans: 0 } }));
+
+    expect(() => loadOrchrConfig("/fake")).toThrow("maxReplans");
+  });
 });
 
 describe("resolveOrchrConfig", () => {
@@ -173,6 +199,20 @@ describe("resolveOrchrConfig", () => {
 
     expect(() => resolveOrchrConfig({ rules: { tdd: "./missing.md" } }, "/fake"))
       .toThrow("/fake/missing.md");
+  });
+
+  it("re-throws non-ENOENT errors when resolving skill file", () => {
+    const err: NodeJS.ErrnoException = new Error("EACCES");
+    err.code = "EACCES";
+    vi.mocked(readFileSync).mockImplementation(() => { throw err; });
+
+    expect(() => resolveOrchrConfig({ skills: { tdd: "./skill.md" } }, "/fake"))
+      .toThrow("EACCES");
+  });
+
+  it("handles empty rules array", () => {
+    const result = resolveOrchrConfig({ rules: { review: [] } }, "/fake");
+    expect(result.rules.review).toBe("");
   });
 
   it("loadAndResolveOrchrConfig loads and resolves", () => {
