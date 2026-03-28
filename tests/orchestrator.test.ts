@@ -230,6 +230,75 @@ describe("Orchestrator.create", () => {
     expect(review.sendQuiet).not.toHaveBeenCalled();
   });
 
+  it("sends review rules when only tddSessionId is present (partial resume)", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    const orch = await Orchestrator.create(
+      makeConfig(),
+      { tddSessionId: "tdd-sess-1" },
+      fakeHud().hud,
+      vi.fn(),
+    );
+
+    // TDD is resuming — no rules reminder
+    expect(tdd.sendQuiet).not.toHaveBeenCalled();
+    // Review is fresh — needs rules reminder
+    expect(review.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("ONLY REVIEW THE DIFF"));
+    // Only TDD should have isFirst false
+    expect(orch.tddIsFirst).toBe(false);
+    expect(orch.reviewIsFirst).toBe(true);
+  });
+
+  it("sends TDD rules when only reviewSessionId is present (partial resume)", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    const orch = await Orchestrator.create(
+      makeConfig(),
+      { reviewSessionId: "rev-sess-1" },
+      fakeHud().hud,
+      vi.fn(),
+    );
+
+    // TDD is fresh — needs rules reminder
+    expect(tdd.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("RUN TESTS WITH BASH"));
+    // Review is resuming — no rules reminder
+    expect(review.sendQuiet).not.toHaveBeenCalled();
+    // Only review should have isFirst false
+    expect(orch.tddIsFirst).toBe(true);
+    expect(orch.reviewIsFirst).toBe(false);
+  });
+
+  it("keeps tddIsFirst and reviewIsFirst true on fresh start", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    const orch = await Orchestrator.create(makeConfig(), {}, fakeHud().hud, vi.fn());
+
+    expect(orch.tddIsFirst).toBe(true);
+    expect(orch.reviewIsFirst).toBe(true);
+  });
+
+  it("sets tddIsFirst and reviewIsFirst to false when resuming with session IDs", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValueOnce(tdd).mockReturnValueOnce(review);
+
+    const orch = await Orchestrator.create(
+      makeConfig(),
+      { tddSessionId: "tdd-sess-1", reviewSessionId: "rev-sess-1" },
+      fakeHud().hud,
+      vi.fn(),
+    );
+
+    expect(orch.tddIsFirst).toBe(false);
+    expect(orch.reviewIsFirst).toBe(false);
+  });
+
   it("uses provided agents when given, skipping spawn but still sending reminders", async () => {
     const tdd = fakeAgent();
     const review = fakeAgent();
@@ -2111,6 +2180,82 @@ describe("Orchestrator.planThenExecute (method)", () => {
     expect(updateIdx).toBeGreaterThanOrEqual(0);
     expect(askIdx).toBeGreaterThan(updateIdx);
   });
+
+  it("respawns TDD agent and retries when agent dies during execute", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+
+    const tdd = fakeAgent();
+    // First send: agent dies (exitCode 1, alive becomes false)
+    let sendCount = 0;
+    (tdd.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      sendCount++;
+      if (sendCount === 1) {
+        (tdd as { alive: boolean }).alive = false;
+        return { exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+      }
+      return { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
+    });
+
+    const freshTdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(freshTdd);
+
+    const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+
+    const result = await orch.planThenExecute("slice");
+
+    // Should have respawned: the orchestrator's tddAgent should now be the fresh one
+    expect(orch.tddAgent).toBe(freshTdd);
+    // Fresh agent should have received rules reminder
+    expect(freshTdd.sendQuiet).toHaveBeenCalledWith(expect.stringContaining("RUN TESTS WITH BASH"));
+    // Fresh agent should have been sent the execute prompt
+    expect(freshTdd.send).toHaveBeenCalledOnce();
+    // Result should be from the fresh agent
+    expect(result.tddResult.exitCode).toBe(0);
+  });
+
+  it("dead session fallback works with real detectApiError", async () => {
+    const planAgent = fakeAgent();
+    (planAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exitCode: 0, assistantText: "the plan", planText: "the plan", resultText: "", needsInput: false, sessionId: "s",
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+
+    const tdd = fakeAgent();
+    let sendCount = 0;
+    (tdd.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      sendCount++;
+      if (sendCount === 1) {
+        (tdd as { alive: boolean }).alive = false;
+        return { exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+      }
+      return { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
+    });
+
+    // Use real detectApiError logic — exitCode 1 + empty text → { kind: "unknown", retryable: false }
+    vi.mocked(detectApiError).mockImplementation((result, stderr) => {
+      if (result.exitCode === 0) return null;
+      const combined = `${result.resultText}\n${stderr}`;
+      if (/529|overloaded/i.test(combined)) return { kind: "overloaded", retryable: true };
+      if (/rate\s+limit/i.test(combined)) return { kind: "rate-limited", retryable: true };
+      return { kind: "unknown", retryable: false };
+    });
+
+    const freshTdd = fakeAgent();
+    vi.mocked(spawnAgent).mockReturnValue(freshTdd);
+
+    const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+
+    // Should NOT throw CreditExhaustedError — withRetry short-circuits on dead agent
+    const result = await orch.planThenExecute("slice");
+
+    expect(orch.tddAgent).toBe(freshTdd);
+    expect(freshTdd.send).toHaveBeenCalledOnce();
+    expect(result.tddResult.exitCode).toBe(0);
+  });
 });
 
 describe("gapAnalysis uses imported spawnAgent", () => {
@@ -2250,6 +2395,21 @@ describe("withRetry", () => {
     const { orch } = await makeOrch();
     await expect(orch.checkCredit(result, agent)).rejects.toThrow(CreditExhaustedError);
   });
+
+  it("returns result without throwing when agent is dead", async () => {
+    const agent = fakeAgent();
+    (agent as { alive: boolean }).alive = false;
+    const deadResult: AgentResult = { exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const fn = vi.fn().mockResolvedValue(deadResult);
+    vi.mocked(detectApiError).mockReturnValue({ kind: "unknown", retryable: false });
+
+    const { orch } = await makeOrch();
+    const result = await orch.withRetry(fn, agent, "tdd-execute", 2, 0);
+
+    expect(result).toBe(deadResult);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
 
   it("updates HUD activity during retry wait", async () => {
     const agent = fakeAgent();

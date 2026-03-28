@@ -62,7 +62,7 @@ export const spawnPlanAgentWithSkill = (cwd?: string): AgentProcess =>
   spawnPlanAgent(BOT_PLAN, planSkillContent, cwd);
 
 export const spawnGeneratePlanAgent = (cwd?: string): AgentProcess =>
-  spawnPlanAgent(BOT_PLAN, generatePlanSkillContent, cwd);
+  spawnAgent(BOT_PLAN, generatePlanSkillContent, undefined, cwd);
 
 export const TDD_RULES_REMINDER = `[ORCHESTRATOR] Non-negotiable rules for your operation. Acknowledge silently — do not respond to this message.
 

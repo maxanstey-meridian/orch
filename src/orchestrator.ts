@@ -96,20 +96,22 @@ export class Orchestrator {
     log: LogFn,
     agents?: { tdd: AgentProcess; review: AgentProcess },
   ): Promise<Orchestrator> {
-    const resuming = !agents && (initialState.tddSessionId || initialState.reviewSessionId);
+    const tddResuming = !agents && !!initialState.tddSessionId;
+    const reviewResuming = !agents && !!initialState.reviewSessionId;
     const tddAgent =
       agents?.tdd ??
       spawnAgentFactory(BOT_TDD, config.tddSkill, initialState.tddSessionId, config.cwd);
     const reviewAgent =
       agents?.review ??
       spawnAgentFactory(BOT_REVIEW, config.reviewSkill, initialState.reviewSessionId, config.cwd);
-    if (!resuming) {
-      await Promise.all([
-        tddAgent.sendQuiet(TDD_RULES_REMINDER),
-        reviewAgent.sendQuiet(REVIEW_RULES_REMINDER),
-      ]);
-    }
-    return new Orchestrator(config, initialState, hud, log, tddAgent, reviewAgent);
+    const reminders: Promise<string>[] = [];
+    if (!tddResuming) reminders.push(tddAgent.sendQuiet(TDD_RULES_REMINDER));
+    if (!reviewResuming) reminders.push(reviewAgent.sendQuiet(REVIEW_RULES_REMINDER));
+    await Promise.all(reminders);
+    const orch = new Orchestrator(config, initialState, hud, log, tddAgent, reviewAgent);
+    if (tddResuming) orch.tddIsFirst = false;
+    if (reviewResuming) orch.reviewIsFirst = false;
+    return orch;
   }
 
   private constructor(
@@ -224,6 +226,7 @@ export class Orchestrator {
     let attempt = 0;
     while (true) {
       const result = await fn();
+      if (!agent.alive) return result;
       const apiError = detectApiError(result, agent.stderr);
 
       if (!apiError) return result;
@@ -394,6 +397,23 @@ export class Orchestrator {
       "tdd-execute",
     );
     es.flush();
+
+    // Dead session fallback: if the TDD agent died (e.g. expired resumed session),
+    // respawn fresh and retry the execute send once
+    if (!this.tddAgent.alive) {
+      this.log(`${ts()} ⚠ TDD agent died during execute — respawning fresh agent`);
+      await this.respawnTdd();
+      const retryEs = this.streamer(BOT_TDD);
+      const retryResult = await this.withRetry(
+        () => this.withInterrupt(this.tddAgent, () =>
+          this.tddAgent.send(executePrompt, retryEs, (s) => this.onToolUse(s)),
+        ),
+        this.tddAgent,
+        "tdd-execute-retry",
+      );
+      retryEs.flush();
+      return { tddResult: retryResult, skipped: false, planText: plan };
+    }
 
     if (this.sliceSkipFlag) {
       return { tddResult, skipped: true, planText: plan };
