@@ -124,6 +124,20 @@ describe("printStartupBanner", () => {
     const text = strip(lines.join("\n"));
     expect(text).not.toContain("Worktree");
   });
+
+  it("shows orchrc summary when provided", () => {
+    const { lines, log } = collect();
+    printStartupBanner(log, { ...baseOpts, orchrcSummary: "tdd: custom, review: disabled" });
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("tdd: custom, review: disabled");
+  });
+
+  it("does not show Config line when orchrcSummary is undefined", () => {
+    const { lines, log } = collect();
+    printStartupBanner(log, baseOpts);
+    const text = strip(lines.join("\n"));
+    expect(text).not.toContain("Config");
+  });
 });
 
 const makeSlice = (overrides: Partial<{ number: number; title: string; why: string; content: string; tests: string }> = {}) => ({

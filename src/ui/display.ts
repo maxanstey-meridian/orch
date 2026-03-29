@@ -105,6 +105,7 @@ export type BannerOpts = {
   readonly reviewSessionId: string;
   readonly groups: readonly Group[];
   readonly worktree?: { readonly path: string; readonly branch: string };
+  readonly orchrcSummary?: string;
 };
 
 export const printStartupBanner = (log: LogFn, opts: BannerOpts): void => {
@@ -122,6 +123,9 @@ export const printStartupBanner = (log: LogFn, opts: BannerOpts): void => {
   log(
     `   ${a.dim}Mode${a.reset}    ${opts.groupFilter ? `start from "${opts.groupFilter}"` : opts.auto ? "automatic" : "interactive"}`,
   );
+  if (opts.orchrcSummary) {
+    log(`   ${a.dim}Config${a.reset}  .orchrc.json (${opts.orchrcSummary})`);
+  }
   log(`   ${BOT_TDD.badge} ${a.dim}persistent (${opts.tddSessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_REVIEW.badge} ${a.dim}persistent (${opts.reviewSessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);

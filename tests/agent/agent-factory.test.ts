@@ -159,6 +159,24 @@ describe("spawnAgent resume mode", () => {
   });
 });
 
+describe("buildRulesReminder", () => {
+  it("returns base rules when no extra rules", async () => {
+    const { buildRulesReminder } = await loadModule();
+    expect(buildRulesReminder("base rules")).toBe("base rules");
+  });
+
+  it("handles empty string extra as no-op", async () => {
+    const { buildRulesReminder } = await loadModule();
+    expect(buildRulesReminder("base rules", "")).toBe("base rules");
+  });
+
+  it("appends extra rules with project header", async () => {
+    const { buildRulesReminder } = await loadModule();
+    const result = buildRulesReminder("base rules", "no mocking");
+    expect(result).toBe("base rules\n\n[PROJECT] Additional rules from .orchrc.json:\nno mocking");
+  });
+});
+
 describe("rule constants", () => {
   it("TDD_RULES_REMINDER contains 'RUN TESTS WITH BASH'", async () => {
     const { TDD_RULES_REMINDER } = await loadModule();

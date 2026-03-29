@@ -37,6 +37,7 @@ import {
   spawnPlanAgentWithSkill,
   TDD_RULES_REMINDER,
   REVIEW_RULES_REMINDER,
+  buildRulesReminder,
 } from "./agent/agent-factory.js";
 
 export type OrchestratorConfig = {
@@ -49,9 +50,14 @@ export type OrchestratorConfig = {
   readonly reviewThreshold: number;
   readonly maxReviewCycles: number;
   readonly stateFile: string;
-  readonly tddSkill: string;
-  readonly reviewSkill: string;
-  readonly verifySkill: string;
+  readonly tddSkill: string | null;
+  readonly reviewSkill: string | null;
+  readonly verifySkill: string | null;
+  readonly gapDisabled: boolean;
+  readonly planDisabled: boolean;
+  readonly maxReplans: number;
+  readonly tddRules?: string;
+  readonly reviewRules?: string;
 };
 
 type PlanThenExecuteResult = {
@@ -100,13 +106,13 @@ export class Orchestrator {
     const reviewResuming = !agents && !!initialState.reviewSessionId;
     const tddAgent =
       agents?.tdd ??
-      spawnAgentFactory(BOT_TDD, config.tddSkill, initialState.tddSessionId, config.cwd);
+      spawnAgentFactory(BOT_TDD, config.tddSkill ?? undefined, initialState.tddSessionId, config.cwd);
     const reviewAgent =
       agents?.review ??
-      spawnAgentFactory(BOT_REVIEW, config.reviewSkill, initialState.reviewSessionId, config.cwd);
+      spawnAgentFactory(BOT_REVIEW, config.reviewSkill ?? undefined, initialState.reviewSessionId, config.cwd);
     const reminders: Promise<string>[] = [];
-    if (!tddResuming) reminders.push(tddAgent.sendQuiet(TDD_RULES_REMINDER));
-    if (!reviewResuming) reminders.push(reviewAgent.sendQuiet(REVIEW_RULES_REMINDER));
+    if (!tddResuming) reminders.push(tddAgent.sendQuiet(buildRulesReminder(TDD_RULES_REMINDER, config.tddRules)));
+    if (!reviewResuming) reminders.push(reviewAgent.sendQuiet(buildRulesReminder(REVIEW_RULES_REMINDER, config.reviewRules)));
     await Promise.all(reminders);
     const orch = new Orchestrator(config, initialState, hud, log, tddAgent, reviewAgent);
     if (tddResuming) orch.tddIsFirst = false;
@@ -272,9 +278,13 @@ export class Orchestrator {
     }
 
     // Verify gate
-    const verified = await this.verify(slice, verifyBaseSha);
-    if (!verified) {
-      return { reviewBase, skipped: true };
+    if (this.config.verifySkill === null) {
+      this.log(`${ts()} ⏩ Verify skipped (disabled)`);
+    } else {
+      const verified = await this.verify(slice, verifyBaseSha);
+      if (!verified) {
+        return { reviewBase, skipped: true };
+      }
     }
 
     if (this.sliceSkipFlag) {
@@ -302,7 +312,11 @@ export class Orchestrator {
       return { reviewBase, skipped: true };
     }
 
-    await this.reviewFix(slice.content, reviewBase);
+    if (this.config.reviewSkill !== null) {
+      await this.reviewFix(slice.content, reviewBase);
+    } else {
+      this.log(`${ts()} ⏩ Review skipped (disabled)`);
+    }
     const newReviewBase = await captureRef(this.config.cwd);
 
     if (this.sliceSkipFlag) {
@@ -329,6 +343,23 @@ export class Orchestrator {
   }
 
   async planThenExecute(sliceContent: string, forceAccept = false): Promise<PlanThenExecuteResult> {
+    if (this.config.planDisabled) {
+      this.log(`${ts()} ⏩ Plan skipped (disabled) — sending slice directly to TDD`);
+      const tddBrief = this.tddIsFirst ? this.config.brief : "";
+      const tddPrompt = withBrief(buildTddPrompt(sliceContent), tddBrief);
+      const es = this.streamer(BOT_TDD);
+      const tddResult = await this.withRetry(
+        () => this.withInterrupt(this.tddAgent, () =>
+          this.tddAgent.send(tddPrompt, es, (s) => this.onToolUse(s)),
+        ),
+        this.tddAgent,
+        "tdd-direct",
+      );
+      es.flush();
+      this.tddIsFirst = false;
+      return { tddResult, skipped: false };
+    }
+
     // ── Plan phase ──
     // Plan agent is always fresh — always needs the brief
     const planPrompt = withBrief(buildPlanPrompt(sliceContent), this.config.brief);
@@ -678,13 +709,13 @@ export class Orchestrator {
         const verifyBaseSha = await captureRef(this.config.cwd);
 
         // Plan-then-execute with replan loop
-        const MAX_REPLANS = 2;
+        const maxReplans = this.config.maxReplans;
         let replanAttempts = 0;
         let pteResult: PlanThenExecuteResult;
         do {
           pteResult = await this.planThenExecute(slice.content);
           replanAttempts++;
-        } while (pteResult.replan && replanAttempts < MAX_REPLANS);
+        } while (pteResult.replan && replanAttempts < maxReplans);
 
         // After max replans, auto-accept
         if (pteResult.replan) {
@@ -786,6 +817,11 @@ export class Orchestrator {
       return;
     }
 
+    if (this.config.gapDisabled) {
+      this.log(`${ts()} ⏩ Gap analysis skipped (disabled)`);
+      return;
+    }
+
     this.log(`${ts()} ${BOT_GAP.badge} scanning for coverage gaps across group...`);
     const groupContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
     const gapAgent = spawnAgentFactory(BOT_GAP, undefined, undefined, this.config.cwd);
@@ -859,9 +895,13 @@ export class Orchestrator {
     }
 
     if (await hasChanges(this.config.cwd, gapBaseSha)) {
-      await this.reviewFix(groupContent, gapBaseSha);
+      if (this.config.reviewSkill !== null) {
+        await this.reviewFix(groupContent, gapBaseSha);
+      } else {
+        this.log(`${ts()} ⏩ Gap review skipped (disabled)`);
+      }
       this.hud.update({ activeAgent: undefined, activeAgentActivity: undefined });
-      this.log(`${ts()} ${a.green}✓ Gap tests added and reviewed${a.reset}`);
+      this.log(`${ts()} ${a.green}✓ Gap tests added${this.config.reviewSkill !== null ? " and reviewed" : ""}${a.reset}`);
     }
 
     gapAgent.kill();
@@ -928,19 +968,19 @@ export class Orchestrator {
   }
 
   private async spawnTddAgent(): Promise<AgentProcess> {
-    const agent = spawnAgentFactory(BOT_TDD, this.config.tddSkill, undefined, this.config.cwd);
-    await agent.sendQuiet(TDD_RULES_REMINDER);
+    const agent = spawnAgentFactory(BOT_TDD, this.config.tddSkill ?? undefined, undefined, this.config.cwd);
+    await agent.sendQuiet(buildRulesReminder(TDD_RULES_REMINDER, this.config.tddRules));
     return agent;
   }
 
   private async spawnReviewAgent(): Promise<AgentProcess> {
-    const agent = spawnAgentFactory(BOT_REVIEW, this.config.reviewSkill, undefined, this.config.cwd);
-    await agent.sendQuiet(REVIEW_RULES_REMINDER);
+    const agent = spawnAgentFactory(BOT_REVIEW, this.config.reviewSkill ?? undefined, undefined, this.config.cwd);
+    await agent.sendQuiet(buildRulesReminder(REVIEW_RULES_REMINDER, this.config.reviewRules));
     return agent;
   }
 
   private async spawnVerifyAgent(): Promise<AgentProcess> {
-    return spawnAgentFactory(BOT_VERIFY, this.config.verifySkill, undefined, this.config.cwd);
+    return spawnAgentFactory(BOT_VERIFY, this.config.verifySkill ?? undefined, undefined, this.config.cwd);
   }
 
   async respawnTdd(): Promise<void> {
