@@ -52,6 +52,9 @@ export class ClaudeAgentSpawner extends AgentSpawner {
       get alive() {
         return process.alive;
       },
+      get stderr() {
+        return process.stderr;
+      },
       sessionId: process.sessionId,
       style: process.style,
       send: (prompt, onText?, onToolUse?) => process.send(prompt, onText, onToolUse),

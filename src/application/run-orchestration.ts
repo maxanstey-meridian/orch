@@ -474,7 +474,11 @@ export class RunOrchestration {
 
     const prompt = this.prompts.completeness(slice.content, baseSha, slice.number);
     const checkAgent = this.agents.spawn("completeness", { cwd: this.config.cwd });
-    const result = await checkAgent.send(prompt);
+    const result = await this.withRetry(
+      () => checkAgent.send(prompt),
+      checkAgent,
+      "completeness-check",
+    );
     checkAgent.kill();
 
     const text = result.assistantText ?? "";
@@ -510,7 +514,11 @@ export class RunOrchestration {
     const verifyPrompt = this.prompts.withBrief(
       `Verify the changes since commit ${verifyBaseSha}. Context: TDD implementation of Slice ${slice.number}.`,
     );
-    const verifyResult = await this.verifyAgent.send(verifyPrompt);
+    const verifyResult = await this.withRetry(
+      () => this.verifyAgent!.send(verifyPrompt),
+      this.verifyAgent,
+      "verify",
+    );
     let parsed = parseVerifyResult(verifyResult.assistantText ?? "");
 
     if (!parsed.passed) {
@@ -520,11 +528,20 @@ export class RunOrchestration {
           ? parsed.newFailures.join("\n")
           : "Verification checks failed. Run the test/lint/typecheck pipeline and fix any failures.";
       const retryPrompt = `Verification found new failures after your implementation. Fix them:\n\n${failureContext}`;
-      await this.tddAgent!.send(retryPrompt);
+      const fixResult = await this.withRetry(
+        () => this.tddAgent!.send(retryPrompt),
+        this.tddAgent!,
+        "verify-fix",
+      );
+      await this.checkCredit(fixResult, this.tddAgent!);
 
       // Re-verify
-      const reVerifyResult = await this.verifyAgent.send(
-        `Re-verify changes since ${verifyBaseSha}. The TDD bot attempted fixes.`,
+      const reVerifyResult = await this.withRetry(
+        () => this.verifyAgent!.send(
+          `Re-verify changes since ${verifyBaseSha}. The TDD bot attempted fixes.`,
+        ),
+        this.verifyAgent!,
+        "re-verify",
       );
       parsed = parseVerifyResult(reVerifyResult.assistantText ?? "");
 
@@ -578,6 +595,7 @@ export class RunOrchestration {
       } else {
         current = await agent.send(answer);
       }
+      await this.checkCredit(current, agent);
       followUps++;
     }
 
@@ -595,7 +613,7 @@ export class RunOrchestration {
     while (true) {
       const result = await fn();
       if (!agent.alive) return result;
-      const apiError = detectApiError(result, result.stderr ?? "");
+      const apiError = detectApiError(result, agent.stderr);
       if (!apiError) return result;
 
       if (!apiError.retryable) {
@@ -614,6 +632,16 @@ export class RunOrchestration {
       this.gate.setActivity(`waiting to retry (${apiError.kind})...`);
       await new Promise((r) => setTimeout(r, delayMs * attempt));
     }
+  }
+
+  async checkCredit(result: AgentResult, agent: AgentHandle): Promise<void> {
+    const apiError = detectApiError(result, agent.stderr);
+    if (!apiError || apiError.retryable) return;
+    await this.persistence.save(this.state);
+    throw new CreditExhaustedError(
+      `Terminal API error: ${apiError.kind}`,
+      result.assistantText.length > 0 ? "mid-response" : "rejected",
+    );
   }
 
   async respawnTdd(): Promise<void> {

@@ -4,6 +4,7 @@ export type AgentHandle = {
   readonly sessionId: string;
   readonly style: AgentStyle;
   readonly alive: boolean;
+  readonly stderr: string;
   send(prompt: string, onText?: (text: string) => void, onToolUse?: (summary: string) => void): Promise<AgentResult>;
   sendQuiet(prompt: string): Promise<string>;
   inject(message: string): void;

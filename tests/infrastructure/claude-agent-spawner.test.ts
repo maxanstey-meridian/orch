@@ -284,21 +284,21 @@ describe("ClaudeAgentSpawner", () => {
       expect(handle.alive).toBe(false);
     });
 
-    it("does not expose stderr", () => {
+    it("exposes stderr from underlying process", () => {
       mockedSpawnAgent.mockReturnValueOnce({
         send: vi.fn(),
         sendQuiet: vi.fn(),
         inject: vi.fn(),
         kill: vi.fn(),
         alive: true,
-        stderr: "should-not-be-accessible",
+        stderr: "error output",
         sessionId: "sess-123",
         style: { label: "TDD", color: "", badge: "" },
       });
 
       const spawner = makeSpawner();
       const handle = spawner.spawn("tdd");
-      expect("stderr" in handle).toBe(false);
+      expect(handle.stderr).toBe("error output");
     });
   });
 });

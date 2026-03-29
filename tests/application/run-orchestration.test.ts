@@ -35,10 +35,11 @@ const makeResult = (overrides?: Partial<AgentResult>): AgentResult => ({
   ...overrides,
 });
 
-const makeAgent = (resultOverrides?: Partial<AgentResult>): AgentHandle => ({
+const makeAgent = (resultOverrides?: Partial<AgentResult>, stderr = ""): AgentHandle => ({
   sessionId: "agent-sess",
   style: { label: "Test", color: "#fff", badge: "[T]" },
   alive: true,
+  stderr,
   send: vi.fn().mockResolvedValue(makeResult(resultOverrides)),
   sendQuiet: vi.fn().mockResolvedValue("quiet response"),
   inject: vi.fn(),
@@ -165,6 +166,40 @@ describe("RunOrchestration", () => {
 
       expect(fn).toHaveBeenCalledOnce();
       expect(result).toBe(expected);
+    });
+
+    it("detects API error via agent.stderr, not result.stderr", async () => {
+      const { uc } = makeUc();
+      // Agent has stderr with overloaded message, result has no stderr
+      const agent = makeAgent(undefined, "529 overloaded");
+      const failResult = makeResult({ exitCode: 1 });
+      const okResult = makeResult({ assistantText: "done" });
+      const fn = vi.fn().mockResolvedValueOnce(failResult).mockResolvedValueOnce(okResult);
+
+      const result = await uc.withRetry(fn, agent, "test-label");
+
+      expect(fn).toHaveBeenCalledTimes(2);
+      expect(result).toBe(okResult);
+    });
+  });
+
+  describe("checkCredit", () => {
+    it("throws CreditExhaustedError for terminal error on bare send", async () => {
+      const { uc, persistence } = makeUc();
+      const agent = makeAgent(undefined, "credit exhausted limit exceeded");
+      const result = makeResult({ exitCode: 1 });
+
+      await expect(uc.checkCredit(result, agent)).rejects.toThrow("Terminal API error");
+      expect(persistence.save).toHaveBeenCalled();
+    });
+
+    it("does nothing when result is successful", async () => {
+      const { uc, persistence } = makeUc();
+      const agent = makeAgent();
+      const result = makeResult({ exitCode: 0 });
+
+      await expect(uc.checkCredit(result, agent)).resolves.toBeUndefined();
+      expect(persistence.save).not.toHaveBeenCalled();
     });
   });
 
@@ -553,6 +588,33 @@ describe("RunOrchestration", () => {
       expect(result).toBe(false);
       expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
       expect(gate.verifyFailed).toHaveBeenCalled();
+    });
+
+    it("wraps verify and fix sends in withRetry", async () => {
+      const ports = makePorts();
+      const { uc, spawner } = makeUc(ports);
+      // Verify agent fails once with overloaded then passes
+      const verifyAgent = {
+        ...makeAgent(undefined, ""),
+        send: vi.fn()
+          .mockResolvedValueOnce(makeResult({
+            exitCode: 1,
+            resultText: "529 overloaded",
+            assistantText: "",
+          }))
+          .mockResolvedValueOnce(makeResult({
+            assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+          })),
+        stderr: "529 overloaded",
+      } as unknown as AgentHandle;
+      spawner.spawn.mockReturnValue(verifyAgent);
+      uc.tddAgent = makeAgent();
+
+      const result = await uc.verify(makeSlice(), "sha0");
+
+      expect(result).toBe(true);
+      // verify agent send called twice (retry after overloaded)
+      expect(verifyAgent.send).toHaveBeenCalledTimes(2);
     });
 
     it("stops execution when operator chooses stop on verify failure", async () => {
