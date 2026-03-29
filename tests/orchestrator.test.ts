@@ -670,6 +670,75 @@ describe("onInterruptSubmit", () => {
   });
 });
 
+describe("guide and interrupt during agent execution", () => {
+  it("G during withInterrupt opens guide prompt", async () => {
+    const { orch, pressKey, hud } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    const target = fakeAgent();
+    const deferred = Promise.withResolvers<AgentResult>();
+    const withInterruptPromise = orch.withInterrupt(target, () => deferred.promise);
+    pressKey("g");
+    expect(hud.startPrompt).toHaveBeenCalledWith("guide");
+    deferred.resolve({ exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
+    await withInterruptPromise;
+    expect(orch.interruptTarget).toBeNull();
+  });
+
+  it("submitting guide text injects into running agent", async () => {
+    const { orch, pressKey, submitInterrupt } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    const target = fakeAgent();
+    const deferred = Promise.withResolvers<AgentResult>();
+    const withInterruptPromise = orch.withInterrupt(target, () => deferred.promise);
+    pressKey("g");
+    submitInterrupt("adjust the approach", "guide");
+    expect(target.inject).toHaveBeenCalledWith("adjust the approach");
+    deferred.resolve({ exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
+    await withInterruptPromise;
+  });
+
+  it("G with no interruptTarget does nothing", async () => {
+    const { orch, pressKey, hud } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    pressKey("g");
+    expect(hud.startPrompt).not.toHaveBeenCalled();
+  });
+
+  it("I during withInterrupt opens interrupt prompt", async () => {
+    const { orch, pressKey, hud } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    const target = fakeAgent();
+    const deferred = Promise.withResolvers<AgentResult>();
+    const withInterruptPromise = orch.withInterrupt(target, () => deferred.promise);
+    pressKey("i");
+    expect(hud.startPrompt).toHaveBeenCalledWith("interrupt");
+    deferred.resolve({ exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
+    await withInterruptPromise;
+    expect(orch.interruptTarget).toBeNull();
+  });
+
+  it("submitting interrupt text kills agent and sets hardInterruptPending", async () => {
+    const { orch, pressKey, submitInterrupt } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    const target = fakeAgent();
+    const deferred = Promise.withResolvers<AgentResult>();
+    const withInterruptPromise = orch.withInterrupt(target, () => deferred.promise);
+    pressKey("i");
+    submitInterrupt("start over", "interrupt");
+    expect(target.kill).toHaveBeenCalled();
+    expect(orch.hardInterruptPending).toBe("start over");
+    deferred.resolve({ exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
+    await withInterruptPromise;
+  });
+
+  it("I with no interruptTarget does nothing", async () => {
+    const { orch, pressKey, hud } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    pressKey("i");
+    expect(hud.startPrompt).not.toHaveBeenCalled();
+  });
+});
+
 describe("cleanup", () => {
   it("tears down hud and kills both agents", async () => {
     const tdd = fakeAgent();
