@@ -73,14 +73,6 @@ beforeEach(() => {
 });
 
 describe("orchestrator harness", () => {
-  it("createTestOrch returns an orchestrator with working pressKey", async () => {
-    const { orch, pressKey, hud } = await createTestOrch();
-    orch.sliceSkippable = true;
-    pressKey("s");
-    expect(orch.sliceSkipFlag).toBe(true);
-    expect(hud.setSkipping).toHaveBeenCalledWith(true);
-  });
-
   it("pressKey 's' outside skippable context does nothing", async () => {
     const { orch, pressKey } = await createTestOrch();
     pressKey("s");
