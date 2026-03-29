@@ -1,8 +1,6 @@
-import type { CreditSignal } from "../agent/credit-detection.js";
-
 export class CreditExhaustedError extends Error {
-  readonly kind: CreditSignal["kind"];
-  constructor(message: string, kind: CreditSignal["kind"]) {
+  readonly kind: "mid-response" | "rejected";
+  constructor(message: string, kind: "mid-response" | "rejected") {
     super(message);
     this.kind = kind;
   }
