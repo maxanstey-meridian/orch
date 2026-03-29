@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../src/git/git.js", () => ({
   captureRef: vi.fn().mockResolvedValue("abc123"),
@@ -20,6 +20,10 @@ import { ChildProcessGitOps } from "../../src/infrastructure/child-process-git-o
 
 describe("ChildProcessGitOps", () => {
   const adapter = new ChildProcessGitOps("/test/repo");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   describe("delegates git.ts functions with bound cwd", () => {
     it("captureRef delegates with cwd", async () => {

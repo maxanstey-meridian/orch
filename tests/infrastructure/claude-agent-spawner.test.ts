@@ -43,6 +43,7 @@ const mockedSpawnAgent = spawnAgent as Mock;
 const mockedSpawnPlanAgent = spawnPlanAgent as Mock;
 
 import { ROLE_STYLES, ClaudeAgentSpawner } from "../../src/infrastructure/claude-agent-spawner.js";
+import { BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL } from "../../src/ui/display.js";
 
 describe("ROLE_STYLES", () => {
   it("maps every AgentRole to an AgentStyle", () => {
@@ -53,6 +54,16 @@ describe("ROLE_STYLES", () => {
     for (const role of allRoles) {
       expect(keys).toContain(role);
     }
+  });
+
+  it("maps each role to its correct BOT_* constant", () => {
+    expect(ROLE_STYLES.tdd).toBe(BOT_TDD);
+    expect(ROLE_STYLES.review).toBe(BOT_REVIEW);
+    expect(ROLE_STYLES.verify).toBe(BOT_VERIFY);
+    expect(ROLE_STYLES.plan).toBe(BOT_PLAN);
+    expect(ROLE_STYLES.gap).toBe(BOT_GAP);
+    expect(ROLE_STYLES.final).toBe(BOT_FINAL);
+    expect(ROLE_STYLES.completeness).toBe(BOT_PLAN);
   });
 
   it("each value has label, color, and badge strings", () => {
@@ -97,6 +108,39 @@ describe("ClaudeAgentSpawner", () => {
         expect(mockedSpawnPlanAgent).not.toHaveBeenCalled();
       },
     );
+  });
+
+  describe("spawnPlanAgent argument forwarding", () => {
+    it("passes style, systemPrompt, and cwd to spawnPlanAgent", () => {
+      const spawner = makeSpawner({ plan: "plan skill" }, "/work");
+      spawner.spawn("plan", { cwd: "/custom" });
+      expect(mockedSpawnPlanAgent).toHaveBeenCalledWith(ROLE_STYLES.plan, "plan skill", "/custom");
+    });
+
+    it("resumeSessionId is not forwarded to spawnPlanAgent", () => {
+      const spawner = makeSpawner();
+      spawner.spawn("plan", { resumeSessionId: "sess-x" });
+      expect(mockedSpawnPlanAgent).toHaveBeenCalledOnce();
+      const args = mockedSpawnPlanAgent.mock.calls[0];
+      expect(args).toHaveLength(3);
+      expect(args).not.toContain("sess-x");
+    });
+  });
+
+  describe("style forwarding to factory", () => {
+    it("passes ROLE_STYLES[role] as first arg to spawnAgent", () => {
+      const spawner = makeSpawner();
+      spawner.spawn("review");
+      const [style] = mockedSpawnAgent.mock.calls[0];
+      expect(style).toBe(ROLE_STYLES.review);
+    });
+
+    it("passes ROLE_STYLES[role] as first arg to spawnPlanAgent", () => {
+      const spawner = makeSpawner();
+      spawner.spawn("gap");
+      const [style] = mockedSpawnPlanAgent.mock.calls[0];
+      expect(style).toBe(ROLE_STYLES.gap);
+    });
   });
 
   describe("skill resolution", () => {

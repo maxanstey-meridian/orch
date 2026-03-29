@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { FsStatePersistence } from "../../src/infrastructure/fs-state-persistence.js";
 
 const testPath = join(tmpdir(), `fs-state-persistence-${process.pid}.json`);
@@ -39,6 +39,22 @@ describe("FsStatePersistence", () => {
     await adapter.save({ lastCompletedSlice: 5, reviewBaseSha: "abc" });
     const loaded = await adapter.load();
     expect(loaded).toEqual({ lastCompletedSlice: 5, reviewBaseSha: "abc" });
+  });
+
+  it("save replaces — fields from prior save are absent", async () => {
+    const adapter = new FsStatePersistence(testPath);
+    await adapter.save({ lastCompletedSlice: 1, tddSessionId: "old-sess" });
+    await adapter.save({ reviewBaseSha: "abc" });
+    const loaded = await adapter.load();
+    expect(loaded).toEqual({ reviewBaseSha: "abc" });
+    expect(loaded).not.toHaveProperty("tddSessionId");
+    expect(loaded).not.toHaveProperty("lastCompletedSlice");
+  });
+
+  it("load propagates error on corrupt JSON", async () => {
+    await writeFile(testPath, '{"lastCompletedSlice": "not-a-number"}');
+    const adapter = new FsStatePersistence(testPath);
+    await expect(adapter.load()).rejects.toThrow("Corrupt state file");
   });
 
   it("clear removes state, subsequent load returns empty", async () => {
