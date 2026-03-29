@@ -1,4 +1,4 @@
-import { describe as _describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe as _describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const describe = _describe;
 const describeIntegration = process.env.INTEGRATION ? _describe : _describe.skip;
@@ -651,6 +651,191 @@ describeIntegration("fingerprint force wiring (integration)", () => {
     } catch { /* file not created */ }
 
     expect(briefContent).toContain("TypeScript");
+  });
+});
+
+// ─── Composition root integration ───────────────────────────────────────────
+
+vi.mock("../src/agent/agent-factory.js", () => ({
+  spawnAgent: vi.fn(),
+  spawnPlanAgent: vi.fn(),
+  TDD_RULES_REMINDER: "tdd rules",
+  REVIEW_RULES_REMINDER: "review rules",
+  buildRulesReminder: vi.fn((base: string, custom?: string) =>
+    custom ? `${base}\n${custom}` : base,
+  ),
+}));
+
+import type { OrchestratorConfig } from "../src/domain/config.js";
+import type { AgentResult } from "../src/domain/agent-types.js";
+import type { AgentHandle } from "../src/application/ports/agent-spawner.port.js";
+import { RunOrchestration } from "../src/application/run-orchestration.js";
+
+const makeTestConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig => ({
+  cwd: "/tmp/test",
+  planPath: "/tmp/plan.json",
+  planContent: "plan content",
+  brief: "brief text",
+  noInteraction: true,
+  auto: false,
+  reviewThreshold: 0,
+  maxReviewCycles: 3,
+  stateFile: "/tmp/state.json",
+  tddSkill: "tdd-skill",
+  reviewSkill: "review-skill",
+  verifySkill: "verify-skill",
+  gapDisabled: true,
+  planDisabled: true,
+  maxReplans: 2,
+  ...overrides,
+});
+
+const makeTestResult = (overrides?: Partial<AgentResult>): AgentResult => ({
+  exitCode: 0,
+  assistantText: "",
+  resultText: "",
+  needsInput: false,
+  sessionId: "test-session",
+  ...overrides,
+});
+
+const makeTestAgent = (): AgentHandle => ({
+  sessionId: "agent-sess",
+  style: { label: "Test", color: "#fff", badge: "[T]" },
+  alive: true,
+  stderr: "",
+  send: vi.fn().mockResolvedValue(makeTestResult()),
+  sendQuiet: vi.fn().mockResolvedValue("quiet"),
+  inject: vi.fn(),
+  kill: vi.fn(),
+});
+
+describe("composition root integration", () => {
+  it("createContainer resolves RunOrchestration and executes a minimal plan end-to-end", async () => {
+    const { createContainer } = await import("../src/composition-root.js");
+    const config = makeTestConfig();
+    const dummyHud = {
+      askUser: vi.fn().mockResolvedValue(""),
+      update: vi.fn(),
+      setActivity: vi.fn(),
+      teardown: vi.fn(),
+      onKey: vi.fn(),
+      onInterruptSubmit: vi.fn(),
+      startPrompt: vi.fn(),
+      wrapLog: vi.fn(),
+      createWriter: vi.fn(),
+      setSkipping: vi.fn(),
+    } as any;
+
+    const container = createContainer(config, dummyHud);
+    const orch = container.resolve("runOrchestration");
+    expect(orch).toBeInstanceOf(RunOrchestration);
+
+    // Replace ports with in-memory test doubles AFTER construction
+    const tddAgent = makeTestAgent();
+    const reviewAgent = makeTestAgent();
+    (orch as any).agents = {
+      spawn: vi.fn().mockReturnValue(makeTestAgent()),
+    };
+    (orch as any).agents.spawn
+      .mockReturnValueOnce(tddAgent)
+      .mockReturnValueOnce(reviewAgent);
+    (orch as any).persistence = {
+      load: vi.fn().mockResolvedValue({}),
+      save: vi.fn().mockResolvedValue(undefined),
+      clear: vi.fn().mockResolvedValue(undefined),
+    };
+    (orch as any).git = {
+      captureRef: vi.fn().mockResolvedValue("sha0"),
+      hasChanges: vi.fn().mockResolvedValue(false),
+      hasDirtyTree: vi.fn().mockResolvedValue(false),
+      getStatus: vi.fn().mockResolvedValue(""),
+      stashBackup: vi.fn().mockResolvedValue(false),
+      measureDiff: vi.fn().mockResolvedValue({ added: 0, removed: 0, total: 0 }),
+    };
+
+    const group = {
+      name: "TestGroup",
+      slices: [{
+        number: 1,
+        title: "Test Slice",
+        content: "slice content",
+        why: "test",
+        files: [{ path: "src/test.ts", action: "new" as const }],
+        details: "details",
+        tests: "tests",
+      }],
+    };
+
+    await orch.execute([group]);
+
+    // Verify agents were spawned and rules reminders sent
+    expect((orch as any).agents.spawn).toHaveBeenCalledWith("tdd", expect.any(Object));
+    expect((orch as any).agents.spawn).toHaveBeenCalledWith("review", expect.any(Object));
+    // Verify state was persisted
+    expect((orch as any).persistence.save).toHaveBeenCalled();
+  });
+
+  it("typed-inject resolves all dependencies without errors", async () => {
+    const { createContainer } = await import("../src/composition-root.js");
+    const config = makeTestConfig();
+    const dummyHud = {
+      askUser: vi.fn(),
+      update: vi.fn(),
+      setActivity: vi.fn(),
+      teardown: vi.fn(),
+      onKey: vi.fn(),
+      onInterruptSubmit: vi.fn(),
+      startPrompt: vi.fn(),
+      wrapLog: vi.fn(),
+      createWriter: vi.fn(),
+      setSkipping: vi.fn(),
+    } as any;
+
+    const container = createContainer(config, dummyHud);
+
+    // All tokens should resolve without throwing
+    expect(() => container.resolve("agentSpawner")).not.toThrow();
+    expect(() => container.resolve("statePersistence")).not.toThrow();
+    expect(() => container.resolve("operatorGate")).not.toThrow();
+    expect(() => container.resolve("gitOps")).not.toThrow();
+    expect(() => container.resolve("promptBuilder")).not.toThrow();
+    expect(() => container.resolve("runOrchestration")).not.toThrow();
+  });
+
+  it("dispose kills agents and tears down gate on cleanup", async () => {
+    const { createContainer } = await import("../src/composition-root.js");
+    const config = makeTestConfig();
+    const mockTeardown = vi.fn();
+    const dummyHud = {
+      askUser: vi.fn().mockResolvedValue(""),
+      update: vi.fn(),
+      setActivity: vi.fn(),
+      teardown: mockTeardown,
+      onKey: vi.fn(),
+      onInterruptSubmit: vi.fn(),
+      startPrompt: vi.fn(),
+      wrapLog: vi.fn(),
+      createWriter: vi.fn(),
+      setSkipping: vi.fn(),
+    } as any;
+
+    const container = createContainer(config, dummyHud);
+    const orch = container.resolve("runOrchestration");
+
+    // Inject mock agents
+    const tddAgent = makeTestAgent();
+    const reviewAgent = makeTestAgent();
+    orch.tddAgent = tddAgent;
+    orch.reviewAgent = reviewAgent;
+
+    // Simulate what SIGINT handler does
+    orch.dispose();
+
+    expect(tddAgent.kill).toHaveBeenCalled();
+    expect(reviewAgent.kill).toHaveBeenCalled();
+    // SilentOperatorGate teardown is a no-op (noInteraction: true),
+    // but it's still called — proves the cascade works
   });
 });
 

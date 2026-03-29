@@ -217,11 +217,12 @@ const main = async () => {
     origLog(resumeCheck.message);
     process.exit(1);
   }
+  // resolveWorktree persists worktree state to disk before returning,
+  // so RunOrchestration.execute() will pick it up via persistence.load().
   const {
     cwd: effectiveCwd,
     worktreeInfo,
     skipStash,
-    updatedState,
   } = await resolveWorktree({
     branchName,
     cwd,
@@ -233,7 +234,9 @@ const main = async () => {
   const interactive = !noInteraction && isTTY;
 
   // 7. Signal handlers + cleanup
-  const cleanup = () => hud.teardown();
+  // cleanup is set to hud.teardown initially, then upgraded to orch.dispose()
+  // after the container is created (kills agents + tears down HUD).
+  let cleanup = () => hud.teardown();
   process.on("SIGINT", () => {
     cleanup();
     process.exit(130);
@@ -284,6 +287,7 @@ const main = async () => {
 
   const container = createContainer(orchestratorConfig, hud);
   const orch = container.resolve("runOrchestration");
+  cleanup = () => orch.dispose();
 
   // 10. Banner + run
   const remaining = groups.slice(startIdx);

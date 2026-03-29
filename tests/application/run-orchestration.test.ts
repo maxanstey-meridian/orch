@@ -1299,4 +1299,40 @@ describe("RunOrchestration", () => {
       await expect(uc.execute([group])).resolves.toBeUndefined();
     });
   });
+
+  describe("dispose", () => {
+    it("kills all agents and tears down gate", async () => {
+      const { uc, spawner, gate } = makeUc();
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const verifyAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent)
+        .mockReturnValueOnce(verifyAgent);
+
+      // Execute to spawn agents
+      const group: Group = {
+        name: "G",
+        slices: [makeSlice()],
+      };
+      await uc.execute([group]);
+
+      // Manually set verifyAgent (it's only spawned on-demand during verify)
+      uc.verifyAgent = verifyAgent;
+
+      uc.dispose();
+
+      expect(tddAgent.kill).toHaveBeenCalled();
+      expect(reviewAgent.kill).toHaveBeenCalled();
+      expect(verifyAgent.kill).toHaveBeenCalled();
+      expect(gate.teardown).toHaveBeenCalled();
+    });
+
+    it("is safe to call before execute (no agents spawned)", () => {
+      const { uc, gate } = makeUc();
+      expect(() => uc.dispose()).not.toThrow();
+      expect(gate.teardown).toHaveBeenCalled();
+    });
+  });
 });

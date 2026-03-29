@@ -61,6 +61,13 @@ export class RunOrchestration {
     private readonly config: OrchestratorConfig,
   ) {}
 
+  dispose(): void {
+    if (this.tddAgent) this.tddAgent.kill();
+    if (this.reviewAgent) this.reviewAgent.kill();
+    if (this.verifyAgent) this.verifyAgent.kill();
+    this.gate.teardown();
+  }
+
   async execute(
     groups: readonly Group[],
     opts?: {
