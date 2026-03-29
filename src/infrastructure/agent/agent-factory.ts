@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { createAgent, type AgentProcess, type AgentStyle } from "./agent.js";
-import { BOT_PLAN, BOT_GAP } from "../ui/display.js";
+import { BOT_PLAN, BOT_GAP } from "../../ui/display.js";
 
 // ─── Agent helpers ───────────────────────────────────────────────────────────
 
@@ -53,17 +53,17 @@ export const spawnPlanAgent = (
   });
 
 const planSkillContent = readFileSync(
-  resolve(import.meta.dirname, "..", "..", "skills", "plan.md"),
+  resolve(import.meta.dirname, "..", "..", "..", "skills", "plan.md"),
   "utf-8",
 );
 
 const generatePlanSkillContent = readFileSync(
-  resolve(import.meta.dirname, "..", "..", "skills", "generate-plan.md"),
+  resolve(import.meta.dirname, "..", "..", "..", "skills", "generate-plan.md"),
   "utf-8",
 );
 
 const gapSkillContent = readFileSync(
-  resolve(import.meta.dirname, "..", "..", "skills", "gap.md"),
+  resolve(import.meta.dirname, "..", "..", "..", "skills", "gap.md"),
   "utf-8",
 );
 

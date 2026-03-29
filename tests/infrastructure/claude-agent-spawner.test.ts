@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AgentRole, AgentStyle } from "../../src/domain/agent-types.js";
 
-vi.mock("../../src/agent/agent-factory.js", () => ({
+vi.mock("../../src/infrastructure/agent/agent-factory.js", () => ({
   spawnAgent: vi.fn(() => ({
     send: vi.fn().mockResolvedValue({
       exitCode: 0,
@@ -36,7 +36,7 @@ vi.mock("../../src/agent/agent-factory.js", () => ({
   })),
 }));
 
-import { spawnAgent, spawnPlanAgent } from "../../src/agent/agent-factory.js";
+import { spawnAgent, spawnPlanAgent } from "../../src/infrastructure/agent/agent-factory.js";
 import type { Mock } from "vitest";
 
 const mockedSpawnAgent = spawnAgent as Mock;

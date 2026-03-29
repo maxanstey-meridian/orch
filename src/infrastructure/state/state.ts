@@ -2,8 +2,8 @@ import { readFile, writeFile, rm } from "fs/promises";
 import { join } from "path";
 import { z } from "zod";
 
-export type { OrchestratorState } from "../domain/state.js";
-import type { OrchestratorState } from "../domain/state.js";
+export type { OrchestratorState } from "../../domain/state.js";
+import type { OrchestratorState } from "../../domain/state.js";
 
 const stateSchema = z
   .object({

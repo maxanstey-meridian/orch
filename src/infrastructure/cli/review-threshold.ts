@@ -40,4 +40,4 @@ export const measureDiff = async (cwd: string, since: string): Promise<DiffStats
   }
 };
 
-export { shouldReview } from "../domain/review.js";
+export { shouldReview } from "../../domain/review.js";

@@ -4,7 +4,7 @@ import { join, resolve } from "path";
 import { parsePlanJson } from "./plan-schema.js";
 import type { Group } from "./plan-parser.js";
 import type { AgentProcess } from "../agent/agent.js";
-import { a, type LogFn } from "../ui/display.js";
+import { a, type LogFn } from "../../ui/display.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 

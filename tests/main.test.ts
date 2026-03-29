@@ -6,8 +6,8 @@ import { mkdtemp, rm, writeFile, readFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync, spawnSync } from "child_process";
-import { loadState, saveState, clearState, statePathForPlan } from "../src/state/state.js";
-import { resolvePlanId } from "../src/plan/plan-generator.js";
+import { loadState, saveState, clearState, statePathForPlan } from "../src/infrastructure/state/state.js";
+import { resolvePlanId } from "../src/infrastructure/plan/plan-generator.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
@@ -656,7 +656,7 @@ describeIntegration("fingerprint force wiring (integration)", () => {
 
 // ─── Composition root integration ───────────────────────────────────────────
 
-vi.mock("../src/agent/agent-factory.js", () => ({
+vi.mock("../src/infrastructure/agent/agent-factory.js", () => ({
   spawnAgent: vi.fn(),
   spawnPlanAgent: vi.fn(),
   TDD_RULES_REMINDER: "tdd rules",

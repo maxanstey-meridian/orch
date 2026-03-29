@@ -1,6 +1,6 @@
 import { AgentSpawner, type AgentHandle } from "../application/ports/agent-spawner.port.js";
 import type { AgentRole, AgentStyle } from "../domain/agent-types.js";
-import { spawnAgent, spawnPlanAgent } from "../agent/agent-factory.js";
+import { spawnAgent, spawnPlanAgent } from "./agent/agent-factory.js";
 import {
   BOT_TDD,
   BOT_REVIEW,

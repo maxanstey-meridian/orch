@@ -1,6 +1,6 @@
 import { type AgentStyle } from "./agent.js";
-import { type WriteFn } from "../ui/hud.js";
-import { a } from "../ui/display.js";
+import { type WriteFn } from "../../ui/hud.js";
+import { a } from "../../ui/display.js";
 
 export type Streamer = ((text: string) => void) & { flush: () => void };
 

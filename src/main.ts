@@ -19,26 +19,26 @@
 import { resolve } from "path";
 import { readFileSync, mkdirSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
-import { parsePlan } from "./plan/plan-parser.js";
-import { isPlanFormat, ensureCanonicalPlan, doGeneratePlan } from "./plan/plan-generator.js";
-import { loadState, clearState, statePathForPlan, type OrchestratorState } from "./state/state.js";
-import { runFingerprint } from "./state/fingerprint.js";
+import { parsePlan } from "./infrastructure/plan/plan-parser.js";
+import { isPlanFormat, ensureCanonicalPlan, doGeneratePlan } from "./infrastructure/plan/plan-generator.js";
+import { loadState, clearState, statePathForPlan, type OrchestratorState } from "./infrastructure/state/state.js";
+import { runFingerprint } from "./infrastructure/fingerprint.js";
 import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "./ui/display.js";
 import { CreditExhaustedError } from "./domain/errors.js";
 import type { OrchestratorConfig } from "./domain/config.js";
 import { createContainer } from "./composition-root.js";
 import { runInit, profileToMarkdown } from "./ui/init.js";
-import { spawnGeneratePlanAgent } from "./agent/agent-factory.js";
-import { getStatus, stashBackup } from "./git/git.js";
+import { spawnGeneratePlanAgent } from "./infrastructure/agent/agent-factory.js";
+import { getStatus, stashBackup } from "./infrastructure/git/git.js";
 import {
   loadAndResolveOrchrConfig,
   resolveSkillValue,
   buildOrchrSummary,
-} from "./config/orchrc.js";
-import { assertGitRepo } from "./git/repo-check.js";
-import { parseBranchFlag } from "./cli/cli-args.js";
-import { resolveWorktree } from "./git/worktree-setup.js";
-import { checkWorktreeResume, runCleanup } from "./git/worktree.js";
+} from "./infrastructure/config/orchrc.js";
+import { assertGitRepo } from "./infrastructure/git/repo-check.js";
+import { parseBranchFlag } from "./infrastructure/cli/cli-args.js";
+import { resolveWorktree } from "./infrastructure/git/worktree-setup.js";
+import { checkWorktreeResume, runCleanup } from "./infrastructure/git/worktree.js";
 import { createHud } from "./ui/hud.js";
 
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);

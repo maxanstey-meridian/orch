@@ -1,4 +1,4 @@
-import { wrapBrief } from "../state/fingerprint.js";
+import { wrapBrief } from "../fingerprint.js";
 
 export const withBrief = (prompt: string, brief: string): string => {
   if (!brief) return prompt;

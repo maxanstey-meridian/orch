@@ -3,9 +3,9 @@ import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { extractJson, planSummaryLines, generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../../src/plan/plan-generator.js";
-import { PlanSchema, parsePlanJson } from "../../src/plan/plan-schema.js";
-import type { AgentProcess, AgentResult } from "../../src/agent/agent.js";
+import { extractJson, planSummaryLines, generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../../src/infrastructure/plan/plan-generator.js";
+import { PlanSchema, parsePlanJson } from "../../src/infrastructure/plan/plan-schema.js";
+import type { AgentProcess, AgentResult } from "../../src/infrastructure/agent/agent.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

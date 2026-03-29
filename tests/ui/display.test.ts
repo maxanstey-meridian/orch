@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { printStartupBanner, printSliceIntro, printSliceContent, formatPlanSummary } from "../../src/ui/display.js";
-import type { Slice } from "../../src/plan/plan-parser.js";
+import type { Slice } from "../../src/infrastructure/plan/plan-parser.js";
 
 const collect = () => {
   const lines: string[] = [];

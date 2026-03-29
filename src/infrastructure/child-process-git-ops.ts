@@ -1,6 +1,6 @@
 import { GitOps } from "../application/ports/git-ops.port.js";
-import { captureRef, hasChanges, hasDirtyTree, getStatus, stashBackup } from "../git/git.js";
-import { measureDiff } from "../cli/review-threshold.js";
+import { captureRef, hasChanges, hasDirtyTree, getStatus, stashBackup } from "./git/git.js";
+import { measureDiff } from "./cli/review-threshold.js";
 
 export class ChildProcessGitOps extends GitOps {
   constructor(private readonly cwd: string) {

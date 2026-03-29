@@ -4,7 +4,7 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn(),
 }));
 
-import { loadOrchrConfig, resolveOrchrConfig, loadAndResolveOrchrConfig, resolveSkillValue, buildOrchrSummary } from "../../src/config/orchrc.js";
+import { loadOrchrConfig, resolveOrchrConfig, loadAndResolveOrchrConfig, resolveSkillValue, buildOrchrSummary } from "../../src/infrastructure/config/orchrc.js";
 import { readFileSync } from "node:fs";
 
 describe("loadOrchrConfig", () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createInjector } from "typed-inject";
 
-vi.mock("../src/agent/agent-factory.js", () => ({
+vi.mock("../src/infrastructure/agent/agent-factory.js", () => ({
   spawnAgent: vi.fn(),
   spawnPlanAgent: vi.fn(),
   TDD_RULES_REMINDER: "tdd rules",

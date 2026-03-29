@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isCleanReview } from "../../src/cli/review-check.js";
+import { isCleanReview } from "../../src/infrastructure/cli/review-check.js";
 
 describe("isCleanReview", () => {
   it("returns true for empty string", () => {

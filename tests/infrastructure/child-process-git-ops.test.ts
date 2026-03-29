@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/git/git.js", () => ({
+vi.mock("../../src/infrastructure/git/git.js", () => ({
   captureRef: vi.fn().mockResolvedValue("abc123"),
   hasChanges: vi.fn().mockResolvedValue(true),
   hasDirtyTree: vi.fn().mockResolvedValue(false),
@@ -8,12 +8,12 @@ vi.mock("../../src/git/git.js", () => ({
   stashBackup: vi.fn().mockResolvedValue(true),
 }));
 
-vi.mock("../../src/cli/review-threshold.js", () => ({
+vi.mock("../../src/infrastructure/cli/review-threshold.js", () => ({
   measureDiff: vi.fn().mockResolvedValue({ linesAdded: 10, linesRemoved: 3, total: 13 }),
 }));
 
-import { captureRef, hasChanges, hasDirtyTree, getStatus, stashBackup } from "../../src/git/git.js";
-import { measureDiff } from "../../src/cli/review-threshold.js";
+import { captureRef, hasChanges, hasDirtyTree, getStatus, stashBackup } from "../../src/infrastructure/git/git.js";
+import { measureDiff } from "../../src/infrastructure/cli/review-threshold.js";
 import { shouldReview } from "../../src/domain/review.js";
 import type { Mock } from "vitest";
 import { ChildProcessGitOps } from "../../src/infrastructure/child-process-git-ops.js";

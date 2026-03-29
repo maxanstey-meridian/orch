@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { writeFileSync, mkdirSync } from "fs";
 import { runInit, profileToMarkdown, type InitProfile, type AskFn, type AskHandle } from "../../src/ui/init.js";
-import { runFingerprint } from "../../src/state/fingerprint.js";
+import { runFingerprint } from "../../src/infrastructure/fingerprint.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
