@@ -937,5 +937,328 @@ describe("RunOrchestration", () => {
       expect(prompts.commitSweep).toHaveBeenCalledWith("Slice 1");
       expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
     });
+
+    it("bails out when TDD agent is not alive", async () => {
+      const { uc, git } = makeUc();
+      const deadAgent = { ...makeAgent(), alive: false } as unknown as AgentHandle;
+      uc.tddAgent = deadAgent;
+      git.hasDirtyTree.mockResolvedValue(true);
+
+      await uc.commitSweep("Slice 1");
+
+      expect((deadAgent.send as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Gap: planThenExecute edit guidance", () => {
+    it("passes operator edit guidance to tddExecute prompt", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ planDisabled: false });
+      const { uc, spawner, gate, prompts } = makeUc(ports, config);
+      const planAgent = makeAgent({ planText: "the plan" });
+      spawner.spawn.mockReturnValue(planAgent);
+      uc.tddAgent = makeAgent();
+      gate.confirmPlan.mockResolvedValue({
+        kind: "edit" as const,
+        guidance: "fix the types",
+      });
+
+      await uc.planThenExecute("slice content", 1);
+
+      expect(prompts.tddExecute).toHaveBeenCalledWith(
+        "the plan",
+        1,
+        expect.any(Boolean),
+        "fix the types",
+      );
+    });
+  });
+
+  describe("Gap: planThenExecute dead session fallback", () => {
+    it("respawns TDD when agent dies during execute phase", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ planDisabled: false, auto: true });
+      const { uc, spawner, persistence } = makeUc(ports, config);
+      const planAgent = makeAgent({ planText: "the plan" });
+
+      // First TDD agent dies after send
+      const deadTddAgent = {
+        ...makeAgent(),
+        alive: false,
+        send: vi.fn().mockResolvedValue(makeResult()),
+      } as unknown as AgentHandle;
+      uc.tddAgent = deadTddAgent;
+
+      // Spawner returns plan agent first, then new TDD on respawn
+      const freshTddAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(planAgent) // plan
+        .mockReturnValue(freshTddAgent); // respawn tdd
+
+      const result = await uc.planThenExecute("slice content", 1);
+
+      // Old agent was killed, new one was spawned
+      expect(deadTddAgent.kill).toHaveBeenCalled();
+      expect(spawner.spawn).toHaveBeenCalledWith("tdd", expect.anything());
+      expect(result.skipped).toBe(false);
+    });
+  });
+
+  describe("Gap: inter-group auto mode", () => {
+    it("skips gate.confirmNextGroup when config.auto is true", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        auto: true,
+      });
+      const { uc, spawner, gate } = makeUc(ports, config);
+      spawner.spawn.mockReturnValue(makeAgent());
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+        { name: "G2", slices: [makeSlice({ number: 2 })] },
+      ];
+      await uc.execute(groups);
+
+      expect(gate.confirmNextGroup).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Gap: execute followUp wiring", () => {
+    it("calls followUp when TDD result has needsInput after planThenExecute", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, gate } = makeUc(ports, config);
+      const tddAgent = makeAgent({ needsInput: true });
+      // After followUp, agent returns non-needsInput result
+      (tddAgent.send as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(makeResult({ needsInput: true }))
+        .mockResolvedValue(makeResult({ needsInput: false }));
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent)
+        .mockReturnValue(makeAgent());
+      gate.askUser.mockResolvedValue("user input");
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      expect(gate.askUser).toHaveBeenCalled();
+    });
+  });
+
+  describe("Gap: runSlice sliceSkipFlag", () => {
+    it("short-circuits when sliceSkipFlag is set", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ verifySkill: "test" });
+      const { uc, git, spawner } = makeUc(ports, config);
+      git.captureRef.mockResolvedValue("sha1"); // different from reviewBase
+      // Verify passes
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+      });
+      spawner.spawn.mockReturnValue(verifyAgent);
+      uc.tddAgent = makeAgent();
+      uc.reviewAgent = makeAgent();
+      uc.sliceSkipFlag = true;
+
+      const result = await uc.runSlice(makeSlice(), "sha0", makeResult(), "sha0");
+
+      expect(result.skipped).toBe(true);
+    });
+  });
+
+  describe("Gap: verify retry decision", () => {
+    it("returns true when operator chooses retry after double failure", async () => {
+      const ports = makePorts();
+      const { uc, spawner, gate } = makeUc(ports);
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n",
+      });
+      spawner.spawn.mockReturnValue(verifyAgent);
+      uc.tddAgent = makeAgent();
+      gate.verifyFailed.mockResolvedValue({ kind: "retry" as const });
+
+      const result = await uc.verify(makeSlice(), "sha0");
+
+      expect(result).toBe(true);
+      expect(gate.verifyFailed).toHaveBeenCalled();
+    });
+  });
+
+  describe("Gap: finalPasses agent failure", () => {
+    it("skips fix when final agent exits with non-zero code", async () => {
+      const ports = makePorts();
+      const { uc, git, spawner, prompts } = makeUc(ports);
+      git.hasChanges.mockResolvedValue(true);
+      prompts.finalPasses.mockReturnValue([
+        { name: "Type check", prompt: "check" },
+      ]);
+      const finalAgent = makeAgent({ exitCode: 1, assistantText: "crash" });
+      spawner.spawn.mockReturnValue(finalAgent);
+      const tddAgent = makeAgent();
+      uc.tddAgent = tddAgent;
+
+      await uc.finalPasses("sha0");
+
+      expect(tddAgent.send).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Gap: completenessCheck SLICE_COMPLETE", () => {
+    it("exits early when agent returns SLICE_COMPLETE", async () => {
+      const ports = makePorts();
+      const { uc, git, spawner } = makeUc(ports);
+      git.hasChanges.mockResolvedValue(true);
+      const checkAgent = makeAgent({ assistantText: "All good. SLICE_COMPLETE" });
+      spawner.spawn.mockReturnValue(checkAgent);
+      const tddAgent = makeAgent();
+      uc.tddAgent = tddAgent;
+
+      await uc.completenessCheck(makeSlice(), "sha0");
+
+      expect(checkAgent.kill).toHaveBeenCalled();
+      expect(tddAgent.send).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Gap: resume with session IDs", () => {
+    it("skips rules reminder and sets isFirst=false when resuming", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      ports.persistence.load.mockResolvedValue({
+        tddSessionId: "existing-tdd",
+        reviewSessionId: "existing-review",
+      });
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent)
+        .mockReturnValue(makeAgent());
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      // Rules reminders should NOT have been sent (resuming)
+      // sendQuiet may be called for slice summary, but not for rules
+      const tddQuietCalls = (tddAgent.sendQuiet as ReturnType<typeof vi.fn>).mock.calls;
+      const hasRulesCall = tddQuietCalls.some(
+        (c: string[]) => c[0]?.includes("rules reminder"),
+      );
+      expect(hasRulesCall).toBe(false);
+      expect(reviewAgent.sendQuiet).not.toHaveBeenCalled();
+      // tddIsFirst should be false (resuming session)
+      expect(uc.tddIsFirst).toBe(false);
+    });
+  });
+
+  describe("Gap: entire group skip", () => {
+    it("skips entire group when all its slices are already completed", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      ports.persistence.load.mockResolvedValue({ lastCompletedSlice: 2 });
+      const { uc, spawner, gate } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent)
+        .mockReturnValue(makeAgent());
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 }), makeSlice({ number: 2 })] },
+        { name: "G2", slices: [makeSlice({ number: 3 })] },
+      ];
+      await uc.execute(groups);
+
+      // G1 slices should be skipped entirely — TDD send only for G2 slice 3
+      // The tddAgent.send calls: 1 for slice 3 only
+      expect(tddAgent.send).toHaveBeenCalledTimes(1);
+      // Progress updated with completedSlices for G1
+      expect(gate.updateProgress).toHaveBeenCalledWith(
+        expect.objectContaining({ completedSlices: 2 }),
+      );
+    });
+  });
+
+  describe("Gap: gapAnalysis review skipped when no changes after fix", () => {
+    it("skips review when TDD fix produces no changes", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ gapDisabled: false, reviewSkill: "test" });
+      const { uc, git, spawner } = makeUc(ports, config);
+      const gapAgent = makeAgent({ assistantText: "Missing tests for X" });
+      spawner.spawn.mockReturnValue(gapAgent);
+      const tddAgent = makeAgent();
+      uc.tddAgent = tddAgent;
+      const reviewAgent = makeAgent({ assistantText: "REVIEW_CLEAN" });
+      uc.reviewAgent = reviewAgent;
+
+      // hasChanges: true for initial gap check, false for post-fix check
+      git.hasChanges
+        .mockResolvedValueOnce(true)  // gap entry check
+        .mockResolvedValueOnce(false); // post-fix check — no changes
+      git.captureRef.mockResolvedValue("sha1");
+
+      await uc.gapAnalysis(
+        { name: "G1", slices: [makeSlice()] },
+        "sha0",
+      );
+
+      expect(tddAgent.send).toHaveBeenCalled();
+      expect(reviewAgent.send).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Gap: finalPasses review skipped when no changes after fix", () => {
+    it("skips review when fix produces no changes", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ reviewSkill: "test" });
+      const { uc, git, spawner, prompts } = makeUc(ports, config);
+      prompts.finalPasses.mockReturnValue([
+        { name: "Type check", prompt: "check" },
+      ]);
+      const finalAgent = makeAgent({ assistantText: "Found: any cast" });
+      spawner.spawn.mockReturnValue(finalAgent);
+      const tddAgent = makeAgent();
+      uc.tddAgent = tddAgent;
+      const reviewAgent = makeAgent({ assistantText: "REVIEW_CLEAN" });
+      uc.reviewAgent = reviewAgent;
+
+      // hasChanges: true for entry, false for post-fix
+      git.hasChanges
+        .mockResolvedValueOnce(true)  // finalPasses entry check
+        .mockResolvedValueOnce(false); // post-fix check — no changes
+      git.captureRef.mockResolvedValue("sha1");
+
+      await uc.finalPasses("sha0");
+
+      expect(tddAgent.send).toHaveBeenCalled();
+      expect(reviewAgent.send).not.toHaveBeenCalled();
+    });
   });
 });
