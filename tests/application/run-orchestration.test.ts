@@ -1261,4 +1261,42 @@ describe("RunOrchestration", () => {
       expect(reviewAgent.send).not.toHaveBeenCalled();
     });
   });
+
+  describe("onReady callback", () => {
+    it("calls onReady with session IDs after agent spawn", async () => {
+      const { uc, spawner } = makeUc();
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      (tddAgent as any).sessionId = "tdd-sess-123";
+      (reviewAgent as any).sessionId = "rev-sess-456";
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent);
+
+      const onReady = vi.fn();
+      const group: Group = {
+        name: "G",
+        slices: [makeSlice()],
+      };
+
+      await uc.execute([group], { onReady });
+
+      expect(onReady).toHaveBeenCalledOnce();
+      expect(onReady).toHaveBeenCalledWith({
+        tddSessionId: "tdd-sess-123",
+        reviewSessionId: "rev-sess-456",
+      });
+    });
+
+    it("works without onReady (optional)", async () => {
+      const { uc } = makeUc();
+      const group: Group = {
+        name: "G",
+        slices: [makeSlice()],
+      };
+
+      // Should not throw when no onReady provided
+      await expect(uc.execute([group])).resolves.toBeUndefined();
+    });
+  });
 });

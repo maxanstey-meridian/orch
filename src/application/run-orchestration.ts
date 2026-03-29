@@ -61,7 +61,12 @@ export class RunOrchestration {
     private readonly config: OrchestratorConfig,
   ) {}
 
-  async execute(groups: readonly Group[]): Promise<void> {
+  async execute(
+    groups: readonly Group[],
+    opts?: {
+      onReady?: (info: { tddSessionId: string; reviewSessionId: string }) => void;
+    },
+  ): Promise<void> {
     if (groups.length === 0) return;
 
     this.state = await this.persistence.load();
@@ -88,6 +93,11 @@ export class RunOrchestration {
 
     if (this.state.tddSessionId) this.tddIsFirst = false;
     if (this.state.reviewSessionId) this.reviewIsFirst = false;
+
+    opts?.onReady?.({
+      tddSessionId: this.tddAgent.sessionId,
+      reviewSessionId: this.reviewAgent.sessionId,
+    });
 
     // Register keyboard interrupts
     const interrupts = this.gate.registerInterrupts();

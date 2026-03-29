@@ -24,7 +24,9 @@ import { isPlanFormat, ensureCanonicalPlan, doGeneratePlan } from "./plan/plan-g
 import { loadState, clearState, statePathForPlan, type OrchestratorState } from "./state/state.js";
 import { runFingerprint } from "./state/fingerprint.js";
 import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "./ui/display.js";
-import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
+import { CreditExhaustedError } from "./application/run-orchestration.js";
+import type { OrchestratorConfig } from "./domain/config.js";
+import { createContainer } from "./composition-root.js";
 import { runInit, profileToMarkdown } from "./ui/init.js";
 import { spawnGeneratePlanAgent } from "./agent/agent-factory.js";
 import { getStatus, stashBackup } from "./git/git.js";
@@ -231,16 +233,7 @@ const main = async () => {
   const interactive = !noInteraction && isTTY;
 
   // 7. Signal handlers + cleanup
-  // If SIGINT arrives during create(), _orch is null and spawned agents aren't
-  // tracked here. process.exit() follows immediately, which reaps child processes.
-  let _orch: Orchestrator | null = null;
-  const cleanup = () => {
-    if (_orch) {
-      _orch.cleanup();
-    } else {
-      hud.teardown();
-    }
-  };
+  const cleanup = () => hud.teardown();
   process.on("SIGINT", () => {
     cleanup();
     process.exit(130);
@@ -267,52 +260,50 @@ const main = async () => {
 
   const planContent = await readFile(planPath, "utf-8");
 
-  // 9. Construct Orchestrator — spawns + reminds agents internally
-  _orch = await Orchestrator.create(
-    {
-      cwd: effectiveCwd,
-      planPath,
-      planContent,
-      brief,
-      noInteraction,
-      auto,
-      reviewThreshold:
-        rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),
-      maxReviewCycles: orchrc.config.maxReviewCycles ?? 3,
-      maxReplans: orchrc.config.maxReplans ?? 2,
-      stateFile,
-      tddSkill,
-      reviewSkill,
-      verifySkill,
-      gapDisabled,
-      planDisabled,
-      tddRules: orchrc.rules.tdd,
-      reviewRules: orchrc.rules.review,
-    } satisfies OrchestratorConfig,
-    updatedState,
-    hud,
-    log,
-  );
-  if (interactive) _orch.setupKeyboardHandlers();
-
-  // 10. Banner + group list
-  const remaining = groups.slice(startIdx);
-  printStartupBanner(log, {
+  // 9. Composition root — wire all ports + use case
+  const orchestratorConfig = {
+    cwd: effectiveCwd,
     planPath,
+    planContent,
     brief,
+    noInteraction,
     auto,
-    interactive,
-    groupFilter,
-    worktree: worktreeInfo,
-    orchrcSummary,
-    tddSessionId: _orch.tddAgent.sessionId,
-    reviewSessionId: _orch.reviewAgent.sessionId,
-    groups: remaining,
-  });
+    reviewThreshold:
+      rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),
+    maxReviewCycles: orchrc.config.maxReviewCycles ?? 3,
+    maxReplans: orchrc.config.maxReplans ?? 2,
+    stateFile,
+    tddSkill,
+    reviewSkill,
+    verifySkill,
+    gapDisabled,
+    planDisabled,
+    tddRules: orchrc.rules.tdd,
+    reviewRules: orchrc.rules.review,
+  } satisfies OrchestratorConfig;
 
-  // 11. Run
+  const container = createContainer(orchestratorConfig, hud);
+  const orch = container.resolve("runOrchestration");
+
+  // 10. Banner + run
+  const remaining = groups.slice(startIdx);
+
   try {
-    await _orch.run(remaining, 0);
+    await orch.execute(remaining, {
+      onReady: (info) =>
+        printStartupBanner(log, {
+          planPath,
+          brief,
+          auto,
+          interactive,
+          groupFilter,
+          worktree: worktreeInfo,
+          orchrcSummary,
+          tddSessionId: info.tddSessionId,
+          reviewSessionId: info.reviewSessionId,
+          groups: remaining,
+        }),
+    });
   } catch (err) {
     if (err instanceof CreditExhaustedError) {
       log(`\n${ts()} ${a.red}Credit exhaustion detected: ${err.message}${a.reset}`);
@@ -322,7 +313,7 @@ const main = async () => {
     throw err;
   }
 
-  // 12. Cleanup
+  // 11. Cleanup
   logSection(log, `${a.green}✅ All groups complete + final review done${a.reset}`);
   const status = await getStatus(effectiveCwd);
   log(`\n${status}`);
