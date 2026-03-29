@@ -46,6 +46,7 @@ describe("InterruptHandler", () => {
   });
 });
 
+// TODO: When OperatorGate replaces HUD, trace each shape below to its actual hud.update() call site in orchestrator.ts
 describe("ProgressUpdate", () => {
   it("accepts all hud.update() call shapes", () => {
     const shapes: ProgressUpdate[] = [

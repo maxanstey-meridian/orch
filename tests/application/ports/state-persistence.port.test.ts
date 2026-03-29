@@ -66,4 +66,13 @@ describe("StatePersistence", () => {
     expect((loaded as Record<string, unknown>).lastCompletedGroup).toBeUndefined();
     expect((loaded as Record<string, unknown>).tddSessionId).toBeUndefined();
   });
+
+  it("can save again after clear", async () => {
+    const persistence = new InMemoryStatePersistence();
+    await persistence.save({ lastCompletedSlice: 1 });
+    await persistence.clear();
+    await persistence.save({ lastCompletedSlice: 99 });
+    const loaded = await persistence.load();
+    expect(loaded).toEqual({ lastCompletedSlice: 99 });
+  });
 });

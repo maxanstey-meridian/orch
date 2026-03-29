@@ -37,16 +37,16 @@ describe("AgentResult", () => {
 });
 
 describe("AgentRole", () => {
-  it("covers all 7 roles", () => {
-    const roles: AgentRole[] = [
-      "tdd",
-      "review",
-      "verify",
-      "plan",
-      "gap",
-      "final",
-      "completeness",
-    ];
-    expect(roles).toHaveLength(7);
+  it("covers all 7 roles (exhaustiveness guard)", () => {
+    const allRoles: Record<AgentRole, true> = {
+      tdd: true,
+      review: true,
+      verify: true,
+      plan: true,
+      gap: true,
+      final: true,
+      completeness: true,
+    };
+    expect(Object.keys(allRoles)).toHaveLength(7);
   });
 });

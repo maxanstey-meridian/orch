@@ -40,6 +40,31 @@ describe("AgentHandle", () => {
     handle.kill();
     expect(handle.kill).toHaveBeenCalled();
   });
+
+  it("send accepts optional onText and onToolUse callbacks", async () => {
+    const result: AgentResult = {
+      exitCode: 0,
+      assistantText: "done",
+      resultText: "ok",
+      needsInput: false,
+      sessionId: "sess-1",
+    };
+
+    const handle: AgentHandle = {
+      sessionId: "sess-1",
+      style: { label: "TDD", color: "green", badge: "T" },
+      alive: true,
+      send: vi.fn().mockResolvedValue(result),
+      sendQuiet: vi.fn().mockResolvedValue(""),
+      inject: vi.fn(),
+      kill: vi.fn(),
+    };
+
+    const onText = vi.fn();
+    const onToolUse = vi.fn();
+    await handle.send("test", onText, onToolUse);
+    expect(handle.send).toHaveBeenCalledWith("test", onText, onToolUse);
+  });
 });
 
 describe("AgentSpawner", () => {
