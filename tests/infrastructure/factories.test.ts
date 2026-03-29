@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { OrchestratorConfig } from "../../src/domain/config.js";
 
-vi.mock("../../src/agent/agent-factory.js", () => ({
+vi.mock("../../src/infrastructure/agent/agent-factory.js", () => ({
   spawnAgent: vi.fn(),
   spawnPlanAgent: vi.fn(),
   TDD_RULES_REMINDER: "tdd rules",

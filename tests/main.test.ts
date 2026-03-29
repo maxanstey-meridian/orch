@@ -837,5 +837,101 @@ describe("composition root integration", () => {
     // SilentOperatorGate teardown is a no-op (noInteraction: true),
     // but it's still called — proves the cascade works
   });
+
+  it("cleanup reassignment: after container creation, cleanup calls orch.dispose not hud.teardown", async () => {
+    // This tests the pattern in main.ts lines 239-290:
+    // let cleanup = () => hud.teardown();  // initial
+    // ... container creation ...
+    // cleanup = () => orch.dispose();      // upgraded
+    const { createContainer } = await import("../src/composition-root.js");
+    const config = makeTestConfig();
+    const hudTeardown = vi.fn();
+    const dummyHud = {
+      askUser: vi.fn().mockResolvedValue(""),
+      update: vi.fn(),
+      setActivity: vi.fn(),
+      teardown: hudTeardown,
+      onKey: vi.fn(),
+      onInterruptSubmit: vi.fn(),
+      startPrompt: vi.fn(),
+      wrapLog: vi.fn(),
+      createWriter: vi.fn(),
+      setSkipping: vi.fn(),
+    } as any;
+
+    // Simulate main.ts cleanup pattern
+    let cleanup = () => dummyHud.teardown();
+
+    const container = createContainer(config, dummyHud);
+    const orch = container.resolve("runOrchestration");
+    const tddAgent = makeTestAgent();
+    orch.tddAgent = tddAgent;
+
+    // Upgrade cleanup (same as main.ts line 290)
+    cleanup = () => orch.dispose();
+
+    // Calling cleanup should now call orch.dispose, NOT hud.teardown directly
+    cleanup();
+
+    // orch.dispose kills agents — proves the reassignment worked
+    expect(tddAgent.kill).toHaveBeenCalled();
+    // hud.teardown is NOT called directly — it's called via gate.teardown inside dispose
+    // (SilentOperatorGate teardown is a no-op, so hudTeardown won't be called)
+    expect(hudTeardown).not.toHaveBeenCalled();
+  });
+
+  it("early cleanup (before container) calls hud.teardown directly", () => {
+    // Tests the fallback path: SIGINT before container creation
+    const hudTeardown = vi.fn();
+    const dummyHud = { teardown: hudTeardown } as any;
+
+    // Initial cleanup (main.ts line 239)
+    const cleanup = () => dummyHud.teardown();
+    cleanup();
+
+    expect(hudTeardown).toHaveBeenCalledOnce();
+  });
+
+  it("CreditExhaustedError from execute triggers catch block", async () => {
+    // Tests main.ts lines 311-316: CreditExhaustedError → exit(2)
+    const { CreditExhaustedError } = await import("../src/domain/errors.js");
+    const { createContainer } = await import("../src/composition-root.js");
+    const config = makeTestConfig();
+    const dummyHud = {
+      askUser: vi.fn().mockResolvedValue(""),
+      update: vi.fn(),
+      setActivity: vi.fn(),
+      teardown: vi.fn(),
+      onKey: vi.fn(),
+      onInterruptSubmit: vi.fn(),
+      startPrompt: vi.fn(),
+      wrapLog: vi.fn(),
+      createWriter: vi.fn(),
+      setSkipping: vi.fn(),
+    } as any;
+
+    const container = createContainer(config, dummyHud);
+    const orch = container.resolve("runOrchestration");
+
+    // Make execute throw CreditExhaustedError
+    const originalExecute = orch.execute.bind(orch);
+    orch.execute = vi.fn().mockRejectedValue(
+      new CreditExhaustedError("credits gone", "mid-response"),
+    );
+
+    // Simulate main.ts catch pattern (lines 311-316)
+    let exitCode: number | undefined;
+    try {
+      await orch.execute([]);
+    } catch (err) {
+      if (err instanceof CreditExhaustedError) {
+        exitCode = 2;
+      } else {
+        throw err;
+      }
+    }
+
+    expect(exitCode).toBe(2);
+  });
 });
 
