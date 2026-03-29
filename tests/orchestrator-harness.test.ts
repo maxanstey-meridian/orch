@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { Orchestrator, type OrchestratorConfig } from "../src/orchestrator.js";
 import type { AgentProcess } from "../src/agent/agent.js";
 import { hasDirtyTree, captureRef, hasChanges } from "../src/git/git.js";
 import { spawnAgent, spawnPlanAgentWithSkill, spawnGapAgent } from "../src/agent/agent-factory.js";
