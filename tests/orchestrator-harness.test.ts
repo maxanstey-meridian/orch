@@ -236,6 +236,46 @@ describe("regression guards", () => {
   });
 
   // REGRESSION GUARD — do not weaken or delete without replacing with equivalent coverage
+  it("currentPlanText is null during planThenExecute when sliceSkipFlag is set", async () => {
+    let captured: string | null | undefined;
+    let orchRef: Awaited<ReturnType<typeof createTestOrch>>["orch"];
+    const plan = fakeAgent();
+    vi.mocked(plan.send).mockImplementation(() => {
+      captured = orchRef.currentPlanText;
+      return Promise.resolve({ ...defaultResult, planText: "the plan" });
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(plan);
+
+    const { orch } = await createTestOrch({ noInteraction: true });
+    orchRef = orch;
+    orch.sliceSkipFlag = true;
+
+    const groups = [{ name: "G", slices: [testSlice] }];
+    await orch.run(groups, 0);
+
+    expect(captured).toBeNull();
+  });
+
+  // REGRESSION GUARD — do not weaken or delete without replacing with equivalent coverage
+  it("C key — pressing C during run() calls printSliceContent with current slice", async () => {
+    let pressKeyRef: ((k: string) => void) | undefined;
+    const plan = fakeAgent();
+    vi.mocked(plan.send).mockImplementation(() => {
+      pressKeyRef!("c");
+      return Promise.resolve(defaultResult);
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(plan);
+
+    const { orch, pressKey } = await createTestOrch({ noInteraction: true });
+    pressKeyRef = pressKey;
+    vi.mocked(printSliceContent).mockReset();
+    const groups = [{ name: "G", slices: [testSlice] }];
+    await orch.run(groups, 0);
+
+    expect(printSliceContent).toHaveBeenCalledWith(expect.any(Function), testSlice);
+  });
+
+  // REGRESSION GUARD — do not weaken or delete without replacing with equivalent coverage
   it("HUD — update mock captures calls for state assertions", async () => {
     const { orch, hud } = await createTestOrch();
     orch.hud.update({ groupName: "Test Group" });

@@ -212,6 +212,29 @@ describe("printSliceContent", () => {
     expect(text).not.toContain("Details:");
     expect(text).not.toContain("Tests:");
   });
+
+  it("omits Files header when files array is empty", () => {
+    const { lines, log } = collect();
+    printSliceContent(log, makeSlice({ files: [] }));
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Slice 1: User login");
+    expect(text).not.toContain("Files:");
+  });
+
+  it("prints all files when multiple are present", () => {
+    const { lines, log } = collect();
+    printSliceContent(log, makeSlice({
+      files: [
+        { path: "src/a.ts", action: "new" },
+        { path: "src/b.ts", action: "edit" },
+        { path: "src/c.ts", action: "delete" },
+      ],
+    }));
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("src/a.ts (new)");
+    expect(text).toContain("src/b.ts (edit)");
+    expect(text).toContain("src/c.ts (delete)");
+  });
 });
 
 describe("formatPlanSummary", () => {
