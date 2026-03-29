@@ -2805,3 +2805,81 @@ describe("withRetry", () => {
     expect(hud.setActivity).toHaveBeenCalledWith("waiting to retry (overloaded)...");
   });
 });
+
+describe("currentPlanText timing", () => {
+  it("currentPlanText is available during execute phase", async () => {
+    const planAgent = fakeAgent();
+    vi.mocked(planAgent.send).mockResolvedValue({
+      exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s",
+      planText: "the plan",
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+
+    let captured: string | null | undefined;
+    const orchRef: { current: Orchestrator | null } = { current: null };
+    const tdd = fakeAgent();
+    let firstCall = true;
+    vi.mocked(tdd.send).mockImplementation(async () => {
+      if (firstCall) {
+        captured = orchRef.current!.currentPlanText;
+        firstCall = false;
+      }
+      return { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    });
+
+    const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+    orchRef.current = orch;
+    const slice = { number: 1, title: "T", content: "c" };
+    const group = { name: "G", slices: [slice] };
+    await orch.run([group], 0);
+
+    expect(captured).toBe("the plan");
+  });
+
+  it("pressing P during TDD execution shows plan text", async () => {
+    const planAgent = fakeAgent();
+    vi.mocked(planAgent.send).mockResolvedValue({
+      exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s",
+      planText: "## My Plan",
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+
+    const tdd = fakeAgent();
+    let pressKeyRef: ((k: string) => void) | undefined;
+    let firstCall = true;
+    vi.mocked(tdd.send).mockImplementation(async () => {
+      if (firstCall) {
+        pressKeyRef!("p");
+        firstCall = false;
+      }
+      return { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    });
+
+    const { orch, pressKey } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
+    pressKeyRef = pressKey;
+    orch.setupKeyboardHandlers();
+    const logSpy = vi.fn();
+    (orch as any).log = logSpy;
+    const slice = { number: 1, title: "T", content: "c" };
+    const group = { name: "G", slices: [slice] };
+    await orch.run([group], 0);
+
+    expect(logSpy).toHaveBeenCalledWith("## My Plan");
+  });
+
+  it("currentPlanText is null after run completes", async () => {
+    const planAgent = fakeAgent();
+    vi.mocked(planAgent.send).mockResolvedValue({
+      exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s",
+      planText: "a plan",
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
+
+    const { orch } = await makeOrch({ config: { noInteraction: true } });
+    const slice = { number: 1, title: "T", content: "c" };
+    const group = { name: "G", slices: [slice] };
+    await orch.run([group], 0);
+
+    expect(orch.currentPlanText).toBeNull();
+  });
+});

@@ -429,6 +429,7 @@ export class Orchestrator {
     }
 
     planAgent.kill();
+    this.currentPlanText = plan;
 
     // ── Confirmation gate ──
     let operatorGuidance = "";
