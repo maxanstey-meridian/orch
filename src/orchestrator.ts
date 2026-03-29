@@ -987,7 +987,7 @@ export class Orchestrator {
     const gapBaseSha = await captureRef(this.config.cwd);
     const gapFixPrompt = buildTddPrompt(
       groupContent,
-      `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
+      `A gap analysis found issues. Review each finding below and act accordingly.\n\n## Gaps Found\n${gapText}\n\nRules:\n- For COVERAGE GAPS (working code with missing tests): add tests. Do NOT refactor or change existing code.\n- For BUGS (code that produces wrong output): do NOT write a test that enshrines the broken behaviour. Instead, fix the bug and add a test that asserts the correct behaviour. RED first (test fails against buggy code), then GREEN (fix the code, test passes).\n- If a finding is ambiguous, treat it as a bug — fixing is safer than documenting broken behaviour as "known".`,
     );
     const ts2 = this.streamer(BOT_TDD);
     const fixPrompt = this.tddIsFirst ? withBrief(gapFixPrompt, this.config.brief) : gapFixPrompt;

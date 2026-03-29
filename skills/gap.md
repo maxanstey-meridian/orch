@@ -25,3 +25,12 @@ reviewed. You are the last line of defence before a group of slices is marked co
 - Mocking the system under test is not coverage — it's theatre.
 - If a feature sets a flag or changes state, a test must assert that state directly.
 - Integration paths between components need at least one test exercising the full path.
+
+## Classify each finding
+
+Label every finding as one of:
+
+- **COVERAGE GAP** — the code works correctly but lacks test coverage. The TDD bot should add tests only.
+- **BUG** — the code produces wrong output, silently swallows errors, or mishandles an input class. The TDD bot should fix the code and add a test.
+
+This distinction matters. A "coverage gap" test documents correct behaviour. A test for a bug must NOT enshrine the broken behaviour as a passing assertion — that makes the bug permanent.
