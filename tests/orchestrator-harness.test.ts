@@ -8,7 +8,7 @@ import { saveState } from "../src/state/state.js";
 import { isCleanReview } from "../src/cli/review-check.js";
 import { measureDiff } from "../src/cli/review-threshold.js";
 import { printSliceIntro } from "../src/ui/display.js";
-import { createTestOrch } from "./orchestrator-harness.js";
+import { createTestOrch, fakeAgent } from "./orchestrator-harness.js";
 
 vi.mock("../src/ui/display.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/ui/display.js")>();
@@ -61,9 +61,9 @@ beforeEach(() => {
   vi.mocked(hasDirtyTree).mockReset().mockResolvedValue(false);
   vi.mocked(captureRef).mockReset().mockResolvedValue("abc123");
   vi.mocked(hasChanges).mockReset().mockResolvedValue(true);
-  vi.mocked(spawnAgent).mockReset().mockReturnValue({} as AgentProcess);
-  vi.mocked(spawnPlanAgentWithSkill).mockReset().mockReturnValue({} as AgentProcess);
-  vi.mocked(spawnGapAgent).mockReset().mockReturnValue({} as AgentProcess);
+  vi.mocked(spawnAgent).mockReset().mockReturnValue(fakeAgent());
+  vi.mocked(spawnPlanAgentWithSkill).mockReset().mockReturnValue(fakeAgent());
+  vi.mocked(spawnGapAgent).mockReset().mockReturnValue(fakeAgent());
   vi.mocked(detectCreditExhaustion).mockReset().mockReturnValue(null);
   vi.mocked(detectApiError).mockReset().mockReturnValue(null);
   vi.mocked(saveState).mockReset().mockResolvedValue(undefined);

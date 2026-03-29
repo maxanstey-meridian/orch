@@ -31,7 +31,7 @@ const defaultResult: AgentResult = {
   sessionId: "s",
 };
 
-const fakeAgent = (): AgentProcess & { nextResult: (r: Partial<AgentResult>) => void } => {
+export const fakeAgent = (): AgentProcess & { nextResult: (r: Partial<AgentResult>) => void } => {
   const queue: Partial<AgentResult>[] = [];
   const agent: AgentProcess & { nextResult: (r: Partial<AgentResult>) => void } = {
     kill: vi.fn(),
