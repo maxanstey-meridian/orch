@@ -34,4 +34,30 @@ describe("buildContent", () => {
 
     expect(result).toContain("`src/a.ts` (new), `src/b.ts` (edit)");
   });
+
+  it("renders delete file action correctly", () => {
+    const result = buildContent({
+      number: 3,
+      title: "Remove old",
+      why: "Cleanup",
+      files: [{ path: "src/old.ts", action: "delete" }],
+      details: "Remove it.",
+      tests: "Verify removed.",
+    });
+
+    expect(result).toContain("`src/old.ts` (delete)");
+  });
+
+  it("renders empty files array as empty file list", () => {
+    const result = buildContent({
+      number: 4,
+      title: "No files",
+      why: "Edge case",
+      files: [],
+      details: "Details.",
+      tests: "Tests.",
+    });
+
+    expect(result).toContain("**Files:** \n");
+  });
 });

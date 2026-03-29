@@ -53,4 +53,23 @@ describe("advanceState", () => {
     advanceState(state, { kind: "reviewBaseCaptured", sha: "abc123" });
     expect(state).toEqual({});
   });
+
+  it("sliceDone preserves existing worktree and sessionIds", () => {
+    const state: OrchestratorState = {
+      tddSessionId: "t1",
+      reviewSessionId: "r1",
+      worktree: { path: "/tmp/wt", branch: "feat", baseSha: "base" },
+    };
+    const next = advanceState(state, { kind: "sliceDone", sliceNumber: 2 });
+    expect(next.tddSessionId).toBe("t1");
+    expect(next.reviewSessionId).toBe("r1");
+    expect(next.worktree).toEqual({ path: "/tmp/wt", branch: "feat", baseSha: "base" });
+    expect(next.lastCompletedSlice).toBe(2);
+  });
+
+  it("agentSpawned with role tdd overwrites existing tddSessionId", () => {
+    const state: OrchestratorState = { tddSessionId: "old" };
+    const next = advanceState(state, { kind: "agentSpawned", role: "tdd", sessionId: "new" });
+    expect(next.tddSessionId).toBe("new");
+  });
 });

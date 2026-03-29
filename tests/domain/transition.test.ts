@@ -61,6 +61,14 @@ describe("transition", () => {
     expect(result).toEqual({ kind: "Executing", sliceNumber: 1, planText: "the plan" });
   });
 
+  it("Gated with attempt=3 + PlanAccepted → Executing after multi-replan", () => {
+    const result = transition(
+      { kind: "Gated", sliceNumber: 1, planText: "revised plan", attempt: 3 },
+      { kind: "PlanAccepted" },
+    );
+    expect(result).toEqual({ kind: "Executing", sliceNumber: 1, planText: "revised plan" });
+  });
+
   it("Gated + PlanRejected → Planning with attempt+1", () => {
     const result = transition(
       { kind: "Gated", sliceNumber: 1, planText: "the plan", attempt: 1 },
@@ -223,6 +231,13 @@ describe("canSkip", () => {
     expect(canSkip({ kind: "Idle" }, baseConfig)).toBe(false);
     expect(canSkip({ kind: "Complete" }, baseConfig)).toBe(false);
   });
+
+  it("returns false for Gated, Reviewing, CompletenessCheck, FinalPasses", () => {
+    expect(canSkip({ kind: "Gated", sliceNumber: 1, planText: "p", attempt: 1 }, baseConfig)).toBe(false);
+    expect(canSkip({ kind: "Reviewing", sliceNumber: 1, cycle: 1 }, baseConfig)).toBe(false);
+    expect(canSkip({ kind: "CompletenessCheck", sliceNumber: 1 }, baseConfig)).toBe(false);
+    expect(canSkip({ kind: "FinalPasses", passIndex: 0 }, baseConfig)).toBe(false);
+  });
 });
 
 describe("isAlreadyImplemented", () => {
@@ -262,5 +277,11 @@ describe("isAlreadyImplemented", () => {
 
   it("returns false when SHAs match but text doesn't match", () => {
     expect(isAlreadyImplemented("wrote new code for feature", sha, sha)).toBe(false);
+  });
+
+  it("matches case-insensitively", () => {
+    expect(isAlreadyImplemented("Already Implemented", sha, sha)).toBe(true);
+    expect(isAlreadyImplemented("ALREADY IMPLEMENTED", sha, sha)).toBe(true);
+    expect(isAlreadyImplemented("No Changes Needed", sha, sha)).toBe(true);
   });
 });

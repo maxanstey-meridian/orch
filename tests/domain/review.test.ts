@@ -17,4 +17,9 @@ describe("shouldReview", () => {
   it("returns false when total is zero", () => {
     expect(shouldReview({ total: 0 }, 30)).toBe(false);
   });
+
+  it("uses default threshold of 30 when second argument omitted", () => {
+    expect(shouldReview({ total: 29 })).toBe(false);
+    expect(shouldReview({ total: 30 })).toBe(true);
+  });
 });
