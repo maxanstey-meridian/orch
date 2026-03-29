@@ -8,9 +8,9 @@ import type { OrchestratorState } from "../domain/state.js";
 import type { AgentResult } from "../domain/agent-types.js";
 import type { Group } from "../domain/plan.js";
 import type { Slice } from "../domain/plan.js";
-import { detectApiError } from "../infrastructure/agent/api-errors.js";
-import { parseVerifyResult } from "../infrastructure/cli/verify.js";
-import { isCleanReview } from "../infrastructure/cli/review-check.js";
+import { detectApiError } from "../domain/api-errors.js";
+import { parseVerifyResult } from "../domain/verify.js";
+import { isCleanReview } from "../domain/review-check.js";
 import { isAlreadyImplemented } from "../domain/transition.js";
 import { shouldReview } from "../domain/review.js";
 import { CreditExhaustedError } from "../domain/errors.js";
@@ -275,7 +275,7 @@ export class RunOrchestration {
     }
 
     // ── Plan phase ──
-    const planPrompt = this.prompts.withBrief(this.prompts.plan(sliceContent, sliceNumber));
+    const planPrompt = this.prompts.plan(sliceContent, sliceNumber);
     const planAgent = this.agents.spawn("plan", { cwd: this.config.cwd });
     const planResult = await this.withRetry(
       () => planAgent.send(planPrompt),
@@ -317,11 +317,12 @@ export class RunOrchestration {
     }
 
     // ── Execute phase ──
-    const executePrompt = this.tddIsFirst
-      ? this.prompts.withBrief(
-          this.prompts.tddExecute(plan, sliceNumber, true, operatorGuidance),
-        )
-      : this.prompts.tddExecute(plan, sliceNumber, false, operatorGuidance);
+    const executePrompt = this.prompts.tddExecute(
+      plan,
+      sliceNumber,
+      this.tddIsFirst,
+      operatorGuidance,
+    );
     const tddResult = await this.withRetry(
       () => this.tddAgent!.send(executePrompt),
       this.tddAgent!,

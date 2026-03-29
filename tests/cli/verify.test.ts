@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseVerifyResult } from "../../src/infrastructure/cli/verify.js";
+import { parseVerifyResult } from "../../src/domain/verify.js";
 
 describe("parseVerifyResult", () => {
   it("parses a PASS result", () => {

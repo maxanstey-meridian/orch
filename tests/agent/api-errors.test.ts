@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectApiError } from "../../src/infrastructure/agent/api-errors.js";
+import { detectApiError } from "../../src/domain/api-errors.js";
 import type { AgentResult } from "../../src/infrastructure/agent/agent.js";
 
 const makeResult = (overrides: Partial<AgentResult> = {}): AgentResult => ({

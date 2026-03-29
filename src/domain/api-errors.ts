@@ -1,4 +1,4 @@
-import type { AgentResult } from "./agent.js";
+import type { AgentResult } from "./agent-types.js";
 
 export type ApiError = {
   readonly kind: "overloaded" | "rate-limited" | "credit-exhausted" | "unknown";

@@ -974,6 +974,46 @@ describe("RunOrchestration", () => {
     });
   });
 
+  describe("Gap: plan prompt brief wrapping", () => {
+    it("plan prompt is not double-wrapped with brief", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ planDisabled: false, auto: true });
+      const { uc, spawner, prompts } = makeUc(ports, config);
+      const planAgent = makeAgent({ planText: "the plan" });
+      spawner.spawn.mockReturnValue(planAgent);
+      uc.tddAgent = makeAgent();
+
+      await uc.planThenExecute("slice content", 1);
+
+      // plan() already includes brief — withBrief should NOT be called on the plan prompt
+      const planSendArg = (planAgent.send as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      // If withBrief were called on plan()'s output, we'd see "brief: plan prompt"
+      // instead of just "plan prompt"
+      expect(planSendArg).toBe("plan prompt");
+      expect(prompts.withBrief).not.toHaveBeenCalledWith("plan prompt");
+    });
+
+    it("tddExecute first-slice prompt is not double-wrapped with brief", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ planDisabled: false, auto: true });
+      const { uc, spawner, prompts } = makeUc(ports, config);
+      const planAgent = makeAgent({ planText: "the plan" });
+      spawner.spawn.mockReturnValue(planAgent);
+      const tddAgent = makeAgent();
+      uc.tddAgent = tddAgent;
+      uc.tddIsFirst = true;
+      prompts.tddExecute.mockReturnValue("exec prompt");
+
+      await uc.planThenExecute("slice content", 1);
+
+      // tddExecute already includes brief when firstSlice=true —
+      // withBrief should NOT be called on tddExecute's output
+      const tddSendArg = (tddAgent.send as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(tddSendArg).toBe("exec prompt");
+      expect(prompts.withBrief).not.toHaveBeenCalledWith("exec prompt");
+    });
+  });
+
   describe("Gap: planThenExecute dead session fallback", () => {
     it("respawns TDD when agent dies during execute phase", async () => {
       const ports = makePorts();
