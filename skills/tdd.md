@@ -78,6 +78,16 @@ the current test. Don't anticipate future tests.
 
 **Narrating instead of executing**: Writing "RED confirmed" or "GREEN. Cycle complete." without actually running tests via Bash. You must execute, read output, then report. No exceptions.
 
+## When You Cannot Write a Good Test
+
+If a feature requires integration testing that you cannot set up (e.g. real CLI interaction, real process spawning, real keyboard input in a terminal), do NOT write a mock test that passes regardless. Instead:
+
+1. Write whatever unit tests you CAN write meaningfully.
+2. Add a comment in the test file: `// MANUAL TEST REQUIRED: <description of what to test manually>`
+3. Mention it in your completion summary: "Manual testing needed for: <feature>"
+
+A test that proves nothing is worse than no test — it gives false confidence and masks regressions.
+
 ## When a previously-passing test breaks
 
 If you run tests during a GREEN step and a test that was passing before now fails, **stop**. Do not blindly fix it. Diagnose why it broke first:
