@@ -130,6 +130,17 @@ const makeOrch = async (overrides?: {
   return { orch, tdd, review, ...hudHelper };
 };
 
+const makeSlice = (overrides: Partial<Slice> = {}): Slice => ({
+  number: 1,
+  title: "Test slice",
+  content: "slice body",
+  why: "",
+  files: [],
+  details: "",
+  tests: "",
+  ...overrides,
+});
+
 beforeEach(() => {
   vi.mocked(hasDirtyTree).mockReset().mockResolvedValue(false);
   vi.mocked(captureRef).mockReset().mockResolvedValue("abc123");
@@ -622,7 +633,7 @@ describe("setupKeyboardHandlers", () => {
     const { orch, pressKey } = await makeOrch();
     orch.setupKeyboardHandlers();
     vi.mocked(printSliceContent).mockReset();
-    const slice: Slice = { number: 3, title: "Test slice", content: "slice body" };
+    const slice: Slice = makeSlice({ number: 3 });
     orch.currentSlice = slice;
     pressKey("c");
     expect(vi.mocked(printSliceContent)).toHaveBeenCalledWith(orch.log, slice);
@@ -1188,7 +1199,7 @@ describe("isAlreadyImplemented", () => {
 });
 
 describe("verify", () => {
-  const testSlice: Slice = { number: 1, title: "Test", content: "Do something" };
+  const testSlice: Slice = makeSlice({ title: "Test", content: "Do something" });
   const passText = "### VERIFY_RESULT\n**Status:** PASS";
   const failText = "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- test broke";
 
@@ -1263,7 +1274,7 @@ describe("verify", () => {
 });
 
 describe("runSlice", () => {
-  const testSlice: Slice = { number: 1, title: "Test", content: "Do something" };
+  const testSlice: Slice = makeSlice({ title: "Test", content: "Do something" });
   const tddResult: AgentResult = { exitCode: 0, assistantText: "implemented", resultText: "", needsInput: false, sessionId: "s" };
 
   it("runs verify then reviewFix for normal slice", async () => {
@@ -1418,7 +1429,7 @@ describe("run()", () => {
   it("saves session IDs to state on group entry", async () => {
     const tdd = { ...fakeAgent(), sessionId: "tdd-run-sess" };
     const review = { ...fakeAgent(), sessionId: "rev-run-sess" };
-    const group = { name: "Auth", slices: [{ number: 1, title: "a", content: "c" }] };
+    const group = { name: "Auth", slices: [makeSlice({ title: "a", content: "c" })] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     vi.mocked(hasChanges).mockResolvedValue(false);
     const { orch } = await makeOrch({ tddAgent: tdd, reviewAgent: review });
@@ -1438,7 +1449,7 @@ describe("run()", () => {
   });
 
   it("skips group when all slices completed", async () => {
-    const group = { name: "Auth", slices: [{ number: 1, title: "a", content: "a" }, { number: 2, title: "b", content: "b" }] };
+    const group = { name: "Auth", slices: [makeSlice({ title: "a", content: "a" }), makeSlice({ number: 2, title: "b", content: "b" })] };
     vi.mocked(hasChanges).mockResolvedValue(false);
     const { orch } = await makeOrch();
     orch.state = { lastCompletedSlice: 2 };
@@ -1450,9 +1461,9 @@ describe("run()", () => {
     const group = {
       name: "Auth",
       slices: [
-        { number: 1, title: "a", content: "slice 1" },
-        { number: 2, title: "b", content: "slice 2" },
-        { number: 3, title: "c", content: "slice 3" },
+        makeSlice({ title: "a", content: "slice 1" }),
+        makeSlice({ number: 2, title: "b", content: "slice 2" }),
+        makeSlice({ number: 3, title: "c", content: "slice 3" }),
       ],
     };
     const pte = vi.fn().mockResolvedValue({ tddResult: { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" }, skipped: false });
@@ -1468,7 +1479,7 @@ describe("run()", () => {
   });
 
   it("sets currentSlice during processing and clears after", async () => {
-    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const slice = makeSlice({ title: "Auth", content: "do auth" });
     const group = { name: "G", slices: [slice] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     let capturedSlice: unknown = "not-set";
@@ -1489,7 +1500,7 @@ describe("run()", () => {
   });
 
   it("clears currentSlice when slice is skipped", async () => {
-    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const slice = makeSlice({ title: "Auth", content: "do auth" });
     const group = { name: "G", slices: [slice] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: true });
@@ -1506,7 +1517,7 @@ describe("run()", () => {
   });
 
   it("currentPlanText persists through hard interrupt path and clears after runSlice", async () => {
-    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const slice = makeSlice({ title: "Auth", content: "do auth" });
     const group = { name: "G", slices: [slice] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false, hardInterrupt: "fix this", planText: "the plan" });
@@ -1530,7 +1541,7 @@ describe("run()", () => {
   });
 
   it("clears currentPlanText when slice is skipped", async () => {
-    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const slice = makeSlice({ title: "Auth", content: "do auth" });
     const group = { name: "G", slices: [slice] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: true, planText: "skip plan" });
@@ -1547,7 +1558,7 @@ describe("run()", () => {
   });
 
   it("sets currentPlanText from planThenExecute result and clears after slice", async () => {
-    const slice = { number: 1, title: "Auth", content: "do auth" };
+    const slice = makeSlice({ title: "Auth", content: "do auth" });
     const group = { name: "G", slices: [slice] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false, planText: "the plan" });
@@ -1568,7 +1579,7 @@ describe("run()", () => {
   });
 
   it("logs slice intro for non-skipped slices", async () => {
-    const slice = { number: 1, title: "Setup auth", content: "c" };
+    const slice = makeSlice({ title: "Setup auth", content: "c" });
     const group = { name: "G", slices: [slice] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
@@ -1585,7 +1596,7 @@ describe("run()", () => {
   });
 
   it("calls commitSweep and runSlice for each slice", async () => {
-    const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
+    const group = { name: "G", slices: [makeSlice({ title: "a", content: "c" })] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
     vi.mocked(captureRef).mockResolvedValue("sha1");
@@ -1607,7 +1618,7 @@ describe("run()", () => {
   });
 
   it("skips slice when planThenExecute returns skipped", async () => {
-    const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
+    const group = { name: "G", slices: [makeSlice({ title: "a", content: "c" })] };
     const pte = vi.fn().mockResolvedValue({ tddResult: { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" }, skipped: true });
     vi.mocked(hasChanges).mockResolvedValue(false);
     const { orch } = await makeOrch();
@@ -1624,8 +1635,8 @@ describe("run()", () => {
   });
 
   it("respawns agents between groups", async () => {
-    const g1 = { name: "A", slices: [{ number: 1, title: "a", content: "c" }] };
-    const g2 = { name: "B", slices: [{ number: 2, title: "b", content: "c" }] };
+    const g1 = { name: "A", slices: [makeSlice({ title: "a", content: "c" })] };
+    const g2 = { name: "B", slices: [makeSlice({ number: 2, title: "b", content: "c" })] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
     vi.mocked(captureRef).mockResolvedValue("sha1");
@@ -1642,7 +1653,7 @@ describe("run()", () => {
   });
 
   it("retries planThenExecute when replan is true (up to MAX_REPLANS)", async () => {
-    const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
+    const group = { name: "G", slices: [makeSlice({ title: "a", content: "c" })] };
     const okResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn()
       .mockResolvedValueOnce({ tddResult: okResult, skipped: false, replan: true })
@@ -1665,7 +1676,7 @@ describe("run()", () => {
   });
 
   it("uses maxReplans from config", async () => {
-    const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
+    const group = { name: "G", slices: [makeSlice({ title: "a", content: "c" })] };
     const okResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn()
       .mockResolvedValueOnce({ tddResult: okResult, skipped: false, replan: true })
@@ -1686,7 +1697,7 @@ describe("run()", () => {
   });
 
   it("handles hardInterrupt by respawning TDD with guidance", async () => {
-    const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
+    const group = { name: "G", slices: [makeSlice({ title: "a", content: "c" })] };
     const okResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult: okResult, skipped: false, hardInterrupt: "rewrite the approach" });
     vi.mocked(hasChanges).mockResolvedValue(false);
@@ -1709,7 +1720,7 @@ describe("run()", () => {
   });
 
   it("saves lastCompletedGroup after group completes", async () => {
-    const group = { name: "Auth", slices: [{ number: 1, title: "a", content: "c" }] };
+    const group = { name: "Auth", slices: [makeSlice({ title: "a", content: "c" })] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
     vi.mocked(captureRef).mockResolvedValue("sha1");
@@ -1744,7 +1755,7 @@ describe("gapAnalysis()", () => {
     const { orch } = await makeOrch({ config: { gapDisabled: true } });
     (orch as any).log = logFn;
 
-    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+    await (orch as any).gapAnalysis({ name: "G", slices: [makeSlice({ title: "a", content: "c" })] }, "sha");
 
     const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
     expect(allLogs).toContain("Gap analysis skipped");
@@ -1756,7 +1767,7 @@ describe("gapAnalysis()", () => {
     const { orch } = await makeOrch({ config: { gapDisabled: true } });
     (orch as any).log = logFn;
 
-    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+    await (orch as any).gapAnalysis({ name: "G", slices: [makeSlice({ title: "a", content: "c" })] }, "sha");
 
     const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
     expect(allLogs).not.toContain("Gap analysis skipped");
@@ -1766,7 +1777,7 @@ describe("gapAnalysis()", () => {
     vi.mocked(spawnAgent).mockReset();
     const { orch } = await makeOrch({ config: { gapDisabled: true } });
 
-    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+    await (orch as any).gapAnalysis({ name: "G", slices: [makeSlice({ title: "a", content: "c" })] }, "sha");
 
     expect(spawnAgent).not.toHaveBeenCalled();
   });
@@ -1782,7 +1793,7 @@ describe("gapAnalysis()", () => {
     vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
     (orch as any).log = logFn;
 
-    const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
+    const group = { name: "G", slices: [makeSlice({ title: "a", content: "c" })] };
     await (orch as any).gapAnalysis(group, "basesha");
 
     const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
@@ -1798,7 +1809,7 @@ describe("gapAnalysis()", () => {
     const { orch } = await makeOrch({ tddAgent: tdd, config: { reviewSkill: null } });
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
-    const group = { name: "G", slices: [{ number: 1, title: "a", content: "slice content" }] };
+    const group = { name: "G", slices: [makeSlice({ title: "a", content: "slice content" })] };
     await (orch as any).gapAnalysis(group, "basesha");
 
     expect(reviewFixSpy).not.toHaveBeenCalled();
@@ -1825,7 +1836,7 @@ describe("gapAnalysis()", () => {
     const { orch } = await makeOrch({ tddAgent: tdd });
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
-    const group = { name: "G", slices: [{ number: 1, title: "a", content: "slice content" }] };
+    const group = { name: "G", slices: [makeSlice({ title: "a", content: "slice content" })] };
     await (orch as any).gapAnalysis(group, "basesha");
 
     expect(gapAgent.send).toHaveBeenCalled();
@@ -1843,7 +1854,7 @@ describe("gapAnalysis()", () => {
     const { orch } = await makeOrch({ tddAgent: tdd });
     (orch as any).log = logFn;
 
-    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+    await (orch as any).gapAnalysis({ name: "G", slices: [makeSlice({ title: "a", content: "c" })] }, "sha");
 
     // Should log a warning, NOT "No coverage gaps found"
     const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
@@ -1868,7 +1879,7 @@ describe("gapAnalysis()", () => {
       return result;
     });
 
-    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+    await (orch as any).gapAnalysis({ name: "G", slices: [makeSlice({ title: "a", content: "c" })] }, "sha");
 
     expect(gapAgent.kill).toHaveBeenCalled();
     expect(reviewFixSpy).not.toHaveBeenCalled();
@@ -1891,7 +1902,7 @@ describe("gapAnalysis()", () => {
       return result;
     });
 
-    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+    await (orch as any).gapAnalysis({ name: "G", slices: [makeSlice({ title: "a", content: "c" })] }, "sha");
 
     expect(gapAgent.kill).toHaveBeenCalled();
     expect(reviewFixSpy).not.toHaveBeenCalled();
@@ -1912,7 +1923,7 @@ describe("gapAnalysis()", () => {
       return result;
     });
 
-    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+    await (orch as any).gapAnalysis({ name: "G", slices: [makeSlice({ title: "a", content: "c" })] }, "sha");
 
     expect(gapAgent.kill).toHaveBeenCalled();
     expect(tdd.send).not.toHaveBeenCalled();
@@ -1936,7 +1947,7 @@ describe("gapAnalysis()", () => {
       return result;
     });
 
-    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+    await (orch as any).gapAnalysis({ name: "G", slices: [makeSlice({ title: "a", content: "c" })] }, "sha");
 
     const allLogs = logFn.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
     expect(allLogs).toContain("interrupted");
@@ -1953,7 +1964,7 @@ describe("gapAnalysis()", () => {
     const hudHelper = fakeHud();
     const { orch } = await makeOrch({ hud: hudHelper });
 
-    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+    await (orch as any).gapAnalysis({ name: "G", slices: [makeSlice({ title: "a", content: "c" })] }, "sha");
 
     expect(hudHelper.hud.update).toHaveBeenCalledWith(expect.objectContaining({ activeAgent: "GAP", activeAgentActivity: "scanning for gaps..." }));
   });
@@ -1965,7 +1976,7 @@ describe("gapAnalysis()", () => {
     vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     const { orch } = await makeOrch({ tddAgent: tdd });
 
-    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+    await (orch as any).gapAnalysis({ name: "G", slices: [makeSlice({ title: "a", content: "c" })] }, "sha");
 
     expect(gapAgent.send).toHaveBeenCalled();
     expect(tdd.send).not.toHaveBeenCalled();
@@ -2019,7 +2030,7 @@ describe("finalPasses()", () => {
 
 describe("run() full lifecycle", () => {
   it("calls gapAnalysis, commitSweep per group, then finalPasses", async () => {
-    const group = { name: "Auth", slices: [{ number: 1, title: "a", content: "c" }] };
+    const group = { name: "Auth", slices: [makeSlice({ title: "a", content: "c" })] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
     vi.mocked(captureRef).mockResolvedValue("sha1");
@@ -2041,8 +2052,8 @@ describe("run() full lifecycle", () => {
   });
 
   it("prompts user between groups in interactive mode", async () => {
-    const g1 = { name: "A", slices: [{ number: 1, title: "a", content: "c" }] };
-    const g2 = { name: "B", slices: [{ number: 2, title: "b", content: "c" }] };
+    const g1 = { name: "A", slices: [makeSlice({ title: "a", content: "c" })] };
+    const g2 = { name: "B", slices: [makeSlice({ number: 2, title: "b", content: "c" })] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
     vi.mocked(captureRef).mockResolvedValue("sha1");
@@ -2062,8 +2073,8 @@ describe("run() full lifecycle", () => {
   });
 
   it("exits early when user declines next group", async () => {
-    const g1 = { name: "A", slices: [{ number: 1, title: "a", content: "c" }] };
-    const g2 = { name: "B", slices: [{ number: 2, title: "b", content: "c" }] };
+    const g1 = { name: "A", slices: [makeSlice({ title: "a", content: "c" })] };
+    const g2 = { name: "B", slices: [makeSlice({ number: 2, title: "b", content: "c" })] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
     vi.mocked(captureRef).mockResolvedValue("sha1");
@@ -2161,7 +2172,7 @@ describe("gapAnalysis() gap coverage", () => {
     const { orch } = await makeOrch({ tddAgent: tdd });
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
-    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+    await (orch as any).gapAnalysis({ name: "G", slices: [makeSlice({ title: "a", content: "c" })] }, "sha");
 
     expect(tdd.send).toHaveBeenCalled();
     expect(reviewFixSpy).not.toHaveBeenCalled();
@@ -2179,7 +2190,7 @@ describe("gapAnalysis() gap coverage", () => {
     const { orch } = await makeOrch({ tddAgent: tdd, hud: hudHelper });
     vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
-    await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+    await (orch as any).gapAnalysis({ name: "G", slices: [makeSlice({ title: "a", content: "c" })] }, "sha");
 
     expect(hudHelper.hud.askUser).toHaveBeenCalled();
   });
@@ -2219,7 +2230,7 @@ describe("reviewFix() gap coverage", () => {
 });
 
 describe("runSlice() gap coverage", () => {
-  const testSlice = { number: 5, title: "Test", content: "do test things" };
+  const testSlice = makeSlice({ number: 5, title: "Test", content: "do test things" });
   const okTddResult = { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
 
   it("returns skipped when sliceSkipFlag set after verify but before review", async () => {
@@ -2265,7 +2276,7 @@ describe("runSlice() gap coverage", () => {
 
 describe("run() gap coverage", () => {
   it("throws CreditExhaustedError when TDD result triggers credit signal", async () => {
-    const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
+    const group = { name: "G", slices: [makeSlice({ title: "a", content: "c" })] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
     vi.mocked(hasChanges).mockResolvedValue(false);
@@ -2277,7 +2288,7 @@ describe("run() gap coverage", () => {
   });
 
   it("calls followUp when planThenExecute TDD result needs input", async () => {
-    const group = { name: "G", slices: [{ number: 1, title: "a", content: "c" }] };
+    const group = { name: "G", slices: [makeSlice({ title: "a", content: "c" })] };
     const tddResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: true, sessionId: "s" };
     const pte = vi.fn().mockResolvedValue({ tddResult, skipped: false });
     vi.mocked(hasChanges).mockResolvedValue(false);
@@ -2790,7 +2801,7 @@ describe("gapAnalysis uses spawnGapAgent", () => {
     vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     const { orch } = await makeOrch();
 
-    await orch.gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
+    await orch.gapAnalysis({ name: "G", slices: [makeSlice({ title: "a", content: "c" })] }, "sha");
 
     expect(spawnGapAgent).toHaveBeenCalled();
   });
@@ -2972,7 +2983,7 @@ describe("currentPlanText timing", () => {
 
     const { orch } = await makeOrch({ config: { noInteraction: true }, tddAgent: tdd });
     orchRef.current = orch;
-    const slice = { number: 1, title: "T", content: "c" };
+    const slice = makeSlice({ title: "T", content: "c" });
     const group = { name: "G", slices: [slice] };
     await orch.run([group], 0);
 
@@ -3003,7 +3014,7 @@ describe("currentPlanText timing", () => {
     orch.setupKeyboardHandlers();
     const logSpy = vi.fn();
     (orch as any).log = logSpy;
-    const slice = { number: 1, title: "T", content: "c" };
+    const slice = makeSlice({ title: "T", content: "c" });
     const group = { name: "G", slices: [slice] };
     await orch.run([group], 0);
 
@@ -3019,7 +3030,7 @@ describe("currentPlanText timing", () => {
     vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(planAgent);
 
     const { orch } = await makeOrch({ config: { noInteraction: true } });
-    const slice = { number: 1, title: "T", content: "c" };
+    const slice = makeSlice({ title: "T", content: "c" });
     const group = { name: "G", slices: [slice] };
     await orch.run([group], 0);
 
