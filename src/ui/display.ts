@@ -67,6 +67,29 @@ export const printSliceIntro = (log: LogFn, slice: Slice) => {
   log(`${a.dim}└──${a.reset}\n`);
 };
 
+export const printSliceContent = (log: LogFn, slice: Slice) => {
+  log(`\n${a.bold}${a.white}┌─ Slice ${slice.number}: ${slice.title}${a.reset}`);
+  if (slice.why) log(`${a.dim}│  ${slice.why.trim()}${a.reset}`);
+  if (slice.files.length) {
+    log(`${a.dim}│${a.reset}`);
+    log(`${a.dim}│  ${a.reset}${a.bold}Files:${a.reset}`);
+    for (const f of slice.files) {
+      log(`${a.dim}│    ${a.reset}${f.path} (${f.action})`);
+    }
+  }
+  if (slice.details) {
+    log(`${a.dim}│${a.reset}`);
+    log(`${a.dim}│  ${a.reset}${a.bold}Details:${a.reset}`);
+    log(`${a.dim}│  ${a.reset}${slice.details}`);
+  }
+  if (slice.tests) {
+    log(`${a.dim}│${a.reset}`);
+    log(`${a.dim}│  ${a.reset}${a.bold}Tests:${a.reset}`);
+    log(`${a.dim}│  ${a.reset}${slice.tests}`);
+  }
+  log(`${a.dim}└──${a.reset}\n`);
+};
+
 export const printSliceSummary = (log: LogFn, sliceNumber: number, summary: string) => {
   if (!summary.trim()) return;
   log("");

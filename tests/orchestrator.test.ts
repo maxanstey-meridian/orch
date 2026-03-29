@@ -10,11 +10,11 @@ import { detectApiError } from "../src/agent/api-errors.js";
 import { saveState } from "../src/state/state.js";
 import { isCleanReview } from "../src/cli/review-check.js";
 import { measureDiff } from "../src/cli/review-threshold.js";
-import { printSliceIntro } from "../src/ui/display.js";
+import { printSliceIntro, printSliceContent } from "../src/ui/display.js";
 
 vi.mock("../src/ui/display.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/ui/display.js")>();
-  return { ...actual, printSliceIntro: vi.fn() };
+  return { ...actual, printSliceIntro: vi.fn(), printSliceContent: vi.fn() };
 });
 
 vi.mock("../src/git/git.js", () => ({
@@ -615,17 +615,17 @@ describe("setupKeyboardHandlers", () => {
     orch.setupKeyboardHandlers();
     expect(orch.currentSlice).toBeNull();
     pressKey("c");
-    expect(vi.mocked(printSliceIntro)).not.toHaveBeenCalled();
+    expect(vi.mocked(printSliceContent)).not.toHaveBeenCalled();
   });
 
-  it("key 'c' with currentSlice calls printSliceIntro", async () => {
+  it("key 'c' with currentSlice calls printSliceContent", async () => {
     const { orch, pressKey } = await makeOrch();
     orch.setupKeyboardHandlers();
-    vi.mocked(printSliceIntro).mockReset();
+    vi.mocked(printSliceContent).mockReset();
     const slice: Slice = { number: 3, title: "Test slice", content: "slice body" };
     orch.currentSlice = slice;
     pressKey("c");
-    expect(vi.mocked(printSliceIntro)).toHaveBeenCalledWith(orch.log, slice);
+    expect(vi.mocked(printSliceContent)).toHaveBeenCalledWith(orch.log, slice);
   });
 
   it("key 'p' with no currentPlanText does not log", async () => {

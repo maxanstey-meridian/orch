@@ -11,6 +11,7 @@ import {
   BOT_GAP,
   BOT_FINAL,
   printSliceIntro,
+  printSliceContent,
   printSliceSummary,
   type LogFn,
 } from "./ui/display.js";
@@ -174,7 +175,7 @@ export class Orchestrator {
         this.sliceSkipFlag = !this.sliceSkipFlag;
         this.hud.setSkipping(this.sliceSkipFlag);
       } else if (key === "c" && this.currentSlice) {
-        printSliceIntro(this.log, this.currentSlice);
+        printSliceContent(this.log, this.currentSlice);
       } else if (key === "p" && this.currentPlanText) {
         this.log(this.currentPlanText);
       } else if (key === "q" || key === "\x03") {

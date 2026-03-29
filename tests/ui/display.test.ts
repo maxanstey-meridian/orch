@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { printStartupBanner, printSliceIntro, formatPlanSummary } from "../../src/ui/display.js";
+import { printStartupBanner, printSliceIntro, printSliceContent, formatPlanSummary } from "../../src/ui/display.js";
 
 const collect = () => {
   const lines: string[] = [];
@@ -175,6 +175,41 @@ describe("printSliceIntro", () => {
     expect(middleLine).toBeDefined();
     expect(middleLine).toContain("\x1b[2m");  // dim
     expect(middleLine).toContain("\x1b[0m");  // reset
+  });
+});
+
+describe("printSliceContent", () => {
+  it("prints slice header and why", () => {
+    const { lines, log } = collect();
+    printSliceContent(log, makeSlice());
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Slice 1: User login");
+    expect(text).toContain("Users need authentication before accessing resources");
+  });
+
+  it("prints files with path and action", () => {
+    const { lines, log } = collect();
+    printSliceContent(log, makeSlice());
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("src/auth.ts");
+    expect(text).toContain("new");
+  });
+
+  it("prints details and tests fields", () => {
+    const { lines, log } = collect();
+    printSliceContent(log, makeSlice());
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Implement login flow.");
+    expect(text).toContain("Login works.");
+  });
+
+  it("handles slice with empty optional fields", () => {
+    const { lines, log } = collect();
+    printSliceContent(log, makeSlice({ why: "", tests: "", details: "" }));
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Slice 1: User login");
+    expect(text).not.toContain("Details:");
+    expect(text).not.toContain("Tests:");
   });
 });
 

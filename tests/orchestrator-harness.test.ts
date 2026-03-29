@@ -6,12 +6,12 @@ import { detectApiError } from "../src/agent/api-errors.js";
 import { saveState } from "../src/state/state.js";
 import { isCleanReview } from "../src/cli/review-check.js";
 import { measureDiff } from "../src/cli/review-threshold.js";
-import { printSliceIntro } from "../src/ui/display.js";
+import { printSliceIntro, printSliceContent } from "../src/ui/display.js";
 import { createTestOrch, fakeAgent, defaultResult } from "./orchestrator-harness.js";
 
 vi.mock("../src/ui/display.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/ui/display.js")>();
-  return { ...actual, printSliceIntro: vi.fn() };
+  return { ...actual, printSliceIntro: vi.fn(), printSliceContent: vi.fn() };
 });
 
 vi.mock("../src/git/git.js", () => ({
@@ -69,6 +69,7 @@ beforeEach(() => {
   vi.mocked(isCleanReview).mockReset().mockReturnValue(false);
   vi.mocked(measureDiff).mockReset().mockResolvedValue({ linesAdded: 100, linesRemoved: 10, total: 110 });
   vi.mocked(printSliceIntro).mockReset();
+  vi.mocked(printSliceContent).mockReset();
 });
 
 describe("orchestrator harness", () => {
@@ -78,7 +79,7 @@ describe("orchestrator harness", () => {
     expect(orch.sliceSkipFlag).toBe(false);
   });
 
-  it("pressKey 'c' with currentSlice set calls printSliceIntro", async () => {
+  it("pressKey 'c' with currentSlice set calls printSliceContent", async () => {
     const { orch, pressKey } = await createTestOrch();
     orch.currentSlice = {
       number: 1,
@@ -90,7 +91,7 @@ describe("orchestrator harness", () => {
       tests: "tests",
     };
     pressKey("c");
-    expect(printSliceIntro).toHaveBeenCalledWith(expect.any(Function), orch.currentSlice);
+    expect(printSliceContent).toHaveBeenCalledWith(expect.any(Function), orch.currentSlice);
   });
 });
 
@@ -149,14 +150,14 @@ describe("regression guards", () => {
     const { orch, pressKey } = await createTestOrch();
     orch.currentSlice = testSlice;
     pressKey("c");
-    expect(printSliceIntro).toHaveBeenCalledWith(expect.any(Function), testSlice);
+    expect(printSliceContent).toHaveBeenCalledWith(expect.any(Function), testSlice);
   });
 
   // REGRESSION GUARD — do not weaken or delete without replacing with equivalent coverage
   it("C key — pressing C without currentSlice does nothing", async () => {
     const { pressKey } = await createTestOrch();
     pressKey("c");
-    expect(printSliceIntro).not.toHaveBeenCalled();
+    expect(printSliceContent).not.toHaveBeenCalled();
   });
 
   // REGRESSION GUARD — do not weaken or delete without replacing with equivalent coverage
