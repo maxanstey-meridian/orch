@@ -13,7 +13,7 @@ import { parseVerifyResult } from "../cli/verify.js";
 import { isCleanReview } from "../cli/review-check.js";
 import { isAlreadyImplemented } from "../domain/transition.js";
 import { shouldReview } from "../domain/review.js";
-import type { CreditSignal } from "../agent/credit-detection.js";
+import { CreditExhaustedError } from "../domain/errors.js";
 
 export type PlanThenExecuteResult = {
   readonly tddResult: AgentResult;
@@ -22,14 +22,6 @@ export type PlanThenExecuteResult = {
   readonly replan?: boolean;
   readonly planText?: string;
 };
-
-export class CreditExhaustedError extends Error {
-  readonly kind: CreditSignal["kind"];
-  constructor(message: string, kind: CreditSignal["kind"]) {
-    super(message);
-    this.kind = kind;
-  }
-}
 
 export class RunOrchestration {
   static inject = [

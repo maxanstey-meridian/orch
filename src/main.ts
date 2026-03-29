@@ -24,7 +24,7 @@ import { isPlanFormat, ensureCanonicalPlan, doGeneratePlan } from "./plan/plan-g
 import { loadState, clearState, statePathForPlan, type OrchestratorState } from "./state/state.js";
 import { runFingerprint } from "./state/fingerprint.js";
 import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "./ui/display.js";
-import { CreditExhaustedError } from "./application/run-orchestration.js";
+import { CreditExhaustedError } from "./domain/errors.js";
 import type { OrchestratorConfig } from "./domain/config.js";
 import { createContainer } from "./composition-root.js";
 import { runInit, profileToMarkdown } from "./ui/init.js";
