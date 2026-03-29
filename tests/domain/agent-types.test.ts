@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { AgentStyle, AgentResult } from "../../src/domain/agent-types.js";
+import type { AgentStyle, AgentResult, AgentRole } from "../../src/domain/agent-types.js";
 
 describe("AgentStyle", () => {
   it("is structurally constructable", () => {
@@ -33,5 +33,20 @@ describe("AgentResult", () => {
       planText: "the plan",
     };
     expect(result.planText).toBe("the plan");
+  });
+});
+
+describe("AgentRole", () => {
+  it("covers all 7 roles", () => {
+    const roles: AgentRole[] = [
+      "tdd",
+      "review",
+      "verify",
+      "plan",
+      "gap",
+      "final",
+      "completeness",
+    ];
+    expect(roles).toHaveLength(7);
   });
 });

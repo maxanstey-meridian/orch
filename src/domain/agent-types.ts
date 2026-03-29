@@ -4,6 +4,8 @@ export type AgentStyle = {
   readonly badge: string;
 };
 
+export type AgentRole = 'tdd' | 'review' | 'verify' | 'plan' | 'gap' | 'final' | 'completeness';
+
 export type AgentResult = {
   readonly exitCode: number;
   readonly assistantText: string;
