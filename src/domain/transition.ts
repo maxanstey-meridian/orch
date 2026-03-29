@@ -76,7 +76,7 @@ export const transition = (current: Phase, event: PhaseEvent): Phase => {
     case "Reviewing":
       switch (event.kind) {
         case "ReviewClean":
-          return { kind: "Reviewing", sliceNumber: current.sliceNumber, cycle: current.cycle };
+          return { kind: "Idle" };
         case "ReviewIssues":
           return { kind: "Reviewing", sliceNumber: current.sliceNumber, cycle: current.cycle + 1 };
         case "SliceComplete":
@@ -94,6 +94,8 @@ export const transition = (current: Phase, event: PhaseEvent): Phase => {
         case "AllPassesDone":
           return { kind: "Complete" };
       }
+      break;
+    case "Complete":
       break;
   }
   throw new Error(`Illegal transition: ${current.kind} + ${event.kind}`);

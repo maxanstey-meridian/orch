@@ -117,12 +117,12 @@ describe("transition", () => {
     expect(result).toEqual({ kind: "Reviewing", sliceNumber: 1, cycle: 2 });
   });
 
-  it("Reviewing + ReviewClean → Reviewing (same cycle, signals clean review)", () => {
+  it("Reviewing + ReviewClean → Idle", () => {
     const result = transition(
       { kind: "Reviewing", sliceNumber: 1, cycle: 1 },
       { kind: "ReviewClean" },
     );
-    expect(result).toEqual({ kind: "Reviewing", sliceNumber: 1, cycle: 1 });
+    expect(result).toEqual({ kind: "Idle" });
   });
 
   it("Reviewing + SliceComplete → Idle", () => {
@@ -189,6 +189,13 @@ describe("transition", () => {
       { kind: "Reviewing", sliceNumber: 1, cycle: 1 },
       { kind: "StartPlanning", sliceNumber: 2 },
     )).toThrow("Illegal transition: Reviewing + StartPlanning");
+  });
+
+  it("Complete + any event throws", () => {
+    expect(() => transition(
+      { kind: "Complete" },
+      { kind: "StartPlanning", sliceNumber: 1 },
+    )).toThrow("Illegal transition: Complete + StartPlanning");
   });
 });
 
