@@ -9,6 +9,7 @@ export type VerifyPassed = { readonly kind: "VerifyPassed" };
 export type VerifyFailed = { readonly kind: "VerifyFailed" };
 export type CompletenessOk = { readonly kind: "CompletenessOk" };
 export type CompletenessIssues = { readonly kind: "CompletenessIssues" };
+export type ReviewClean = { readonly kind: "ReviewClean" };
 export type ReviewIssues = { readonly kind: "ReviewIssues" };
 export type SliceComplete = { readonly kind: "SliceComplete" };
 export type StartGap = { readonly kind: "StartGap"; readonly groupName: string };
@@ -20,7 +21,7 @@ export type PhaseEvent =
   | StartPlanning | PlanReady | PlanAccepted | PlanRejected
   | ExecutionDone | VerifyPassed | VerifyFailed
   | CompletenessOk | CompletenessIssues
-  | ReviewIssues | SliceComplete
+  | ReviewClean | ReviewIssues | SliceComplete
   | StartGap | GapDone
   | StartFinalPasses | AllPassesDone;
 
@@ -74,6 +75,8 @@ export const transition = (current: Phase, event: PhaseEvent): Phase => {
       break;
     case "Reviewing":
       switch (event.kind) {
+        case "ReviewClean":
+          return { kind: "Reviewing", sliceNumber: current.sliceNumber, cycle: current.cycle };
         case "ReviewIssues":
           return { kind: "Reviewing", sliceNumber: current.sliceNumber, cycle: current.cycle + 1 };
         case "SliceComplete":

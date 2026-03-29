@@ -117,6 +117,14 @@ describe("transition", () => {
     expect(result).toEqual({ kind: "Reviewing", sliceNumber: 1, cycle: 2 });
   });
 
+  it("Reviewing + ReviewClean → Reviewing (same cycle, signals clean review)", () => {
+    const result = transition(
+      { kind: "Reviewing", sliceNumber: 1, cycle: 1 },
+      { kind: "ReviewClean" },
+    );
+    expect(result).toEqual({ kind: "Reviewing", sliceNumber: 1, cycle: 1 });
+  });
+
   it("Reviewing + SliceComplete → Idle", () => {
     const result = transition(
       { kind: "Reviewing", sliceNumber: 1, cycle: 1 },
