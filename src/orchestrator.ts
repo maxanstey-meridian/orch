@@ -815,6 +815,7 @@ export class Orchestrator {
         });
         this.currentSlice = slice;
         printSliceIntro(this.log, slice);
+        this.sliceSkippable = true;
 
         const verifyBaseSha = await captureRef(this.config.cwd);
 
@@ -836,6 +837,7 @@ export class Orchestrator {
         this.currentPlanText = pteResult.planText || null;
 
         if (pteResult.skipped) {
+          this.sliceSkippable = false;
           this.sliceSkipFlag = false;
           this.currentSlice = null;
           this.currentPlanText = null;
@@ -883,6 +885,7 @@ export class Orchestrator {
         reviewBase = sliceResult.reviewBase;
         this.currentSlice = null;
         this.currentPlanText = null;
+        this.sliceSkippable = false;
         if (!sliceResult.skipped) {
           groupCompleted++;
           this.hud.update({ completedSlices: this.slicesCompleted, groupCompleted });

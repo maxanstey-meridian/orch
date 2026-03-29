@@ -23,7 +23,7 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   ...overrides,
 });
 
-const defaultResult: AgentResult = {
+export const defaultResult: AgentResult = {
   exitCode: 0,
   assistantText: "",
   resultText: "",

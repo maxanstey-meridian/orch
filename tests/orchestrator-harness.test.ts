@@ -7,7 +7,7 @@ import { saveState } from "../src/state/state.js";
 import { isCleanReview } from "../src/cli/review-check.js";
 import { measureDiff } from "../src/cli/review-threshold.js";
 import { printSliceIntro } from "../src/ui/display.js";
-import { createTestOrch, fakeAgent } from "./orchestrator-harness.js";
+import { createTestOrch, fakeAgent, defaultResult } from "./orchestrator-harness.js";
 
 vi.mock("../src/ui/display.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/ui/display.js")>();
@@ -106,7 +106,6 @@ const testSlice = {
 
 describe("regression guards", () => {
   // REGRESSION GUARD — do not weaken or delete without replacing with equivalent coverage
-  // TODO: sliceSkippable is never set to true in the Orchestrator — this is a live bug
   it("S key — sliceSkippable is true during slice execution", async () => {
     const { orch, pressKey, hud } = await createTestOrch();
     orch.sliceSkippable = true;
@@ -175,6 +174,64 @@ describe("regression guards", () => {
     log.mockClear();
     pressKey("p");
     expect(log).not.toHaveBeenCalled();
+  });
+
+  // REGRESSION GUARD — do not weaken or delete without replacing with equivalent coverage
+  it("sliceSkippable is true while planThenExecute runs", async () => {
+    let captured: boolean | undefined;
+    let orchRef: Awaited<ReturnType<typeof createTestOrch>>["orch"];
+    const plan = fakeAgent();
+    vi.mocked(plan.send).mockImplementation(() => {
+      captured = orchRef.sliceSkippable;
+      return Promise.resolve(defaultResult);
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(plan);
+
+    const { orch } = await createTestOrch({ noInteraction: true });
+    orchRef = orch;
+    const groups = [{ name: "G", slices: [testSlice] }];
+    await orch.run(groups, 0);
+
+    expect(captured).toBe(true);
+  });
+
+  // REGRESSION GUARD — do not weaken or delete without replacing with equivalent coverage
+  it("sliceSkippable resets to false after a skipped slice", async () => {
+    const { orch } = await createTestOrch({ noInteraction: true });
+    orch.sliceSkipFlag = true;
+
+    const groups = [{ name: "G", slices: [testSlice] }];
+    await orch.run(groups, 0);
+
+    expect(orch.sliceSkippable).toBe(false);
+  });
+
+  // REGRESSION GUARD — do not weaken or delete without replacing with equivalent coverage
+  it("sliceSkippable resets to false after normal slice completion", async () => {
+    const { orch } = await createTestOrch({ noInteraction: true });
+
+    const groups = [{ name: "G", slices: [testSlice] }];
+    await orch.run(groups, 0);
+
+    expect(orch.sliceSkippable).toBe(false);
+  });
+
+  // REGRESSION GUARD — do not weaken or delete without replacing with equivalent coverage
+  it("pressing S during slice execution toggles sliceSkipFlag via run()", async () => {
+    let pressKeyRef: ((k: string) => void) | undefined;
+    const plan = fakeAgent();
+    vi.mocked(plan.send).mockImplementation(() => {
+      pressKeyRef!("s");
+      return Promise.resolve(defaultResult);
+    });
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(plan);
+
+    const { orch, pressKey, hud } = await createTestOrch({ noInteraction: true });
+    pressKeyRef = pressKey;
+    const groups = [{ name: "G", slices: [testSlice] }];
+    await orch.run(groups, 0);
+
+    expect(hud.setSkipping).toHaveBeenCalledWith(true);
   });
 
   // REGRESSION GUARD — do not weaken or delete without replacing with equivalent coverage
