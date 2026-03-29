@@ -1,6 +1,7 @@
-import type { AgentProcess, AgentResult, AgentStyle } from "./agent/agent.js";
+import type { AgentProcess } from "./agent/agent.js";
+import type { AgentResult, AgentStyle } from "./domain/agent-types.js";
 import type { Hud, WriteFn } from "./ui/hud.js";
-import type { OrchestratorState } from "./state/state.js";
+import type { OrchestratorState } from "./domain/state.js";
 import {
   a,
   ts,
@@ -16,7 +17,7 @@ import {
   type LogFn,
 } from "./ui/display.js";
 import { shouldReview, measureDiff } from "./cli/review-threshold.js";
-import type { Group, Slice } from "./plan/plan-parser.js";
+import type { Group, Slice } from "./domain/plan.js";
 import { parseVerifyResult } from "./cli/verify.js";
 import {
   buildCommitSweepPrompt,
@@ -43,25 +44,8 @@ import {
   buildRulesReminder,
 } from "./agent/agent-factory.js";
 
-export type OrchestratorConfig = {
-  readonly cwd: string;
-  readonly planPath: string;
-  readonly planContent: string;
-  readonly brief: string;
-  readonly noInteraction: boolean;
-  readonly auto: boolean;
-  readonly reviewThreshold: number;
-  readonly maxReviewCycles: number;
-  readonly stateFile: string;
-  readonly tddSkill: string | null;
-  readonly reviewSkill: string | null;
-  readonly verifySkill: string | null;
-  readonly gapDisabled: boolean;
-  readonly planDisabled: boolean;
-  readonly maxReplans: number;
-  readonly tddRules?: string;
-  readonly reviewRules?: string;
-};
+export type { OrchestratorConfig } from "./domain/config.js";
+import type { OrchestratorConfig } from "./domain/config.js";
 
 type PlanThenExecuteResult = {
   readonly tddResult: AgentResult;

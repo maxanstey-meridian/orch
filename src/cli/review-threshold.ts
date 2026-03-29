@@ -40,4 +40,4 @@ export const measureDiff = async (cwd: string, since: string): Promise<DiffStats
   }
 };
 
-export const shouldReview = (stats: DiffStats, threshold = 30): boolean => stats.total >= threshold;
+export { shouldReview } from "../domain/review.js";

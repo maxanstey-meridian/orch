@@ -2,6 +2,9 @@ import { readFile, writeFile, rm } from "fs/promises";
 import { join } from "path";
 import { z } from "zod";
 
+export type { OrchestratorState } from "../domain/state.js";
+import type { OrchestratorState } from "../domain/state.js";
+
 const stateSchema = z
   .object({
     lastCompletedSlice: z.number().int().nonnegative().optional(),
@@ -19,8 +22,6 @@ const stateSchema = z
       .optional(),
   })
   .passthrough();
-
-export type OrchestratorState = Readonly<z.infer<typeof stateSchema>>;
 
 export const loadState = async (filePath: string): Promise<OrchestratorState> => {
   let raw: string;

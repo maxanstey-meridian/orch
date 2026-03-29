@@ -3,20 +3,8 @@ import { randomUUID } from "crypto";
 import { Readable } from "stream";
 import { detectQuestion } from "./question-detector.js";
 
-export type AgentStyle = {
-  readonly label: string;
-  readonly color: string;
-  readonly badge: string;
-};
-
-export type AgentResult = {
-  readonly exitCode: number;
-  readonly assistantText: string;
-  readonly resultText: string;
-  readonly needsInput: boolean;
-  readonly sessionId: string;
-  readonly planText?: string;
-};
+export type { AgentStyle, AgentResult } from "../domain/agent-types.js";
+import type { AgentStyle, AgentResult } from "../domain/agent-types.js";
 
 type ToolUseBlock = {
   readonly type: "tool_use";

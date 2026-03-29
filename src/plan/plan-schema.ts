@@ -1,5 +1,8 @@
 import { z } from "zod";
-import type { Group, Slice } from "./plan-parser.js";
+import type { Group, Slice } from "../domain/plan.js";
+import { buildContent } from "../domain/plan.js";
+
+export type { FileAction } from "../domain/plan.js";
 
 export const FileActionSchema = z.object({
   path: z.string().min(1),
@@ -39,16 +42,9 @@ export const PlanSchema = z
     { message: "Slice numbers must be unique across all groups" },
   );
 
-export type FileAction = z.infer<typeof FileActionSchema>;
 export type PlanSliceJson = z.infer<typeof PlanSliceSchema>;
 export type PlanGroupJson = z.infer<typeof PlanGroupSchema>;
 export type PlanJson = z.infer<typeof PlanSchema>;
-
-const formatFiles = (files: FileAction[]): string =>
-  files.map((f) => `\`${f.path}\` (${f.action})`).join(", ");
-
-const buildContent = (s: PlanSliceJson): string =>
-  `### Slice ${s.number}: ${s.title}\n\n**Why:** ${s.why}\n\n**Files:** ${formatFiles(s.files)}\n\n${s.details}\n\n**Tests:** ${s.tests}`;
 
 export const parsePlanJson = (json: string, source = "<json>"): readonly Group[] => {
   let raw: unknown;
