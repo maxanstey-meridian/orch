@@ -649,6 +649,42 @@ describe("setupKeyboardHandlers", () => {
   });
 });
 
+describe("quit and Ctrl+C", () => {
+  it("Ctrl+C calls cleanup and exits with 130", async () => {
+    const { orch, hud, pressKey } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    pressKey("\x03");
+    expect(hud.teardown).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(130);
+    exitSpy.mockRestore();
+  });
+
+  it("Q during active slice still exits cleanly", async () => {
+    const { orch, hud, pressKey } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    orch.currentSlice = { number: 1, title: "Active", content: "body", why: "", files: [], details: "", tests: "" };
+    orch.interruptTarget = fakeAgent();
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    pressKey("q");
+    expect(hud.teardown).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(130);
+    exitSpy.mockRestore();
+  });
+
+  it("Q between slices exits cleanly", async () => {
+    const { orch, hud, pressKey } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    expect(orch.currentSlice).toBeNull();
+    expect(orch.interruptTarget).toBeNull();
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    pressKey("q");
+    expect(hud.teardown).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(130);
+    exitSpy.mockRestore();
+  });
+});
+
 describe("onInterruptSubmit", () => {
   it("guide mode injects text into interruptTarget", async () => {
     const { orch, submitInterrupt } = await makeOrch();
@@ -748,6 +784,19 @@ describe("cleanup", () => {
     expect(hud.teardown).toHaveBeenCalled();
     expect(tdd.kill).toHaveBeenCalled();
     expect(review.kill).toHaveBeenCalled();
+  });
+
+  it("cleanup kills verifyAgent when present", async () => {
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    const verify = fakeAgent();
+    const { orch, hud } = await makeOrch({ tddAgent: tdd, reviewAgent: review });
+    orch.verifyAgent = verify;
+    orch.cleanup();
+    expect(hud.teardown).toHaveBeenCalled();
+    expect(tdd.kill).toHaveBeenCalled();
+    expect(review.kill).toHaveBeenCalled();
+    expect(verify.kill).toHaveBeenCalled();
   });
 });
 
