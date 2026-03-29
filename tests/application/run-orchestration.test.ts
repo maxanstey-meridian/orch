@@ -632,6 +632,288 @@ describe("RunOrchestration", () => {
     });
   });
 
+  describe("Slice 14: inter-group transitions", () => {
+    it("calls gate.confirmNextGroup between groups, respawns agents", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        auto: false,
+        noInteraction: false,
+      });
+      const { uc, spawner, gate } = makeUc(ports, config);
+      gate.confirmNextGroup.mockResolvedValue(true);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn.mockReturnValue(tddAgent);
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+        { name: "G2", slices: [makeSlice({ number: 2 })] },
+      ];
+      await uc.execute(groups);
+
+      expect(gate.confirmNextGroup).toHaveBeenCalledOnce();
+      const label = gate.confirmNextGroup.mock.calls[0][0] as string;
+      expect(label).toContain("G2");
+      // Agents should have been respawned between groups
+      const tddSpawns = spawner.spawn.mock.calls.filter((c: any[]) => c[0] === "tdd");
+      expect(tddSpawns.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("stops when gate.confirmNextGroup returns false", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        auto: false,
+        noInteraction: false,
+      });
+      const { uc, spawner, gate } = makeUc(ports, config);
+      gate.confirmNextGroup.mockResolvedValue(false);
+      spawner.spawn.mockReturnValue(makeAgent());
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+        { name: "G2", slices: [makeSlice({ number: 2 })] },
+      ];
+      await uc.execute(groups);
+
+      // Only first group's TDD send happened
+      // Second group slice should not have been processed
+      expect(gate.confirmNextGroup).toHaveBeenCalledOnce();
+      // finalPasses should not run since we returned early
+      expect(ports.prompts.finalPasses).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Slice 14: onToolUse wiring", () => {
+    it("gate.setActivity called via onToolUse callback in gap sends", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ gapDisabled: false });
+      const { uc, git, spawner, gate } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(true);
+
+      // Capture the onToolUse callback and invoke it
+      const gapAgent = makeAgent({ assistantText: "NO_GAPS_FOUND" });
+      (gapAgent.send as ReturnType<typeof vi.fn>).mockImplementation(
+        async (_prompt: string, _onText?: unknown, onToolUse?: (s: string) => void) => {
+          if (onToolUse) onToolUse("running tests");
+          return makeResult({ assistantText: "NO_GAPS_FOUND" });
+        },
+      );
+      spawner.spawn.mockReturnValue(gapAgent);
+      uc.tddAgent = makeAgent();
+
+      await uc.gapAnalysis(
+        { name: "G1", slices: [makeSlice()] },
+        "sha0",
+      );
+
+      expect(gate.setActivity).toHaveBeenCalledWith("running tests");
+    });
+  });
+
+  describe("Slice 14: execute wiring", () => {
+    it("calls gapAnalysis after slices, before commit sweep", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: false,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, git, prompts } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(true);
+
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const gapAgent = makeAgent({ assistantText: "NO_GAPS_FOUND" });
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)     // tdd
+        .mockReturnValueOnce(reviewAgent)   // review
+        .mockReturnValue(gapAgent);         // gap (and others)
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      expect(spawner.spawn).toHaveBeenCalledWith("gap", expect.anything());
+      expect(prompts.gap).toHaveBeenCalled();
+      expect(gapAgent.kill).toHaveBeenCalled();
+    });
+
+    it("calls finalPasses after all groups complete", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, git, prompts } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(true);
+      prompts.finalPasses.mockReturnValue([
+        { name: "Pass1", prompt: "p1" },
+      ]);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const finalAgent = makeAgent({ assistantText: "NO_ISSUES_FOUND" });
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent)
+        .mockReturnValue(finalAgent);
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      expect(prompts.finalPasses).toHaveBeenCalled();
+      expect(spawner.spawn).toHaveBeenCalledWith("final", expect.anything());
+    });
+  });
+
+  describe("Slice 14: finalPasses", () => {
+    it("skips when no changes since runBaseSha", async () => {
+      const ports = makePorts();
+      const { uc, git, prompts } = makeUc(ports);
+      git.hasChanges.mockResolvedValue(false);
+      uc.tddAgent = makeAgent();
+
+      await uc.finalPasses("sha0");
+
+      expect(prompts.finalPasses).not.toHaveBeenCalled();
+    });
+
+    it("spawns fresh agent per pass, skips fix when clean", async () => {
+      const ports = makePorts();
+      const { uc, git, spawner, prompts } = makeUc(ports);
+      git.hasChanges.mockResolvedValue(true);
+      prompts.finalPasses.mockReturnValue([
+        { name: "Type fidelity", prompt: "check types" },
+      ]);
+      const finalAgent = makeAgent({ assistantText: "NO_ISSUES_FOUND" });
+      spawner.spawn.mockReturnValue(finalAgent);
+      uc.tddAgent = makeAgent();
+
+      await uc.finalPasses("sha0");
+
+      expect(spawner.spawn).toHaveBeenCalledWith("final", expect.anything());
+      expect(finalAgent.send).toHaveBeenCalled();
+      expect(finalAgent.kill).toHaveBeenCalled();
+      expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+
+    it("sends findings to TDD, runs review-fix", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ reviewSkill: "test" });
+      const { uc, git, spawner, prompts } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(true);
+      git.captureRef.mockResolvedValue("sha1");
+      prompts.finalPasses.mockReturnValue([
+        { name: "Type check", prompt: "check" },
+      ]);
+      const finalAgent = makeAgent({ assistantText: "Found: any cast in foo.ts" });
+      spawner.spawn.mockReturnValue(finalAgent);
+      const tddAgent = makeAgent();
+      uc.tddAgent = tddAgent;
+      const reviewAgent = makeAgent({ assistantText: "REVIEW_CLEAN" });
+      uc.reviewAgent = reviewAgent;
+
+      await uc.finalPasses("sha0");
+
+      expect(prompts.tdd).toHaveBeenCalled();
+      const tddCallArg = prompts.tdd.mock.calls[0][1] as string;
+      expect(tddCallArg).toContain("Found: any cast in foo.ts");
+      expect(tddAgent.send).toHaveBeenCalled();
+      expect(reviewAgent.send).toHaveBeenCalled();
+    });
+  });
+
+  describe("Slice 14: gapAnalysis", () => {
+    const makeGroup = (): Group => ({
+      name: "TestGroup",
+      slices: [makeSlice({ number: 1 }), makeSlice({ number: 2 })],
+    });
+
+    it("skips when gapDisabled is true", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ gapDisabled: true });
+      const { uc, spawner } = makeUc(ports, config);
+      uc.tddAgent = makeAgent();
+
+      await uc.gapAnalysis(makeGroup(), "sha0");
+
+      expect(spawner.spawn).not.toHaveBeenCalledWith("gap", expect.anything());
+    });
+
+    it("skips when no changes since groupBaseSha", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ gapDisabled: false });
+      const { uc, git, spawner } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(false);
+      uc.tddAgent = makeAgent();
+
+      await uc.gapAnalysis(makeGroup(), "sha0");
+
+      expect(spawner.spawn).not.toHaveBeenCalledWith("gap", expect.anything());
+    });
+
+    it("spawns gap agent, detects NO_GAPS_FOUND, no fix cycle", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ gapDisabled: false });
+      const { uc, git, spawner, prompts } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(true);
+      const gapAgent = makeAgent({ assistantText: "Analysis complete. NO_GAPS_FOUND" });
+      spawner.spawn.mockReturnValue(gapAgent);
+      uc.tddAgent = makeAgent();
+
+      await uc.gapAnalysis(makeGroup(), "sha0");
+
+      expect(spawner.spawn).toHaveBeenCalledWith("gap", expect.anything());
+      expect(prompts.gap).toHaveBeenCalled();
+      expect(gapAgent.kill).toHaveBeenCalled();
+      expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+
+    it("sends findings to TDD, runs review-fix cycle", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ gapDisabled: false, reviewSkill: "test" });
+      const { uc, git, spawner, prompts } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(true);
+      git.captureRef.mockResolvedValue("sha1");
+      const gapAgent = makeAgent({ assistantText: "Missing tests for X" });
+      spawner.spawn.mockReturnValue(gapAgent);
+      const tddAgent = makeAgent();
+      uc.tddAgent = tddAgent;
+      const reviewAgent = makeAgent({ assistantText: "REVIEW_CLEAN" });
+      uc.reviewAgent = reviewAgent;
+
+      await uc.gapAnalysis(makeGroup(), "sha0");
+
+      expect(prompts.tdd).toHaveBeenCalled();
+      const tddCallArg = prompts.tdd.mock.calls[0][1] as string;
+      expect(tddCallArg).toContain("Missing tests for X");
+      expect(tddAgent.send).toHaveBeenCalled();
+      expect(reviewAgent.send).toHaveBeenCalled();
+      expect(gapAgent.kill).toHaveBeenCalled();
+    });
+  });
+
+  describe("Slice 14: onToolUse", () => {
+    it("calls gate.setActivity", () => {
+      const { uc, gate } = makeUc();
+      uc.onToolUse("running tests");
+      expect(gate.setActivity).toHaveBeenCalledWith("running tests");
+    });
+  });
+
   describe("Cycles 7-8: commitSweep", () => {
     it("does nothing when working tree is clean", async () => {
       const { uc, git } = makeUc();

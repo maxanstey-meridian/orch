@@ -220,8 +220,8 @@ export class RunOrchestration {
         }
       }
 
-      // Gap analysis — stubbed for slice 14
-      // await this.gapAnalysis(group, groupBaseSha);
+      // Gap analysis
+      await this.gapAnalysis(group, groupBaseSha);
 
       // Commit sweep
       await this.commitSweep(group.name);
@@ -243,8 +243,8 @@ export class RunOrchestration {
       }
     }
 
-    // Final passes — stubbed for slice 14
-    // await this.finalPasses(runBaseSha);
+    // Final passes
+    await this.finalPasses(runBaseSha);
   }
 
   async planThenExecute(
@@ -562,6 +562,104 @@ export class RunOrchestration {
     }
 
     return true;
+  }
+
+  async finalPasses(runBaseSha: string): Promise<void> {
+    if (!(await this.git.hasChanges(runBaseSha))) return;
+
+    const passes = this.prompts.finalPasses(runBaseSha);
+
+    for (const pass of passes) {
+      const finalAgent = this.agents.spawn("final", { cwd: this.config.cwd });
+      const finalPrompt = this.prompts.withBrief(pass.prompt);
+      const finalResult = await this.withRetry(
+        () => finalAgent.send(finalPrompt, undefined, (s) => this.onToolUse(s)),
+        finalAgent,
+        "final-pass",
+      );
+      finalAgent.kill();
+
+      if (finalResult.exitCode !== 0) continue;
+      const findings = finalResult.assistantText ?? "";
+      if (!findings || findings.includes("NO_ISSUES_FOUND")) continue;
+
+      // Fix cycle
+      const preFixSha = await this.git.captureRef();
+      const fixPrompt = this.prompts.tdd(
+        this.config.planContent,
+        `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
+      );
+      const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
+      const fixResult = await this.withRetry(
+        () => this.tddAgent!.send(actualFixPrompt, undefined, (s) => this.onToolUse(s)),
+        this.tddAgent!,
+        "final-fix",
+      );
+      this.tddIsFirst = false;
+      await this.checkCredit(fixResult, this.tddAgent!);
+
+      if (fixResult.needsInput) {
+        await this.followUp(fixResult, this.tddAgent!);
+      }
+
+      if (await this.git.hasChanges(preFixSha)) {
+        if (this.config.reviewSkill !== null) {
+          await this.reviewFix(this.config.planContent, preFixSha);
+        }
+      }
+    }
+  }
+
+  async gapAnalysis(group: Group, groupBaseSha: string): Promise<void> {
+    if (!(await this.git.hasChanges(groupBaseSha))) return;
+    if (this.config.gapDisabled) return;
+
+    const groupContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
+    const gapAgent = this.agents.spawn("gap", { cwd: this.config.cwd });
+    const gapPrompt = this.prompts.withBrief(this.prompts.gap(groupContent, groupBaseSha));
+    const gapResult = await this.withRetry(
+      () => gapAgent.send(gapPrompt, undefined, (s) => this.onToolUse(s)),
+      gapAgent,
+      "gap",
+    );
+
+    const gapText = gapResult.assistantText ?? "";
+
+    if (gapResult.exitCode !== 0 || gapText.includes("NO_GAPS_FOUND")) {
+      gapAgent.kill();
+      return;
+    }
+
+    // Fix cycle
+    const gapBaseSha = await this.git.captureRef();
+    const fixPrompt = this.prompts.tdd(
+      groupContent,
+      `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
+    );
+    const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
+    const fixResult = await this.withRetry(
+      () => this.tddAgent!.send(actualFixPrompt, undefined, (s) => this.onToolUse(s)),
+      this.tddAgent!,
+      "gap-fix",
+    );
+    this.tddIsFirst = false;
+    await this.checkCredit(fixResult, this.tddAgent!);
+
+    if (fixResult.needsInput) {
+      await this.followUp(fixResult, this.tddAgent!);
+    }
+
+    if (await this.git.hasChanges(gapBaseSha)) {
+      if (this.config.reviewSkill !== null) {
+        await this.reviewFix(groupContent, gapBaseSha);
+      }
+    }
+
+    gapAgent.kill();
+  }
+
+  onToolUse(summary: string): void {
+    this.gate.setActivity(summary);
   }
 
   async commitSweep(label: string): Promise<void> {
