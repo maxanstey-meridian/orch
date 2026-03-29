@@ -43,7 +43,7 @@ export class InkOperatorGate extends OperatorGate {
     super();
   }
 
-  async confirmPlan(planPreview: string): Promise<GateDecision> {
+  async confirmPlan(_planPreview: string): Promise<GateDecision> {
     const answer = await this.hud.askUser("Accept plan? (y)es / (e)dit / (r)eplan: ");
     const choice = answer.trim().toLowerCase();
     if (choice === "" || choice.startsWith("y")) {

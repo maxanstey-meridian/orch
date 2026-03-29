@@ -67,6 +67,18 @@ describe("DefaultPromptBuilder", () => {
       expect(result).toContain("Execute this plan for Slice 3:");
     });
 
+    it("firstSlice=false, with guidance: includes guidance, no plan context, no brief", () => {
+      const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+      const result = builder.tddExecute("the plan", 5, false, "check types");
+      expect(result).toContain("Operator guidance: check types");
+      expect(result).toContain("Execute this plan for Slice 5:");
+      expect(result).toContain("the plan");
+      expect(result).not.toContain("## Full Plan Context");
+      expect(result).not.toContain(PLAN_CONTENT);
+      // No brief wrapping on non-first slice
+      expect(result).not.toContain(BRIEF);
+    });
+
     it("firstSlice=false, no guidance: no plan context, no brief", () => {
       const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
       const result = builder.tddExecute("the plan", 5, false);

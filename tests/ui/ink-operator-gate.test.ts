@@ -80,6 +80,13 @@ describe("InkOperatorGate", () => {
       expect(result).toEqual({ kind: "reject" });
     });
 
+    it("unrecognized input returns accept (fallthrough)", async () => {
+      const hud = createMockHud({ askUser: vi.fn().mockResolvedValueOnce("xyz") });
+      const gate = new InkOperatorGate(hud);
+      const result = await gate.confirmPlan("plan text");
+      expect(result).toEqual({ kind: "accept" });
+    });
+
     it("'e' returns edit with guidance from second prompt", async () => {
       const hud = createMockHud({
         askUser: vi.fn()
@@ -120,6 +127,23 @@ describe("InkOperatorGate", () => {
       const gate = new InkOperatorGate(hud);
       const result = await gate.verifyFailed(3, "test summary");
       expect(result).toEqual({ kind: "stop" });
+    });
+
+    it("unrecognized input returns retry (fallthrough)", async () => {
+      const hud = createMockHud({ askUser: vi.fn().mockResolvedValueOnce("x") });
+      const gate = new InkOperatorGate(hud);
+      const result = await gate.verifyFailed(3, "test summary");
+      expect(result).toEqual({ kind: "retry" });
+    });
+
+    it("prompt includes slice number and summary", async () => {
+      const hud = createMockHud({ askUser: vi.fn().mockResolvedValueOnce("r") });
+      const gate = new InkOperatorGate(hud);
+      await gate.verifyFailed(7, "3 tests failed\nTypeError in foo.ts");
+      const prompt = vi.mocked(hud.askUser).mock.calls[0][0];
+      expect(prompt).toContain("7");
+      expect(prompt).toContain("3 tests failed");
+      expect(prompt).toContain("TypeError in foo.ts");
     });
   });
 
@@ -178,6 +202,28 @@ describe("InkOperatorGate", () => {
       const submitHandler = vi.mocked(hud.onInterruptSubmit).mock.calls[0][0];
       submitHandler("fix the tests", "guide");
       expect(guideMessages).toEqual(["fix the tests"]);
+    });
+
+    it("unrecognized key does not call hud.startPrompt", () => {
+      const hud = createMockHud();
+      const gate = new InkOperatorGate(hud);
+      gate.registerInterrupts();
+
+      const keyHandler = vi.mocked(hud.onKey).mock.calls[0][0];
+      keyHandler("x");
+      keyHandler("z");
+      expect(hud.startPrompt).not.toHaveBeenCalled();
+    });
+
+    it("submit before onGuide/onInterrupt registered does not throw", () => {
+      const hud = createMockHud();
+      const gate = new InkOperatorGate(hud);
+      gate.registerInterrupts();
+      // Don't register any callbacks via handler.onGuide / handler.onInterrupt
+
+      const submitHandler = vi.mocked(hud.onInterruptSubmit).mock.calls[0][0];
+      expect(() => submitHandler("some text", "guide")).not.toThrow();
+      expect(() => submitHandler("some text", "interrupt")).not.toThrow();
     });
 
     it("dispatches interrupt text to onInterrupt callback", () => {
