@@ -651,23 +651,31 @@ describe("setupKeyboardHandlers", () => {
 
 describe("quit and Ctrl+C", () => {
   it("Ctrl+C calls cleanup and exits with 130", async () => {
-    const { orch, hud, pressKey } = await makeOrch();
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    const { orch, hud, pressKey } = await makeOrch({ tddAgent: tdd, reviewAgent: review });
     orch.setupKeyboardHandlers();
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
     pressKey("\x03");
     expect(hud.teardown).toHaveBeenCalled();
+    expect(tdd.kill).toHaveBeenCalled();
+    expect(review.kill).toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(130);
     exitSpy.mockRestore();
   });
 
   it("Q during active slice still exits cleanly", async () => {
-    const { orch, hud, pressKey } = await makeOrch();
+    const tdd = fakeAgent();
+    const review = fakeAgent();
+    const { orch, hud, pressKey } = await makeOrch({ tddAgent: tdd, reviewAgent: review });
     orch.setupKeyboardHandlers();
     orch.currentSlice = { number: 1, title: "Active", content: "body", why: "", files: [], details: "", tests: "" };
     orch.interruptTarget = fakeAgent();
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
     pressKey("q");
     expect(hud.teardown).toHaveBeenCalled();
+    expect(tdd.kill).toHaveBeenCalled();
+    expect(review.kill).toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(130);
     exitSpy.mockRestore();
   });
@@ -703,6 +711,15 @@ describe("onInterruptSubmit", () => {
     submitInterrupt("rewrite approach", "interrupt");
     expect(orch.hardInterruptPending).toBe("rewrite approach");
     expect(target.kill).toHaveBeenCalled();
+  });
+
+  it("submit with no interruptTarget does nothing", async () => {
+    const { orch, submitInterrupt } = await makeOrch();
+    orch.setupKeyboardHandlers();
+    expect(orch.interruptTarget).toBeNull();
+    submitInterrupt("should be ignored", "guide");
+    submitInterrupt("also ignored", "interrupt");
+    expect(orch.hardInterruptPending).toBeNull();
   });
 });
 
@@ -772,6 +789,14 @@ describe("guide and interrupt during agent execution", () => {
     orch.setupKeyboardHandlers();
     pressKey("i");
     expect(hud.startPrompt).not.toHaveBeenCalled();
+  });
+
+  it("withInterrupt resets interruptTarget on rejection", async () => {
+    const { orch } = await makeOrch();
+    const target = fakeAgent();
+    const err = new Error("boom");
+    await expect(orch.withInterrupt(target, () => Promise.reject(err))).rejects.toThrow("boom");
+    expect(orch.interruptTarget).toBeNull();
   });
 });
 
