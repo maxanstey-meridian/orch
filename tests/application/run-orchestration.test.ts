@@ -1,0 +1,597 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { AgentResult } from "../../src/domain/agent-types.js";
+import type { AgentHandle } from "../../src/application/ports/agent-spawner.port.js";
+import type { OrchestratorConfig } from "../../src/domain/config.js";
+import type { Slice, Group } from "../../src/domain/plan.js";
+import { RunOrchestration } from "../../src/application/run-orchestration.js";
+
+// ── Helpers ──
+
+const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig => ({
+  cwd: "/tmp/test",
+  planPath: "/tmp/plan.json",
+  planContent: "plan content",
+  brief: "brief",
+  noInteraction: false,
+  auto: false,
+  reviewThreshold: 0,
+  maxReviewCycles: 3,
+  stateFile: "/tmp/state.json",
+  tddSkill: "test",
+  reviewSkill: "test",
+  verifySkill: "test",
+  gapDisabled: true,
+  planDisabled: false,
+  maxReplans: 3,
+  ...overrides,
+});
+
+const makeResult = (overrides?: Partial<AgentResult>): AgentResult => ({
+  exitCode: 0,
+  assistantText: "",
+  resultText: "",
+  needsInput: false,
+  sessionId: "test-session",
+  ...overrides,
+});
+
+const makeAgent = (resultOverrides?: Partial<AgentResult>): AgentHandle => ({
+  sessionId: "agent-sess",
+  style: { label: "Test", color: "#fff", badge: "[T]" },
+  alive: true,
+  send: vi.fn().mockResolvedValue(makeResult(resultOverrides)),
+  sendQuiet: vi.fn().mockResolvedValue("quiet response"),
+  inject: vi.fn(),
+  kill: vi.fn(),
+});
+
+const makeSlice = (overrides?: Partial<Slice>): Slice => ({
+  number: 1,
+  title: "Test Slice",
+  content: "slice content",
+  why: "test why",
+  files: [{ path: "src/test.ts", action: "new" }],
+  details: "test details",
+  tests: "test tests",
+  ...overrides,
+});
+
+const makePorts = () => {
+  const spawner = {
+    spawn: vi.fn().mockReturnValue(makeAgent()),
+  };
+  const persistence = {
+    load: vi.fn().mockResolvedValue({}),
+    save: vi.fn().mockResolvedValue(undefined),
+    clear: vi.fn().mockResolvedValue(undefined),
+  };
+  const gate = {
+    confirmPlan: vi.fn().mockResolvedValue({ kind: "accept" as const }),
+    verifyFailed: vi.fn().mockResolvedValue({ kind: "retry" as const }),
+    askUser: vi.fn().mockResolvedValue(""),
+    confirmNextGroup: vi.fn().mockResolvedValue(true),
+    registerInterrupts: vi.fn().mockReturnValue({
+      onGuide: vi.fn(),
+      onInterrupt: vi.fn(),
+    }),
+    updateProgress: vi.fn(),
+    setActivity: vi.fn(),
+    teardown: vi.fn(),
+  };
+  const git = {
+    captureRef: vi.fn().mockResolvedValue("sha0"),
+    hasChanges: vi.fn().mockResolvedValue(false),
+    hasDirtyTree: vi.fn().mockResolvedValue(false),
+    getStatus: vi.fn().mockResolvedValue(""),
+    stashBackup: vi.fn().mockResolvedValue(false),
+    measureDiff: vi.fn().mockResolvedValue({ added: 0, removed: 0, total: 0 }),
+  };
+  const prompts = {
+    plan: vi.fn().mockReturnValue("plan prompt"),
+    tdd: vi.fn().mockReturnValue("tdd prompt"),
+    tddExecute: vi.fn().mockReturnValue("tdd execute prompt"),
+    review: vi.fn().mockReturnValue("review prompt"),
+    completeness: vi.fn().mockReturnValue("completeness prompt"),
+    gap: vi.fn().mockReturnValue("gap prompt"),
+    commitSweep: vi.fn().mockReturnValue("commit sweep prompt"),
+    finalPasses: vi.fn().mockReturnValue([]),
+    withBrief: vi.fn().mockImplementation((p: string) => `brief: ${p}`),
+    rulesReminder: vi.fn().mockReturnValue("rules reminder"),
+  };
+  return { spawner, persistence, gate, git, prompts };
+};
+
+const makeUc = (
+  ports = makePorts(),
+  config = makeConfig(),
+) => {
+  const uc = new RunOrchestration(
+    ports.spawner as any,
+    ports.persistence as any,
+    ports.gate as any,
+    ports.git as any,
+    ports.prompts as any,
+    config,
+  );
+  uc.retryDelayMs = 0;
+  return { uc, ...ports };
+};
+
+// ── Tests ──
+
+describe("RunOrchestration", () => {
+  describe("Cycle 1: scaffold", () => {
+    it("resolves immediately for empty group list", async () => {
+      const { uc } = makeUc();
+      await expect(uc.execute([])).resolves.toBeUndefined();
+    });
+  });
+
+  describe("Cycles 2-4: withRetry", () => {
+    it("retries on transient API error then succeeds", async () => {
+      const { uc, gate } = makeUc();
+      const agent = makeAgent();
+      const failResult = makeResult({ exitCode: 1, resultText: "529 overloaded" });
+      const okResult = makeResult({ assistantText: "done" });
+      const fn = vi.fn().mockResolvedValueOnce(failResult).mockResolvedValueOnce(okResult);
+
+      const result = await uc.withRetry(fn, agent, "test-label");
+
+      expect(fn).toHaveBeenCalledTimes(2);
+      expect(result).toBe(okResult);
+      expect(gate.setActivity).toHaveBeenCalled();
+    });
+
+    it("throws CreditExhaustedError on terminal API error", async () => {
+      const { uc, persistence } = makeUc();
+      const agent = makeAgent();
+      const failResult = makeResult({
+        exitCode: 1,
+        resultText: "credit exhausted limit exceeded",
+      });
+      const fn = vi.fn().mockResolvedValue(failResult);
+
+      await expect(uc.withRetry(fn, agent, "test-label")).rejects.toThrow("Terminal API error");
+      expect(persistence.save).toHaveBeenCalled();
+    });
+
+    it("returns result when no API error", async () => {
+      const { uc } = makeUc();
+      const agent = makeAgent();
+      const expected = makeResult({ assistantText: "done" });
+      const fn = vi.fn().mockResolvedValue(expected);
+
+      const result = await uc.withRetry(fn, agent, "test-label");
+
+      expect(fn).toHaveBeenCalledOnce();
+      expect(result).toBe(expected);
+    });
+  });
+
+  describe("Cycles 5-6: followUp", () => {
+    it("loops until agent stops requesting input", async () => {
+      const { uc, gate } = makeUc();
+      const finalResult = makeResult({ needsInput: false, assistantText: "done" });
+      const agent = makeAgent();
+      (agent.send as ReturnType<typeof vi.fn>).mockResolvedValue(finalResult);
+      gate.askUser.mockResolvedValue("user answer");
+
+      const firstResult = makeResult({ needsInput: true });
+      const result = await uc.followUp(firstResult, agent);
+
+      expect(gate.askUser).toHaveBeenCalledOnce();
+      expect(agent.send).toHaveBeenCalledOnce();
+      expect(result.needsInput).toBe(false);
+    });
+
+    it("sends autonomous message when user gives empty answer", async () => {
+      const { uc, gate } = makeUc();
+      const finalResult = makeResult({ needsInput: false });
+      const agent = makeAgent();
+      (agent.send as ReturnType<typeof vi.fn>).mockResolvedValue(finalResult);
+      gate.askUser.mockResolvedValue("");
+
+      const firstResult = makeResult({ needsInput: true });
+      await uc.followUp(firstResult, agent);
+
+      const sendCall = (agent.send as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+      expect(sendCall).toContain("proceed with your best judgement");
+    });
+  });
+
+  describe("Cycles 9-11: planThenExecute", () => {
+    it("sends slice directly to TDD when plan is disabled", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ planDisabled: true });
+      const { uc, prompts, spawner } = makeUc(ports, config);
+      uc.tddAgent = makeAgent();
+      prompts.tdd.mockReturnValue("tdd prompt");
+      prompts.withBrief.mockImplementation((p: string) => `brief: ${p}`);
+
+      const result = await uc.planThenExecute("slice content", 1);
+
+      expect(prompts.tdd).toHaveBeenCalledWith("slice content", undefined, 1);
+      expect(spawner.spawn).not.toHaveBeenCalledWith("plan", expect.anything());
+      expect(result.skipped).toBe(false);
+      expect(result.replan).toBeUndefined();
+    });
+
+    it("spawns plan agent, gates operator, executes on accept", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ planDisabled: false });
+      const { uc, spawner, gate, prompts } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const planAgent = makeAgent({ planText: "the plan" });
+      uc.tddAgent = tddAgent;
+
+      spawner.spawn.mockReturnValue(planAgent);
+      gate.confirmPlan.mockResolvedValue({ kind: "accept" as const });
+      prompts.tddExecute.mockReturnValue("exec prompt");
+
+      const result = await uc.planThenExecute("slice content", 1);
+
+      expect(spawner.spawn).toHaveBeenCalledWith("plan", expect.anything());
+      expect(gate.confirmPlan).toHaveBeenCalledWith("the plan");
+      expect(planAgent.kill).toHaveBeenCalled();
+      expect(tddAgent.send).toHaveBeenCalled();
+      expect(result.planText).toBe("the plan");
+      expect(result.skipped).toBe(false);
+    });
+
+    it("returns replan flag when operator rejects plan", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ planDisabled: false });
+      const { uc, spawner, gate } = makeUc(ports, config);
+      const planAgent = makeAgent({ planText: "the plan" });
+      uc.tddAgent = makeAgent();
+
+      spawner.spawn.mockReturnValue(planAgent);
+      gate.confirmPlan.mockResolvedValue({ kind: "reject" as const });
+
+      const result = await uc.planThenExecute("slice content", 1);
+
+      expect(result.replan).toBe(true);
+      expect(planAgent.kill).toHaveBeenCalled();
+      expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Cycles 25-26: respawn", () => {
+    it("respawnTdd kills old agent, spawns new, saves state", async () => {
+      const ports = makePorts();
+      const { uc, spawner, persistence } = makeUc(ports);
+      const oldAgent = makeAgent();
+      uc.tddAgent = oldAgent;
+      const newAgent = makeAgent({ sessionId: "new-tdd" });
+      spawner.spawn.mockReturnValue(newAgent);
+
+      await uc.respawnTdd();
+
+      expect(oldAgent.kill).toHaveBeenCalled();
+      expect(spawner.spawn).toHaveBeenCalledWith("tdd", expect.anything());
+      expect(persistence.save).toHaveBeenCalled();
+      expect(uc.tddAgent).toBe(newAgent);
+      expect(uc.tddIsFirst).toBe(true);
+    });
+
+    it("respawnBoth kills tdd + review + verify, spawns fresh pair", async () => {
+      const ports = makePorts();
+      const { uc, spawner, persistence } = makeUc(ports);
+      const oldTdd = makeAgent();
+      const oldReview = makeAgent();
+      const oldVerify = makeAgent();
+      uc.tddAgent = oldTdd;
+      uc.reviewAgent = oldReview;
+      uc.verifyAgent = oldVerify;
+
+      const newTdd = makeAgent({ sessionId: "new-tdd" });
+      const newReview = makeAgent({ sessionId: "new-review" });
+      spawner.spawn
+        .mockReturnValueOnce(newTdd)
+        .mockReturnValueOnce(newReview);
+
+      await uc.respawnBoth();
+
+      expect(oldTdd.kill).toHaveBeenCalled();
+      expect(oldReview.kill).toHaveBeenCalled();
+      expect(oldVerify.kill).toHaveBeenCalled();
+      expect(uc.verifyAgent).toBeNull();
+      expect(uc.tddAgent).toBe(newTdd);
+      expect(uc.reviewAgent).toBe(newReview);
+      expect(persistence.save).toHaveBeenCalled();
+      expect(uc.tddIsFirst).toBe(true);
+      expect(uc.reviewIsFirst).toBe(true);
+    });
+  });
+
+  describe("Cycles 21-24: execute", () => {
+    it("processes single slice end-to-end with plan disabled", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, persistence } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)   // tdd
+        .mockReturnValueOnce(reviewAgent); // review
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      // TDD agent was sent the slice
+      expect(tddAgent.send).toHaveBeenCalled();
+      // State was persisted
+      expect(persistence.save).toHaveBeenCalled();
+    });
+
+    it("skips slices already completed in persisted state", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      ports.persistence.load.mockResolvedValue({ lastCompletedSlice: 1 });
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent);
+
+      const groups: Group[] = [
+        {
+          name: "G1",
+          slices: [makeSlice({ number: 1 }), makeSlice({ number: 2 })],
+        },
+      ];
+      await uc.execute(groups);
+
+      // TDD send should only happen for slice 2, not slice 1
+      // The first send is the rules reminder (sendQuiet), then tdd prompt for slice 2
+      expect(tddAgent.send).toHaveBeenCalledTimes(1);
+    });
+
+    it("replans up to maxReplans then force-accepts", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: false,
+        gapDisabled: true,
+        maxReplans: 3,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, gate } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const planAgent = makeAgent({ planText: "the plan" });
+
+      let spawnCount = 0;
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd") return tddAgent;
+        if (role === "review") return reviewAgent;
+        return planAgent; // plan agent
+      });
+
+      // Reject first 3 times, then gate won't be called (force-accept)
+      gate.confirmPlan
+        .mockResolvedValueOnce({ kind: "reject" as const })
+        .mockResolvedValueOnce({ kind: "reject" as const })
+        .mockResolvedValueOnce({ kind: "reject" as const })
+        .mockResolvedValueOnce({ kind: "accept" as const });
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      // Plan agent spawned 4 times (3 rejects + 1 force-accept which skips gate)
+      const planSpawns = spawner.spawn.mock.calls.filter(
+        (c: any[]) => c[0] === "plan",
+      );
+      expect(planSpawns.length).toBe(4);
+      // Gate called only 3 times (4th is force-accept, skips gate)
+      expect(gate.confirmPlan).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  describe("Cycles 19-20: runSlice", () => {
+    it("skips verify/review when already implemented", async () => {
+      const ports = makePorts();
+      const { uc, git, persistence, spawner } = makeUc(ports);
+      // Same SHA = no changes
+      git.captureRef.mockResolvedValue("sha0");
+      uc.tddAgent = makeAgent();
+      uc.reviewAgent = makeAgent();
+
+      const tddResult = makeResult({ assistantText: "already implemented" });
+      const result = await uc.runSlice(makeSlice(), "sha0", tddResult, "sha0");
+
+      expect(result.skipped).toBe(false);
+      expect(persistence.save).toHaveBeenCalled();
+      // Verify agent should NOT have been spawned
+      expect(spawner.spawn).not.toHaveBeenCalledWith("verify", expect.anything());
+    });
+
+    it("runs verify, diff check, review, and summary for real implementation", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ verifySkill: "test", reviewSkill: "test", reviewThreshold: 0 });
+      const { uc, git, spawner, persistence } = makeUc(ports, config);
+      // Different SHA = real changes
+      git.captureRef.mockResolvedValue("sha1");
+      git.hasChanges.mockResolvedValue(true);
+      git.measureDiff.mockResolvedValue({ added: 30, removed: 20, total: 50 });
+
+      // Verify passes
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+      });
+      spawner.spawn.mockReturnValue(verifyAgent);
+
+      // Review clean
+      const reviewAgent = makeAgent({ assistantText: "REVIEW_CLEAN" });
+      uc.reviewAgent = reviewAgent;
+
+      const tddAgent = makeAgent();
+      uc.tddAgent = tddAgent;
+
+      const tddResult = makeResult({ assistantText: "implemented feature" });
+      const result = await uc.runSlice(makeSlice(), "sha0", tddResult, "sha0");
+
+      expect(result.skipped).toBe(false);
+      // Verify agent was used
+      expect(spawner.spawn).toHaveBeenCalledWith("verify", expect.anything());
+      // Review was run
+      expect(reviewAgent.send).toHaveBeenCalled();
+      // Summary was requested
+      expect(tddAgent.sendQuiet).toHaveBeenCalled();
+      // State was persisted
+      expect(persistence.save).toHaveBeenCalled();
+    });
+  });
+
+  describe("Cycles 17-18: reviewFix", () => {
+    it("exits after one cycle when review is clean", async () => {
+      const ports = makePorts();
+      const { uc, git } = makeUc(ports);
+      const reviewAgent = makeAgent({ assistantText: "REVIEW_CLEAN" });
+      uc.reviewAgent = reviewAgent;
+      uc.tddAgent = makeAgent();
+      git.hasChanges.mockResolvedValue(true);
+
+      await uc.reviewFix("content", "sha0");
+
+      expect(reviewAgent.send).toHaveBeenCalledOnce();
+      expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+
+    it("sends review findings to TDD and loops up to maxReviewCycles", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ maxReviewCycles: 2 });
+      const { uc, git } = makeUc(ports, config);
+      const reviewAgent = makeAgent({ assistantText: "found issues: fix X" });
+      uc.reviewAgent = reviewAgent;
+      uc.tddAgent = makeAgent();
+      git.hasChanges.mockResolvedValue(true);
+      git.captureRef.mockResolvedValue("sha1");
+
+      await uc.reviewFix("content", "sha0");
+
+      expect(reviewAgent.send).toHaveBeenCalledTimes(2);
+      expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("Cycles 15-16: completenessCheck", () => {
+    it("skips when no changes since base", async () => {
+      const ports = makePorts();
+      const { uc, git, spawner } = makeUc(ports);
+      git.hasChanges.mockResolvedValue(false);
+      uc.tddAgent = makeAgent();
+
+      await uc.completenessCheck(makeSlice(), "sha0");
+
+      // Should not spawn a completeness agent
+      expect(spawner.spawn).not.toHaveBeenCalledWith("completeness", expect.anything());
+    });
+
+    it("sends completeness issues to TDD agent for fixing", async () => {
+      const ports = makePorts();
+      const { uc, git, spawner, prompts } = makeUc(ports);
+      git.hasChanges.mockResolvedValue(true);
+      const completenessAgent = makeAgent({
+        assistantText: "Missing: feature X not implemented",
+      });
+      spawner.spawn.mockReturnValue(completenessAgent);
+      uc.tddAgent = makeAgent();
+      prompts.tdd.mockReturnValue("fix prompt");
+
+      await uc.completenessCheck(makeSlice(), "sha0");
+
+      expect(spawner.spawn).toHaveBeenCalledWith("completeness", expect.anything());
+      expect(completenessAgent.kill).toHaveBeenCalled();
+      expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    });
+  });
+
+  describe("Cycles 12-14: verify", () => {
+    it("returns true when verification passes", async () => {
+      const ports = makePorts();
+      const { uc, spawner } = makeUc(ports);
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+      });
+      spawner.spawn.mockReturnValue(verifyAgent);
+      uc.tddAgent = makeAgent();
+
+      const result = await uc.verify(makeSlice(), "sha0");
+
+      expect(result).toBe(true);
+      expect(spawner.spawn).toHaveBeenCalledWith("verify", expect.anything());
+    });
+
+    it("gates operator on double verify failure, skip returns false", async () => {
+      const ports = makePorts();
+      const { uc, spawner, gate } = makeUc(ports);
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- test broke\n",
+      });
+      spawner.spawn.mockReturnValue(verifyAgent);
+      uc.tddAgent = makeAgent();
+      gate.verifyFailed.mockResolvedValue({ kind: "skip" as const });
+
+      const result = await uc.verify(makeSlice(), "sha0");
+
+      expect(result).toBe(false);
+      expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+      expect(gate.verifyFailed).toHaveBeenCalled();
+    });
+
+    it("stops execution when operator chooses stop on verify failure", async () => {
+      const ports = makePorts();
+      const { uc, spawner, gate } = makeUc(ports);
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n",
+      });
+      spawner.spawn.mockReturnValue(verifyAgent);
+      uc.tddAgent = makeAgent();
+      gate.verifyFailed.mockResolvedValue({ kind: "stop" as const });
+
+      await expect(uc.verify(makeSlice(), "sha0")).rejects.toThrow("Operator stopped");
+      expect(gate.teardown).toHaveBeenCalled();
+    });
+  });
+
+  describe("Cycles 7-8: commitSweep", () => {
+    it("does nothing when working tree is clean", async () => {
+      const { uc, git } = makeUc();
+      uc.tddAgent = makeAgent();
+      git.hasDirtyTree.mockResolvedValue(false);
+
+      await uc.commitSweep("Slice 1");
+
+      expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    });
+
+    it("sends commitSweep prompt to TDD agent when tree is dirty", async () => {
+      const ports = makePorts();
+      const { uc, git, prompts } = makeUc(ports);
+      uc.tddAgent = makeAgent();
+      git.hasDirtyTree.mockResolvedValue(true);
+      prompts.commitSweep.mockReturnValue("sweep prompt");
+
+      await uc.commitSweep("Slice 1");
+
+      expect(prompts.commitSweep).toHaveBeenCalledWith("Slice 1");
+      expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    });
+  });
+});

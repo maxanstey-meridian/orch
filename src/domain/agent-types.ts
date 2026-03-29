@@ -13,4 +13,5 @@ export type AgentResult = {
   readonly needsInput: boolean;
   readonly sessionId: string;
   readonly planText?: string;
+  readonly stderr?: string;
 };
