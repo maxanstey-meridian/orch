@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { printStartupBanner, printSliceIntro, printSliceContent, formatPlanSummary } from "../../src/ui/display.js";
+import type { Slice } from "../../src/plan/plan-parser.js";
 
 const collect = () => {
   const lines: string[] = [];
@@ -140,7 +141,7 @@ describe("printStartupBanner", () => {
   });
 });
 
-const makeSlice = (overrides: Partial<{ number: number; title: string; why: string; content: string; tests: string }> = {}) => ({
+const makeSlice = (overrides: Partial<Slice> = {}) => ({
   number: 1,
   title: "User login",
   content: "",
