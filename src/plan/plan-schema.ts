@@ -66,14 +66,16 @@ export const parsePlanJson = (json: string, source = "<json>"): readonly Group[]
 
   return result.data.groups.map((g) => ({
     name: g.name,
-    slices: g.slices.map((s): Slice => ({
-      number: s.number,
-      title: s.title,
-      content: buildContent(s),
-      why: s.why,
-      files: s.files,
-      details: s.details,
-      tests: s.tests,
-    })),
+    slices: g.slices.map(
+      (s): Slice => ({
+        number: s.number,
+        title: s.title,
+        content: buildContent(s),
+        why: s.why,
+        files: s.files,
+        details: s.details,
+        tests: s.tests,
+      }),
+    ),
   }));
 };

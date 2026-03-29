@@ -4,7 +4,7 @@ import type { AgentProcess, AgentResult, AgentStyle } from "../src/agent/agent.j
 import type { Hud, KeyHandler, InterruptSubmitHandler } from "../src/ui/hud.js";
 import type { Slice } from "../src/plan/plan-parser.js";
 import { hasDirtyTree, captureRef, hasChanges } from "../src/git/git.js";
-import { spawnAgent, spawnPlanAgentWithSkill } from "../src/agent/agent-factory.js";
+import { spawnAgent, spawnPlanAgentWithSkill, spawnGapAgent } from "../src/agent/agent-factory.js";
 import { detectCreditExhaustion } from "../src/agent/credit-detection.js";
 import { detectApiError } from "../src/agent/api-errors.js";
 import { saveState } from "../src/state/state.js";
@@ -28,6 +28,7 @@ vi.mock("../src/agent/agent-factory.js", async (importOriginal) => {
   return {
     spawnAgent: vi.fn(),
     spawnPlanAgentWithSkill: vi.fn(),
+    spawnGapAgent: vi.fn(),
     TDD_RULES_REMINDER: actual.TDD_RULES_REMINDER,
     REVIEW_RULES_REMINDER: actual.REVIEW_RULES_REMINDER,
     buildRulesReminder: actual.buildRulesReminder,
@@ -135,6 +136,7 @@ beforeEach(() => {
   vi.mocked(hasChanges).mockReset().mockResolvedValue(true);
   vi.mocked(spawnAgent).mockReset().mockReturnValue(fakeAgent());
   vi.mocked(spawnPlanAgentWithSkill).mockReset().mockReturnValue(fakeAgent());
+  vi.mocked(spawnGapAgent).mockReset().mockReturnValue(fakeAgent());
   vi.mocked(detectCreditExhaustion).mockReset().mockReturnValue(null);
   vi.mocked(detectApiError).mockReset().mockReturnValue(null);
   vi.mocked(saveState).mockReset().mockResolvedValue(undefined);
@@ -1063,7 +1065,7 @@ describe("verify", () => {
     const { orch } = await makeOrch();
     const result = await orch.verify(testSlice, "base123");
     expect(result).toBe(true);
-    expect(verifyAgent.kill).toHaveBeenCalled();
+    // Verify agent is now persistent per-group — not killed after each slice
   });
 
   it("retries via TDD bot on first failure then returns true on re-verify pass", async () => {
@@ -1183,7 +1185,7 @@ describe("runSlice", () => {
     expect(result.skipped).toBe(true);
   });
 
-  it("kills verifyAgent when operator chooses retry", async () => {
+  it("verify agent persists after operator chooses retry", async () => {
     const failText = "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- broke";
     const verifyAgent = fakeAgent();
     (verifyAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: failText, resultText: "", needsInput: false, sessionId: "s" });
@@ -1192,7 +1194,8 @@ describe("runSlice", () => {
     vi.mocked(spawnAgent).mockReturnValue(verifyAgent);
     const { orch } = await makeOrch({ hud: hudHelper });
     await orch.runSlice(testSlice, "oldbase", tddResult, "vfybase");
-    expect(verifyAgent.kill).toHaveBeenCalled();
+    // Verify agent is now persistent per-group — not killed per-slice
+    expect(verifyAgent.kill).not.toHaveBeenCalled();
   });
 
   it("logs skip messages for disabled verify and review", async () => {
@@ -1513,8 +1516,8 @@ describe("run()", () => {
 
     // 2 replan attempts + 1 auto-accept = 3 total calls
     expect(pte).toHaveBeenCalledTimes(3);
-    // The third call should have forceAccept: true (auto-accept)
-    const thirdCallForceAccept = pte.mock.calls[2][1];
+    // The third call should have forceAccept: true (auto-accept) — index 2 after sliceNumber
+    const thirdCallForceAccept = pte.mock.calls[2][2];
     expect(thirdCallForceAccept).toBe(true);
   });
 
@@ -1535,8 +1538,8 @@ describe("run()", () => {
 
     // 1 replan attempt + 1 auto-accept = 2 total calls
     expect(pte).toHaveBeenCalledTimes(2);
-    // The second call should have forceAccept: true
-    expect(pte.mock.calls[1][1]).toBe(true);
+    // The second call should have forceAccept: true — index 2 after sliceNumber
+    expect(pte.mock.calls[1][2]).toBe(true);
   });
 
   it("handles hardInterrupt by respawning TDD with guidance", async () => {
@@ -1630,7 +1633,7 @@ describe("gapAnalysis()", () => {
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing tests", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     vi.mocked(captureRef).mockResolvedValue("gapsha");
-    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     const logFn = vi.fn();
     const { orch } = await makeOrch({ tddAgent: tdd, config: { reviewSkill: null } });
     vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
@@ -1648,7 +1651,7 @@ describe("gapAnalysis()", () => {
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing edge case tests", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     vi.mocked(captureRef).mockResolvedValue("gapsha");
-    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     const { orch } = await makeOrch({ tddAgent: tdd, config: { reviewSkill: null } });
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
@@ -1675,7 +1678,7 @@ describe("gapAnalysis()", () => {
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing edge case tests for auth", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     vi.mocked(captureRef).mockResolvedValue("gapsha");
-    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     const { orch } = await makeOrch({ tddAgent: tdd });
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
@@ -1693,7 +1696,7 @@ describe("gapAnalysis()", () => {
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     const logFn = vi.fn();
-    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     const { orch } = await makeOrch({ tddAgent: tdd });
     (orch as any).log = logFn;
 
@@ -1710,7 +1713,7 @@ describe("gapAnalysis()", () => {
     const gapAgent = fakeAgent();
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing edge case tests", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
-    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     vi.mocked(captureRef).mockResolvedValue("gapsha");
     const { orch } = await makeOrch({ tddAgent: tdd });
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
@@ -1733,7 +1736,7 @@ describe("gapAnalysis()", () => {
     const gapAgent = fakeAgent();
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "Missing edge case tests", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
-    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     vi.mocked(captureRef).mockResolvedValue("gapsha");
     const { orch } = await makeOrch({ tddAgent: tdd });
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
@@ -1756,7 +1759,7 @@ describe("gapAnalysis()", () => {
     const gapAgent = fakeAgent();
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
-    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     const { orch } = await makeOrch({ tddAgent: tdd });
 
     const origWithInterrupt = orch.withInterrupt.bind(orch);
@@ -1778,7 +1781,7 @@ describe("gapAnalysis()", () => {
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 143, assistantText: "", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
     const logFn = vi.fn();
-    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     const { orch } = await makeOrch({ tddAgent: tdd });
     (orch as any).log = logFn;
 
@@ -1803,7 +1806,7 @@ describe("gapAnalysis()", () => {
   it("sets activeAgent to GAP during gap scan", async () => {
     const gapAgent = fakeAgent();
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s" });
-    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     const hudHelper = fakeHud();
     const { orch } = await makeOrch({ hud: hudHelper });
 
@@ -1816,7 +1819,7 @@ describe("gapAnalysis()", () => {
     const gapAgent = fakeAgent();
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s" });
     const tdd = fakeAgent();
-    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     const { orch } = await makeOrch({ tddAgent: tdd });
 
     await (orch as any).gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
@@ -2011,7 +2014,7 @@ describe("gapAnalysis() gap coverage", () => {
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(false);
     vi.mocked(captureRef).mockResolvedValue("gapsha");
-    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     const { orch } = await makeOrch({ tddAgent: tdd });
     const reviewFixSpy = vi.spyOn(orch, "reviewFix").mockResolvedValue(undefined);
 
@@ -2027,7 +2030,7 @@ describe("gapAnalysis() gap coverage", () => {
     const tdd = fakeAgent();
     (tdd.send as ReturnType<typeof vi.fn>).mockResolvedValue({ exitCode: 0, assistantText: "", resultText: "", needsInput: true, sessionId: "s" });
     vi.mocked(captureRef).mockResolvedValue("sha");
-    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     const hudHelper = fakeHud();
     (hudHelper.hud.askUser as ReturnType<typeof vi.fn>).mockResolvedValue("");
     const { orch } = await makeOrch({ tddAgent: tdd, hud: hudHelper });
@@ -2536,13 +2539,13 @@ describe("Orchestrator.planThenExecute (method)", () => {
       return { exitCode: 0, assistantText: "done", resultText: "", needsInput: false, sessionId: "s" };
     });
 
-    // Use real detectApiError logic — exitCode 1 + empty text → { kind: "unknown", retryable: false }
+    // Use real detectApiError logic — exitCode 1 + unrecognised text → null (not a known API error)
     vi.mocked(detectApiError).mockImplementation((result, stderr) => {
       if (result.exitCode === 0) return null;
       const combined = `${result.resultText}\n${stderr}`;
       if (/529|overloaded/i.test(combined)) return { kind: "overloaded", retryable: true };
       if (/rate\s+limit/i.test(combined)) return { kind: "rate-limited", retryable: true };
-      return { kind: "unknown", retryable: false };
+      return null;
     });
 
     const freshTdd = fakeAgent();
@@ -2635,18 +2638,18 @@ describe("Orchestrator.planThenExecute (method)", () => {
   });
 });
 
-describe("gapAnalysis uses imported spawnAgent", () => {
-  it("spawns gap agent via spawnAgent(BOT_GAP)", async () => {
+describe("gapAnalysis uses spawnGapAgent", () => {
+  it("spawns gap agent via spawnGapAgent", async () => {
     const gapAgent = fakeAgent();
     (gapAgent.send as ReturnType<typeof vi.fn>).mockResolvedValue({
       exitCode: 0, assistantText: "NO_GAPS_FOUND", resultText: "", needsInput: false, sessionId: "s",
     });
-    vi.mocked(spawnAgent).mockReturnValue(gapAgent);
+    vi.mocked(spawnGapAgent).mockReturnValue(gapAgent);
     const { orch } = await makeOrch();
 
     await orch.gapAnalysis({ name: "G", slices: [{ number: 1, title: "a", content: "c" }] }, "sha");
 
-    expect(spawnAgent).toHaveBeenCalled();
+    expect(spawnGapAgent).toHaveBeenCalled();
   });
 });
 
@@ -2778,11 +2781,10 @@ describe("withRetry", () => {
     (agent as { alive: boolean }).alive = false;
     const deadResult: AgentResult = { exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
     const fn = vi.fn().mockResolvedValue(deadResult);
-    vi.mocked(detectApiError).mockReturnValue({ kind: "unknown", retryable: false });
-
     const { orch } = await makeOrch();
     const result = await orch.withRetry(fn, agent, "tdd-execute", 2, 0);
 
+    // Dead agent short-circuits before detectApiError is even called
     expect(result).toBe(deadResult);
     expect(fn).toHaveBeenCalledTimes(1);
   });

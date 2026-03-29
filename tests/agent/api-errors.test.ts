@@ -30,10 +30,10 @@ describe("detectApiError", () => {
     expect(error).toEqual({ kind: "credit-exhausted", retryable: false });
   });
 
-  it("classifies unknown error as terminal", () => {
+  it("returns null for unknown non-zero exits", () => {
     const result = makeResult({ exitCode: 1, resultText: "something unexpected happened" });
     const error = detectApiError(result, "");
-    expect(error).toEqual({ kind: "unknown", retryable: false });
+    expect(error).toBeNull();
   });
 
   it("returns null on successful exit regardless of text", () => {

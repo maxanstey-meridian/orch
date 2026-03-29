@@ -104,7 +104,11 @@ export const checkWorktreeResume = async (
   return { ok: true };
 };
 
-export const runCleanup = async (stateFile: string, state: OrchestratorState, repoRoot: string): Promise<string> => {
+export const runCleanup = async (
+  stateFile: string,
+  state: OrchestratorState,
+  repoRoot: string,
+): Promise<string> => {
   let removedWorktree = false;
   if (state.worktree) {
     try {

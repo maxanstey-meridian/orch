@@ -102,6 +102,36 @@ All GREEN → COMMIT
 
 Do not silently fix bugs during refactor. Every behavioural fix needs a failing test first.
 
+## Defensive Testing — Regression Guards
+
+Your tests must protect the feature from being broken by future changes. After writing each test, ask yourself:
+
+> "If a future developer accidentally deleted the key line that makes this feature work, would this test fail?"
+
+If the answer is no, your test is worthless — it passes whether the feature works or not.
+
+Rules:
+
+1. **Test state transitions directly.** If your code sets a flag, changes a mode, updates a counter, or modifies
+   external state — assert that state change directly. Don't rely on downstream effects or mock call assertions.
+
+2. **Write regression guards.** For every feature you implement, identify the critical line(s) that make it work.
+   Write at least one test that would fail if that line were removed. This is non-negotiable.
+
+3. **Prefer real objects over mocks.** Mocks prove your code calls things correctly. Real objects prove your code
+   works correctly. If a dependency is a pure function or a simple data structure, use the real one.
+
+4. **Test the full path for cross-method features.** When a feature spans setup → action → effect across multiple
+   methods (e.g. a keyboard handler that sets a flag that causes a skip), test the full path — not just each
+   method in isolation.
+
+## What NOT to Test
+
+- Don't test that you called a mock with the right arguments unless the call IS the behavior (e.g. an API call).
+- Don't test internal method delegation (method A calls method B) — test the outcome.
+- Don't write tests that pass regardless of whether the feature works (e.g. mocking the thing you're testing).
+- Don't test style preferences (describe/it nesting, assertion library choice).
+
 ## Checklist Per Slice
 
 - [ ] For each behaviour: wrote test first, ran tests with Bash (confirmed RED), wrote code, ran tests with Bash (confirmed GREEN)
@@ -111,3 +141,4 @@ Do not silently fix bugs during refactor. Every behavioural fix needs a failing 
 - [ ] Tests describe behaviour, not implementation
 - [ ] Tests use public interface only
 - [ ] No speculative features added
+- [ ] Regression guard: for each feature, deleting the key implementation line would break at least one test

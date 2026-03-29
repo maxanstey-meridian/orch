@@ -23,11 +23,13 @@ const configSchema = z.object({
   maxReplans: z.number().int().positive().optional(),
 });
 
-export const orchrcSchema = z.object({
-  skills: skillsSchema.optional(),
-  rules: rulesSchema.optional(),
-  config: configSchema.optional(),
-}).strict();
+export const orchrcSchema = z
+  .object({
+    skills: skillsSchema.optional(),
+    rules: rulesSchema.optional(),
+    config: configSchema.optional(),
+  })
+  .strict();
 
 export type OrchrConfig = z.infer<typeof orchrcSchema>;
 
@@ -37,10 +39,7 @@ const RULE_KEYS = ["tdd", "review"] as const;
 type SkillKey = (typeof SKILL_KEYS)[number];
 type RuleKey = (typeof RULE_KEYS)[number];
 
-export type ResolvedSkill =
-  | { default: true }
-  | { disabled: true }
-  | { content: string };
+export type ResolvedSkill = { default: true } | { disabled: true } | { content: string };
 
 export type ResolvedOrchrConfig = {
   skills: Record<SkillKey, ResolvedSkill>;

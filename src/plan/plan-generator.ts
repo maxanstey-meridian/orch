@@ -124,7 +124,9 @@ export const extractJson = (text: string): string => {
 
 export const planSummaryLines = (groups: readonly Group[]): string[] => {
   const totalSlices = groups.reduce((sum, g) => sum + g.slices.length, 0);
-  const lines: string[] = [`${a.bold}Plan: ${groups.length} groups, ${totalSlices} slices${a.reset}`];
+  const lines: string[] = [
+    `${a.bold}Plan: ${groups.length} groups, ${totalSlices} slices${a.reset}`,
+  ];
   for (const g of groups) {
     const n = g.slices.length;
     const titles = g.slices.map((s) => `#${s.number} ${s.title}`).join(", ");

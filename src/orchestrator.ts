@@ -19,6 +19,7 @@ import type { Group, Slice } from "./plan/plan-parser.js";
 import { parseVerifyResult } from "./cli/verify.js";
 import {
   buildCommitSweepPrompt,
+  buildCompletenessPrompt,
   buildFinalPasses,
   buildGapPrompt,
   buildPlanPrompt,
@@ -35,6 +36,7 @@ import { hasDirtyTree, captureRef, hasChanges } from "./git/git.js";
 import {
   spawnAgent as spawnAgentFactory,
   spawnPlanAgentWithSkill,
+  spawnGapAgent,
   TDD_RULES_REMINDER,
   REVIEW_RULES_REMINDER,
   buildRulesReminder,
@@ -80,6 +82,7 @@ export class Orchestrator {
   state: OrchestratorState;
   tddAgent: AgentProcess;
   reviewAgent: AgentProcess;
+  verifyAgent: AgentProcess | null = null;
   tddIsFirst = true;
   reviewIsFirst = true;
 
@@ -106,13 +109,27 @@ export class Orchestrator {
     const reviewResuming = !agents && !!initialState.reviewSessionId;
     const tddAgent =
       agents?.tdd ??
-      spawnAgentFactory(BOT_TDD, config.tddSkill ?? undefined, initialState.tddSessionId, config.cwd);
+      spawnAgentFactory(
+        BOT_TDD,
+        config.tddSkill ?? undefined,
+        initialState.tddSessionId,
+        config.cwd,
+      );
     const reviewAgent =
       agents?.review ??
-      spawnAgentFactory(BOT_REVIEW, config.reviewSkill ?? undefined, initialState.reviewSessionId, config.cwd);
+      spawnAgentFactory(
+        BOT_REVIEW,
+        config.reviewSkill ?? undefined,
+        initialState.reviewSessionId,
+        config.cwd,
+      );
     const reminders: Promise<string>[] = [];
-    if (!tddResuming) reminders.push(tddAgent.sendQuiet(buildRulesReminder(TDD_RULES_REMINDER, config.tddRules)));
-    if (!reviewResuming) reminders.push(reviewAgent.sendQuiet(buildRulesReminder(REVIEW_RULES_REMINDER, config.reviewRules)));
+    if (!tddResuming)
+      reminders.push(tddAgent.sendQuiet(buildRulesReminder(TDD_RULES_REMINDER, config.tddRules)));
+    if (!reviewResuming)
+      reminders.push(
+        reviewAgent.sendQuiet(buildRulesReminder(REVIEW_RULES_REMINDER, config.reviewRules)),
+      );
     await Promise.all(reminders);
     const orch = new Orchestrator(config, initialState, hud, log, tddAgent, reviewAgent);
     if (tddResuming) orch.tddIsFirst = false;
@@ -342,16 +359,29 @@ export class Orchestrator {
     this.hud.setActivity(summary);
   }
 
-  async planThenExecute(sliceContent: string, forceAccept = false): Promise<PlanThenExecuteResult> {
+  async planThenExecute(
+    sliceContent: string,
+    sliceNumber: number,
+    forceAccept = false,
+  ): Promise<PlanThenExecuteResult> {
     if (this.config.planDisabled) {
       this.log(`${ts()} ⏩ Plan skipped (disabled) — sending slice directly to TDD`);
       const tddBrief = this.tddIsFirst ? this.config.brief : "";
-      const tddPrompt = withBrief(buildTddPrompt(sliceContent), tddBrief);
+      const tddPrompt = withBrief(
+        buildTddPrompt(
+          sliceContent,
+          undefined,
+          this.tddIsFirst ? this.config.planContent : undefined,
+          sliceNumber,
+        ),
+        tddBrief,
+      );
       const es = this.streamer(BOT_TDD);
       const tddResult = await this.withRetry(
-        () => this.withInterrupt(this.tddAgent, () =>
-          this.tddAgent.send(tddPrompt, es, (s) => this.onToolUse(s)),
-        ),
+        () =>
+          this.withInterrupt(this.tddAgent, () =>
+            this.tddAgent.send(tddPrompt, es, (s) => this.onToolUse(s)),
+          ),
         this.tddAgent,
         "tdd-direct",
       );
@@ -362,15 +392,19 @@ export class Orchestrator {
 
     // ── Plan phase ──
     // Plan agent is always fresh — always needs the brief
-    const planPrompt = withBrief(buildPlanPrompt(sliceContent), this.config.brief);
+    const planPrompt = withBrief(
+      buildPlanPrompt(sliceContent, this.config.planContent, sliceNumber),
+      this.config.brief,
+    );
     // TDD agent is persistent — only needs brief on first message
     const tddBrief = this.tddIsFirst ? this.config.brief : "";
     const planAgent = spawnPlanAgentWithSkill(this.config.cwd);
     const ps = this.streamer(BOT_PLAN);
     const planResult = await this.withRetry(
-      () => this.withInterrupt(planAgent, () =>
-        planAgent.send(planPrompt, ps, (s) => this.onToolUse(s)),
-      ),
+      () =>
+        this.withInterrupt(planAgent, () =>
+          planAgent.send(planPrompt, ps, (s) => this.onToolUse(s)),
+        ),
       planAgent,
       "plan",
     );
@@ -386,7 +420,12 @@ export class Orchestrator {
     const hardInterruptGuidance = this.hardInterruptPending;
     if (hardInterruptGuidance) {
       planAgent.kill();
-      return { tddResult: planResult, skipped: false, hardInterrupt: hardInterruptGuidance, planText: plan };
+      return {
+        tddResult: planResult,
+        skipped: false,
+        hardInterrupt: hardInterruptGuidance,
+        planText: plan,
+      };
     }
 
     planAgent.kill();
@@ -414,16 +453,22 @@ export class Orchestrator {
     }
 
     // ── Execute phase ──
+    // Send the full plan on the first slice so the TDD bot has context.
+    // On subsequent slices, it already has the plan in its conversation history.
     this.log(`${BOT_TDD.badge} executing plan...`);
+    const firstSliceContext = this.tddIsFirst
+      ? `## Full Plan Context\nYou are implementing Slice ${sliceNumber}. Here is the full plan — do NOT implement other slices.\n\n${this.config.planContent}\n\n---\n\n`
+      : "";
     const rawExecutePrompt = operatorGuidance
-      ? `Operator guidance: ${operatorGuidance}\n\nExecute this plan:\n\n${plan}`
-      : `Execute this plan:\n\n${plan}`;
+      ? `${firstSliceContext}Operator guidance: ${operatorGuidance}\n\nExecute this plan for Slice ${sliceNumber}:\n\n${plan}`
+      : `${firstSliceContext}Execute this plan for Slice ${sliceNumber}:\n\n${plan}`;
     const executePrompt = withBrief(rawExecutePrompt, tddBrief);
     const es = this.streamer(BOT_TDD);
     const tddResult = await this.withRetry(
-      () => this.withInterrupt(this.tddAgent, () =>
-        this.tddAgent.send(executePrompt, es, (s) => this.onToolUse(s)),
-      ),
+      () =>
+        this.withInterrupt(this.tddAgent, () =>
+          this.tddAgent.send(executePrompt, es, (s) => this.onToolUse(s)),
+        ),
       this.tddAgent,
       "tdd-execute",
     );
@@ -436,9 +481,10 @@ export class Orchestrator {
       await this.respawnTdd();
       const retryEs = this.streamer(BOT_TDD);
       const retryResult = await this.withRetry(
-        () => this.withInterrupt(this.tddAgent, () =>
-          this.tddAgent.send(executePrompt, retryEs, (s) => this.onToolUse(s)),
-        ),
+        () =>
+          this.withInterrupt(this.tddAgent, () =>
+            this.tddAgent.send(executePrompt, retryEs, (s) => this.onToolUse(s)),
+          ),
         this.tddAgent,
         "tdd-execute-retry",
       );
@@ -462,15 +508,17 @@ export class Orchestrator {
     this.hud.update({ activeAgent: "VFY", activeAgentActivity: "verifying..." });
     this.log(`${ts()} ${BOT_VERIFY.badge} verifying slice ${slice.number}...`);
 
-    const verifyAgent = await this.spawnVerifyAgent();
+    if (!this.verifyAgent) {
+      this.verifyAgent = await this.spawnVerifyAgent();
+    }
     const verifyPrompt = withBrief(
       `Verify the changes since commit ${verifyBaseSha}. Context: TDD implementation of Slice ${slice.number}.`,
       this.config.brief,
     );
     const onTool = (s: string) => this.onToolUse(s);
     let vs = this.streamer(BOT_VERIFY);
-    const verifyResult = await this.withInterrupt(verifyAgent, () =>
-      verifyAgent.send(verifyPrompt, vs, onTool),
+    const verifyResult = await this.withInterrupt(this.verifyAgent, () =>
+      this.verifyAgent!.send(verifyPrompt, vs, onTool),
     );
     vs.flush();
     let parsed = parseVerifyResult(verifyResult.assistantText ?? "");
@@ -489,8 +537,8 @@ export class Orchestrator {
       this.hud.update({ activeAgent: "VFY", activeAgentActivity: "re-verifying..." });
       this.log(`${ts()} ${BOT_VERIFY.badge} re-verifying...`);
       vs = this.streamer(BOT_VERIFY);
-      const reVerifyResult = await this.withInterrupt(verifyAgent, () =>
-        verifyAgent.send(
+      const reVerifyResult = await this.withInterrupt(this.verifyAgent, () =>
+        this.verifyAgent!.send(
           `Re-verify changes since ${verifyBaseSha}. The TDD bot attempted fixes.`,
           vs,
           onTool,
@@ -500,7 +548,6 @@ export class Orchestrator {
       parsed = parseVerifyResult(reVerifyResult.assistantText ?? "");
 
       if (!parsed.passed) {
-        verifyAgent.kill();
         const failSummary = parsed.newFailures.join("\n") || "Checks still failing after retry.";
         this.log(`${ts()} ✗ Verification still failing after retry on Slice ${slice.number}`);
         const answer = await this.hud.askUser(
@@ -521,8 +568,66 @@ export class Orchestrator {
       }
     }
 
-    verifyAgent.kill();
     return true;
+  }
+
+  async completenessCheck(slice: Slice, baseSha: string): Promise<void> {
+    if (this.sliceSkipFlag) return;
+    if (!(await hasChanges(this.config.cwd, baseSha))) return;
+
+    this.log(`${ts()} ${BOT_REVIEW.badge} completeness check for Slice ${slice.number}...`);
+    this.hud.update({
+      activeAgent: "REV",
+      activeAgentActivity: `completeness check (slice ${slice.number})...`,
+    });
+
+    const prompt = buildCompletenessPrompt(
+      slice.content,
+      baseSha,
+      this.config.planContent,
+      slice.number,
+    );
+    const checkAgent = spawnAgentFactory(BOT_REVIEW, undefined, undefined, this.config.cwd);
+    const cs = this.streamer(BOT_REVIEW);
+    const result = await this.withInterrupt(checkAgent, () =>
+      checkAgent.send(prompt, cs, (s) => this.onToolUse(s)),
+    );
+    cs.flush();
+    checkAgent.kill();
+
+    const text = result.assistantText ?? "";
+    if (text.includes("SLICE_COMPLETE")) {
+      this.log(`${ts()} ${a.green}✓ Completeness check passed${a.reset}`);
+      return;
+    }
+
+    // Extract missing/divergent items and send to TDD bot for fixing
+    this.log(`${ts()} ${a.yellow}⚠ Completeness issues found — sending to TDD bot${a.reset}`);
+    const fixPrompt = buildTddPrompt(
+      slice.content,
+      `A completeness check found that your implementation does not fully match the plan. Fix the issues below.\n\n## Completeness Findings\n${text}`,
+      this.config.planContent,
+      slice.number,
+    );
+    const fs = this.streamer(BOT_TDD);
+    const fixResult = await this.withInterrupt(this.tddAgent, () =>
+      this.tddAgent.send(
+        this.tddIsFirst ? withBrief(fixPrompt, this.config.brief) : fixPrompt,
+        fs,
+        (s) => this.onToolUse(s),
+      ),
+    );
+    fs.flush();
+    this.tddIsFirst = false;
+    await this.checkCredit(fixResult, this.tddAgent);
+
+    if (fixResult.needsInput) {
+      await this.followUp(fixResult, this.tddAgent);
+    }
+
+    // Commit the fixes
+    await this.commitSweep(`Slice ${slice.number} completeness fix`);
+    this.hud.update({ activeAgent: undefined, activeAgentActivity: undefined });
   }
 
   isAlreadyImplemented(tddText: string, headSha: string, baseSha: string): boolean {
@@ -639,11 +744,16 @@ export class Orchestrator {
     this.hud.teardown();
     this.tddAgent.kill();
     this.reviewAgent.kill();
+    if (this.verifyAgent) this.verifyAgent.kill();
   }
 
   async respawnBoth(): Promise<void> {
     this.tddAgent.kill();
     this.reviewAgent.kill();
+    if (this.verifyAgent) {
+      this.verifyAgent.kill();
+      this.verifyAgent = null;
+    }
     this.tddAgent = await this.spawnTddAgent();
     this.reviewAgent = await this.spawnReviewAgent();
     this.tddIsFirst = true;
@@ -713,14 +823,14 @@ export class Orchestrator {
         let replanAttempts = 0;
         let pteResult: PlanThenExecuteResult;
         do {
-          pteResult = await this.planThenExecute(slice.content);
+          pteResult = await this.planThenExecute(slice.content, slice.number);
           replanAttempts++;
         } while (pteResult.replan && replanAttempts < maxReplans);
 
         // After max replans, auto-accept
         if (pteResult.replan) {
           this.log(`${ts()} ${a.yellow}Max replans reached — auto-accepting plan${a.reset}`);
-          pteResult = await this.planThenExecute(slice.content, true);
+          pteResult = await this.planThenExecute(slice.content, slice.number, true);
         }
 
         this.currentPlanText = pteResult.planText || null;
@@ -765,6 +875,9 @@ export class Orchestrator {
         // Commit sweep — ensure TDD bot's work is committed
         await this.commitSweep(`Slice ${slice.number}`);
 
+        // Completeness check — did the TDD bot actually build what the plan asked for?
+        await this.completenessCheck(slice, verifyBaseSha);
+
         // Post-TDD pipeline: verify → review → summary
         const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
         reviewBase = sliceResult.reviewBase;
@@ -788,12 +901,14 @@ export class Orchestrator {
 
       // Inter-group transition
       if (i < remaining.length - 1) {
+        this.log(`${ts()} ${a.green}✓ Group "${group.name}" complete${a.reset}`);
+        this.log(`${ts()} ${a.dim}Spawning fresh agents for next group...${a.reset}`);
+        this.hud.update({ activeAgent: undefined, activeAgentActivity: "spawning agents..." });
         await this.respawnBoth();
 
         if (!this.config.auto && !this.config.noInteraction) {
           const next = remaining[i + 1];
           const nextLabel = `${next.name} (${next.slices.map((s) => `Slice ${s.number}`).join(", ")})`;
-          this.log(`${ts()} ${a.green}✓ Group "${group.name}" complete${a.reset}`);
           const answer = await this.hud.askUser(`Group done. Run ${nextLabel} next? (Y/n) `);
           if (answer.toLowerCase() === "n") {
             this.log(`Stopped. Resume with --group "${next.name}"`);
@@ -824,7 +939,7 @@ export class Orchestrator {
 
     this.log(`${ts()} ${BOT_GAP.badge} scanning for coverage gaps across group...`);
     const groupContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
-    const gapAgent = spawnAgentFactory(BOT_GAP, undefined, undefined, this.config.cwd);
+    const gapAgent = spawnGapAgent(this.config.cwd);
     const gapPrompt = withBrief(buildGapPrompt(groupContent, groupBaseSha), this.config.brief);
     const onTool = (s: string) => this.onToolUse(s);
     const gs = this.streamer(BOT_GAP);
@@ -901,7 +1016,9 @@ export class Orchestrator {
         this.log(`${ts()} ⏩ Gap review skipped (disabled)`);
       }
       this.hud.update({ activeAgent: undefined, activeAgentActivity: undefined });
-      this.log(`${ts()} ${a.green}✓ Gap tests added${this.config.reviewSkill !== null ? " and reviewed" : ""}${a.reset}`);
+      this.log(
+        `${ts()} ${a.green}✓ Gap tests added${this.config.reviewSkill !== null ? " and reviewed" : ""}${a.reset}`,
+      );
     }
 
     gapAgent.kill();
@@ -968,19 +1085,34 @@ export class Orchestrator {
   }
 
   private async spawnTddAgent(): Promise<AgentProcess> {
-    const agent = spawnAgentFactory(BOT_TDD, this.config.tddSkill ?? undefined, undefined, this.config.cwd);
+    const agent = spawnAgentFactory(
+      BOT_TDD,
+      this.config.tddSkill ?? undefined,
+      undefined,
+      this.config.cwd,
+    );
     await agent.sendQuiet(buildRulesReminder(TDD_RULES_REMINDER, this.config.tddRules));
     return agent;
   }
 
   private async spawnReviewAgent(): Promise<AgentProcess> {
-    const agent = spawnAgentFactory(BOT_REVIEW, this.config.reviewSkill ?? undefined, undefined, this.config.cwd);
+    const agent = spawnAgentFactory(
+      BOT_REVIEW,
+      this.config.reviewSkill ?? undefined,
+      undefined,
+      this.config.cwd,
+    );
     await agent.sendQuiet(buildRulesReminder(REVIEW_RULES_REMINDER, this.config.reviewRules));
     return agent;
   }
 
   private async spawnVerifyAgent(): Promise<AgentProcess> {
-    return spawnAgentFactory(BOT_VERIFY, this.config.verifySkill ?? undefined, undefined, this.config.cwd);
+    return spawnAgentFactory(
+      BOT_VERIFY,
+      this.config.verifySkill ?? undefined,
+      undefined,
+      this.config.cwd,
+    );
   }
 
   async respawnTdd(): Promise<void> {

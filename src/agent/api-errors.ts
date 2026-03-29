@@ -5,10 +5,7 @@ export type ApiError = {
   readonly retryable: boolean;
 };
 
-export const detectApiError = (
-  result: AgentResult,
-  stderr: string,
-): ApiError | null => {
+export const detectApiError = (result: AgentResult, stderr: string): ApiError | null => {
   if (result.exitCode === 0) return null;
 
   const combined = `${result.resultText}\n${stderr}`;
@@ -33,5 +30,5 @@ export const detectApiError = (
     return { kind: "credit-exhausted", retryable: false };
   }
 
-  return { kind: "unknown", retryable: false };
+  return null;
 };

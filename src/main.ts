@@ -26,9 +26,13 @@ import { runFingerprint } from "./state/fingerprint.js";
 import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "./ui/display.js";
 import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
 import { runInit, profileToMarkdown } from "./ui/init.js";
-import { spawnPlanAgentWithSkill, spawnGeneratePlanAgent } from "./agent/agent-factory.js";
+import { spawnGeneratePlanAgent } from "./agent/agent-factory.js";
 import { getStatus, stashBackup } from "./git/git.js";
-import { loadAndResolveOrchrConfig, resolveSkillValue, buildOrchrSummary } from "./config/orchrc.js";
+import {
+  loadAndResolveOrchrConfig,
+  resolveSkillValue,
+  buildOrchrSummary,
+} from "./config/orchrc.js";
 import { assertGitRepo } from "./git/repo-check.js";
 import { parseBranchFlag } from "./cli/cli-args.js";
 import { resolveWorktree } from "./git/worktree-setup.js";
@@ -272,7 +276,8 @@ const main = async () => {
       brief,
       noInteraction,
       auto,
-      reviewThreshold: rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),
+      reviewThreshold:
+        rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),
       maxReviewCycles: orchrc.config.maxReviewCycles ?? 3,
       maxReplans: orchrc.config.maxReplans ?? 2,
       stateFile,
