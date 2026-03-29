@@ -129,12 +129,41 @@ describe("regression guards", () => {
   });
 
   // REGRESSION GUARD — do not weaken or delete without replacing with equivalent coverage
-  // Documents the reset contract: executeSlices sets sliceSkipFlag = false after consuming it
-  it("S key — sliceSkipFlag resets after being consumed", async () => {
-    const { orch } = await createTestOrch();
+  // Exercises the real reset path: run() → planThenExecute checks sliceSkipFlag → returns skipped: true → run() resets flag
+  it("S key — sliceSkipFlag resets after being consumed by run()", async () => {
+    const defaultResult = { exitCode: 0, assistantText: "", resultText: "", needsInput: false, sessionId: "s" };
+    const fakePlanAgent = {
+      kill: vi.fn(),
+      inject: vi.fn(),
+      send: vi.fn().mockResolvedValue(defaultResult),
+      sendQuiet: vi.fn().mockResolvedValue(""),
+      alive: true,
+      sessionId: "plan",
+      style: { label: "PLAN", color: "P", badge: "P" },
+      stderr: "",
+    };
+    const fakeSpawnedAgent = {
+      kill: vi.fn(),
+      inject: vi.fn(),
+      send: vi.fn().mockResolvedValue(defaultResult),
+      sendQuiet: vi.fn().mockResolvedValue(""),
+      alive: true,
+      sessionId: "spawned",
+      style: { label: "TDD", color: "T", badge: "T" },
+      stderr: "",
+    };
+    vi.mocked(spawnPlanAgentWithSkill).mockReturnValue(fakePlanAgent as AgentProcess);
+    vi.mocked(spawnAgent).mockReturnValue(fakeSpawnedAgent as AgentProcess);
+    vi.mocked(spawnGapAgent).mockReturnValue(fakeSpawnedAgent as AgentProcess);
+
+    const { orch } = await createTestOrch({ noInteraction: true });
+    // Set skip flag before run — planThenExecute will see it and return skipped: true
     orch.sliceSkipFlag = true;
-    expect(orch.sliceSkipFlag).toBe(true);
-    orch.sliceSkipFlag = false;
+
+    const groups = [{ name: "Test Group", slices: [testSlice] }];
+    await orch.run(groups, 0);
+
+    // The real reset at orchestrator.ts:839 should have cleared the flag
     expect(orch.sliceSkipFlag).toBe(false);
   });
 
