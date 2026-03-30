@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import { createAgent, type AgentProcess, type AgentStyle } from "./agent.js";
+import { createClaudeAgent, type ClaudeAgentProcess } from "./claude-agent-process.js";
+import type { AgentStyle } from "../../domain/agent-types.js";
 import { BOT_PLAN, BOT_GAP } from "../../ui/display.js";
 
 // ─── Agent helpers ───────────────────────────────────────────────────────────
@@ -8,13 +9,13 @@ import { BOT_PLAN, BOT_GAP } from "../../ui/display.js";
 const BASE_FLAGS = ["--dangerously-skip-permissions"] as const;
 const PLAN_FLAGS = ["--permission-mode", "plan"] as const;
 
-export const spawnAgent = (
+export const spawnClaudeAgent = (
   style: AgentStyle,
   systemPrompt?: string,
   resumeSessionId?: string,
   cwd?: string,
-): AgentProcess =>
-  createAgent({
+): ClaudeAgentProcess =>
+  createClaudeAgent({
     command: "claude",
     args: [
       ...BASE_FLAGS,
@@ -31,12 +32,12 @@ export const spawnAgent = (
     cwd,
   });
 
-export const spawnPlanAgent = (
+export const spawnClaudePlanAgent = (
   style: AgentStyle,
   systemPrompt?: string,
   cwd?: string,
-): AgentProcess =>
-  createAgent({
+): ClaudeAgentProcess =>
+  createClaudeAgent({
     command: "claude",
     args: [
       ...PLAN_FLAGS,
@@ -67,14 +68,14 @@ const gapSkillContent = readFileSync(
   "utf-8",
 );
 
-export const spawnGapAgent = (cwd?: string): AgentProcess =>
-  spawnAgent(BOT_GAP, gapSkillContent, undefined, cwd);
+export const spawnClaudeGapAgent = (cwd?: string): ClaudeAgentProcess =>
+  spawnClaudeAgent(BOT_GAP, gapSkillContent, undefined, cwd);
 
-export const spawnPlanAgentWithSkill = (cwd?: string): AgentProcess =>
-  spawnPlanAgent(BOT_PLAN, planSkillContent, cwd);
+export const spawnClaudePlanAgentWithSkill = (cwd?: string): ClaudeAgentProcess =>
+  spawnClaudePlanAgent(BOT_PLAN, planSkillContent, cwd);
 
-export const spawnGeneratePlanAgent = (cwd?: string): AgentProcess =>
-  spawnAgent(BOT_PLAN, generatePlanSkillContent, undefined, cwd);
+export const spawnClaudeGeneratePlanAgent = (cwd?: string): ClaudeAgentProcess =>
+  spawnClaudeAgent(BOT_PLAN, generatePlanSkillContent, undefined, cwd);
 
 export const buildRulesReminder = (baseRules: string, extraRules?: string): string =>
   !extraRules

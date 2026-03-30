@@ -1,6 +1,6 @@
 import { AgentSpawner, type AgentHandle } from "../application/ports/agent-spawner.port.js";
 import type { AgentRole, AgentStyle } from "../domain/agent-types.js";
-import { spawnAgent, spawnPlanAgent } from "./agent/agent-factory.js";
+import { spawnClaudeAgent, spawnClaudePlanAgent } from "./claude/claude-agent-factory.js";
 import {
   BOT_TDD,
   BOT_REVIEW,
@@ -45,8 +45,8 @@ export class ClaudeAgentSpawner extends AgentSpawner {
     const usePlanAgent = opts?.planMode || PLAN_ROLES.has(role);
 
     const process = usePlanAgent
-      ? spawnPlanAgent(style, systemPrompt, cwd)
-      : spawnAgent(style, systemPrompt, opts?.resumeSessionId, cwd);
+      ? spawnClaudePlanAgent(style, systemPrompt, cwd)
+      : spawnClaudeAgent(style, systemPrompt, opts?.resumeSessionId, cwd);
 
     return process;
   }

@@ -13,7 +13,7 @@ import {
   TDD_RULES_REMINDER,
   REVIEW_RULES_REMINDER,
   buildRulesReminder,
-} from "./agent/agent-factory.js";
+} from "./claude/claude-agent-factory.js";
 
 export class DefaultPromptBuilder extends PromptBuilder {
   constructor(

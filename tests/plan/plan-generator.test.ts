@@ -5,7 +5,8 @@ import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { extractJson, planSummaryLines, generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../../src/infrastructure/plan/plan-generator.js";
 import { PlanSchema, parsePlanJson } from "../../src/infrastructure/plan/plan-schema.js";
-import type { AgentProcess, AgentResult } from "../../src/infrastructure/agent/agent.js";
+import type { ClaudeAgentProcess } from "../../src/infrastructure/claude/claude-agent-process.js";
+import type { AgentResult } from "../../src/domain/agent-types.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ const VALID_PLAN = JSON.stringify({
 
 const PLAN_WITH_PREAMBLE = `Here's the plan I generated:\n${VALID_PLAN}\nLet me know if you'd like changes.`;
 
-const mockAgent = (responseText: string): AgentProcess => ({
+const mockAgent = (responseText: string): ClaudeAgentProcess => ({
   send: async (_prompt: string) =>
     ({
       exitCode: 0,
@@ -346,7 +347,7 @@ describe("generatePlan", () => {
 
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
-    const agent: AgentProcess = {
+    const agent: ClaudeAgentProcess = {
       ...mockAgent(VALID_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
@@ -453,7 +454,7 @@ describe("generatePlan", () => {
 
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
-    const agent: AgentProcess = {
+    const agent: ClaudeAgentProcess = {
       ...mockAgent(VALID_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
@@ -480,7 +481,7 @@ describe("generatePlan", () => {
 
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
-    const agent: AgentProcess = {
+    const agent: ClaudeAgentProcess = {
       ...mockAgent(VALID_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
@@ -606,7 +607,7 @@ describe("doGeneratePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
     const outputDir = join(tmpDir, ".orch");
     const killed: boolean[] = [];
-    const badAgent: AgentProcess = {
+    const badAgent: ClaudeAgentProcess = {
       ...mockAgent("not a plan"),
       kill: () => { killed.push(true); },
     };

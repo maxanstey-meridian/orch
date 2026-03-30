@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import type { AgentStyle } from "../../src/infrastructure/agent/agent.js";
+import type { AgentStyle } from "../../src/domain/agent-types.js";
 import { makeStreamer } from "../../src/infrastructure/agent/streamer.js";
 import { a } from "../../src/ui/display.js";
 

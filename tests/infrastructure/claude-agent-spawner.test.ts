@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AgentRole, AgentStyle } from "../../src/domain/agent-types.js";
-import type { AgentProcess } from "../../src/infrastructure/agent/agent.js";
+import type { ClaudeAgentProcess } from "../../src/infrastructure/claude/claude-agent-process.js";
 import type { AgentHandle } from "../../src/application/ports/agent-spawner.port.js";
 
-vi.mock("../../src/infrastructure/agent/agent-factory.js", () => ({
-  spawnAgent: vi.fn(() => ({
+vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
+  spawnClaudeAgent: vi.fn(() => ({
     send: vi.fn().mockResolvedValue({
       exitCode: 0,
       assistantText: "",
@@ -20,7 +20,7 @@ vi.mock("../../src/infrastructure/agent/agent-factory.js", () => ({
     sessionId: "mock-sess",
     style: { label: "TEST", color: "", badge: "" },
   })),
-  spawnPlanAgent: vi.fn(() => ({
+  spawnClaudePlanAgent: vi.fn(() => ({
     send: vi.fn().mockResolvedValue({
       exitCode: 0,
       assistantText: "",
@@ -38,18 +38,18 @@ vi.mock("../../src/infrastructure/agent/agent-factory.js", () => ({
   })),
 }));
 
-import { spawnAgent, spawnPlanAgent } from "../../src/infrastructure/agent/agent-factory.js";
+import { spawnClaudeAgent, spawnClaudePlanAgent } from "../../src/infrastructure/claude/claude-agent-factory.js";
 import type { Mock } from "vitest";
 
-const mockedSpawnAgent = spawnAgent as Mock;
-const mockedSpawnPlanAgent = spawnPlanAgent as Mock;
+const mockedSpawnAgent = spawnClaudeAgent as Mock;
+const mockedSpawnPlanAgent = spawnClaudePlanAgent as Mock;
 
 import { ROLE_STYLES, ClaudeAgentSpawner } from "../../src/infrastructure/claude-agent-spawner.js";
 import { BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL } from "../../src/ui/display.js";
 
-describe("AgentProcess / AgentHandle structural compatibility", () => {
-  it("AgentProcess structurally satisfies AgentHandle", () => {
-    const process = {} as AgentProcess;
+describe("ClaudeAgentProcess / AgentHandle structural compatibility", () => {
+  it("ClaudeAgentProcess structurally satisfies AgentHandle", () => {
+    const process = {} as ClaudeAgentProcess;
     const _handle: AgentHandle = process; // compile-time check
     expect(true).toBe(true);
   });

@@ -29,7 +29,7 @@ import { CreditExhaustedError } from "./domain/errors.js";
 import type { OrchestratorConfig } from "./domain/config.js";
 import { createContainer } from "./composition-root.js";
 import { runInit, profileToMarkdown } from "./ui/init.js";
-import { spawnGeneratePlanAgent } from "./infrastructure/agent/agent-factory.js";
+import { spawnClaudeGeneratePlanAgent } from "./infrastructure/claude/claude-agent-factory.js";
 import { getStatus, stashBackup } from "./infrastructure/git/git.js";
 import {
   loadAndResolveOrchrConfig,
@@ -164,7 +164,7 @@ const main = async () => {
       log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
       planPath = inputPath;
     } else {
-      planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnGeneratePlanAgent);
+      planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnClaudeGeneratePlanAgent);
     }
   }
 
