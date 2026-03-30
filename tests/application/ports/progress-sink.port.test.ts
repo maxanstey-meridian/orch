@@ -16,6 +16,7 @@ class TestProgressSink extends ProgressSink {
     return () => {};
   }
   logSliceIntro(_slice: Slice): void {}
+  logBadge(_role: AgentRole, _phase: string): void {}
   teardown(): void {}
 }
 
@@ -61,6 +62,13 @@ describe("ProgressUpdate", () => {
 
     expect(shapes).toHaveLength(8);
     shapes.forEach((s) => expect(s).toBeDefined());
+  });
+});
+
+describe("logBadge", () => {
+  it("logBadge is callable", () => {
+    const sink = new TestProgressSink();
+    sink.logBadge("tdd", "implementing...");
   });
 });
 

@@ -83,6 +83,7 @@ const makePorts = () => {
     log: vi.fn(),
     createStreamer: vi.fn().mockReturnValue(vi.fn()),
     logSliceIntro: vi.fn(),
+    logBadge: vi.fn(),
     teardown: vi.fn(),
   };
   const git = {
@@ -2755,6 +2756,99 @@ describe("RunOrchestration", () => {
       expect(progressSink.logSliceIntro).toHaveBeenCalledWith(
         expect.objectContaining({ number: 2 }),
       );
+    });
+  });
+
+  describe("logBadge", () => {
+    it("calls logBadge with 'plan' before plan agent send", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: false,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, progressSink } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const planAgent = makeAgent({ planText: "the plan" });
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd") return tddAgent;
+        if (role === "review") return reviewAgent;
+        return planAgent;
+      });
+
+      const groups: Group[] = [{ name: "G1", slices: [makeSlice()] }];
+      await uc.execute(groups);
+
+      expect(progressSink.logBadge).toHaveBeenCalledWith("plan", expect.any(String));
+    });
+
+    it("calls logBadge with 'tdd' before TDD execution", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, progressSink } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent);
+
+      const groups: Group[] = [{ name: "G1", slices: [makeSlice()] }];
+      await uc.execute(groups);
+
+      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", expect.any(String));
+    });
+
+    it("logBadge phase arg is a non-empty string for all calls", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: false,
+        gapDisabled: true,
+        verifySkill: "test",
+        reviewSkill: "test",
+      });
+      // Review returns findings once, then clean
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const planAgent = makeAgent({ planText: "the plan" });
+      const verifyAgent = makeAgent({ assistantText: "PASSED" });
+
+      ports.spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd") return tddAgent;
+        if (role === "review") return reviewAgent;
+        if (role === "plan") return planAgent;
+        if (role === "verify") return verifyAgent;
+        return makeAgent();
+      });
+      // First review has findings, second is clean
+      reviewAgent.send = vi.fn()
+        .mockResolvedValueOnce(makeResult({ assistantText: "Found issues: fix X" }))
+        .mockResolvedValueOnce(makeResult({ assistantText: "LGTM - no issues" }));
+      ports.git.hasChanges.mockResolvedValue(true);
+      ports.git.measureDiff.mockResolvedValue({ added: 50, removed: 10, total: 60 });
+
+      const { uc, progressSink } = makeUc(ports, config);
+      const groups: Group[] = [{ name: "G1", slices: [makeSlice()] }];
+      await uc.execute(groups);
+
+      const calls = progressSink.logBadge.mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(3);
+      for (const [role, phase] of calls) {
+        expect(typeof role).toBe("string");
+        expect(typeof phase).toBe("string");
+        expect(phase.length).toBeGreaterThan(0);
+      }
+      // At least plan, tdd, and review badges should appear
+      const roles = calls.map(([r]: [string]) => r);
+      expect(roles).toContain("plan");
+      expect(roles).toContain("tdd");
+      expect(roles).toContain("review");
     });
   });
 });

@@ -25,5 +25,6 @@ export abstract class ProgressSink {
   abstract log(text: string): void;
   abstract createStreamer(role: AgentRole): (text: string) => void;
   abstract logSliceIntro(slice: Slice): void;
+  abstract logBadge(role: AgentRole, phase: string): void;
   abstract teardown(): void;
 }

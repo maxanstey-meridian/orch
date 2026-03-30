@@ -65,6 +65,8 @@ export class SilentProgressSink extends ProgressSink {
 
   logSliceIntro(_slice: Slice): void {}
 
+  logBadge(_role: AgentRole, _phase: string): void {}
+
   teardown(): void {}
 }
 
@@ -155,6 +157,12 @@ export class InkProgressSink extends ProgressSink {
 
   logSliceIntro(slice: Slice): void {
     printSliceIntro((...args: unknown[]) => this.writer(String(args[0])), slice);
+  }
+
+  logBadge(role: AgentRole, phase: string): void {
+    const style = styleForRole(role);
+    const ts = new Date().toLocaleTimeString("en-GB", { hour12: false });
+    this.writer(`\n${ts}  ${style.badge}  ${phase}`);
   }
 
   teardown(): void {
