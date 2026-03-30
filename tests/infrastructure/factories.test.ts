@@ -44,6 +44,12 @@ describe("agentSpawnerFactory", () => {
     expect(result).toBeInstanceOf(ClaudeAgentSpawner);
     expect(agentSpawnerFactory.inject).toEqual(["config"]);
   });
+
+  it("throws for codex provider (not yet implemented)", async () => {
+    const { agentSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const config = makeConfig({ provider: "codex" });
+    expect(() => agentSpawnerFactory(config)).toThrow("not yet implemented");
+  });
 });
 
 describe("statePersistenceFactory", () => {

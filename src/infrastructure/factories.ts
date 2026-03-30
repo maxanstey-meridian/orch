@@ -8,11 +8,17 @@ import { InkOperatorGate, SilentOperatorGate, InkProgressSink, SilentProgressSin
 import type { OperatorGate } from "../application/ports/operator-gate.port.js";
 import type { ProgressSink } from "../application/ports/progress-sink.port.js";
 
-export const agentSpawnerFactory = (config: OrchestratorConfig) =>
-  new ClaudeAgentSpawner(
-    { tdd: config.tddSkill, review: config.reviewSkill, verify: config.verifySkill },
-    config.cwd,
-  );
+export const agentSpawnerFactory = (config: OrchestratorConfig) => {
+  switch (config.provider) {
+    case "claude":
+      return new ClaudeAgentSpawner(
+        { tdd: config.tddSkill, review: config.reviewSkill, verify: config.verifySkill },
+        config.cwd,
+      );
+    case "codex":
+      throw new Error("Codex provider is not yet implemented");
+  }
+};
 agentSpawnerFactory.inject = ["config"] as const;
 
 export const statePersistenceFactory = (config: OrchestratorConfig) =>
