@@ -80,6 +80,8 @@ const makePorts = () => {
     }),
     updateProgress: vi.fn(),
     setActivity: vi.fn(),
+    log: vi.fn(),
+    createStreamer: vi.fn().mockReturnValue(vi.fn()),
     teardown: vi.fn(),
   };
   const git = {
@@ -2459,11 +2461,12 @@ describe("RunOrchestration", () => {
       );
     });
 
-    it("pipeToSink onText truncates text to 80 chars", async () => {
+    it("pipeToSink onText routes through createStreamer", async () => {
       const ports = makePorts();
-      const { uc, spawner, progressSink } = makeUc(ports);
+      const streamerFn = vi.fn();
+      ports.progressSink.createStreamer.mockReturnValue(streamerFn);
+      const { uc, spawner } = makeUc(ports);
       const agent = makeAgent();
-      // Capture the onText callback passed to pipe
       let pipedOnText: ((text: string) => void) | undefined;
       (agent.pipe as ReturnType<typeof vi.fn>).mockImplementation(
         (onText: (text: string) => void) => {
@@ -2476,9 +2479,8 @@ describe("RunOrchestration", () => {
       await uc.respawnTdd();
 
       expect(pipedOnText).toBeDefined();
-      const longText = "A".repeat(100);
-      pipedOnText!(longText);
-      expect(progressSink.setActivity).toHaveBeenCalledWith("A".repeat(80));
+      pipedOnText!("some agent output");
+      expect(streamerFn).toHaveBeenCalledWith("some agent output");
     });
 
     it("pipes tdd and review agents after spawn", async () => {
@@ -2508,6 +2510,37 @@ describe("RunOrchestration", () => {
         expect.any(Function),
         expect.any(Function),
       );
+    });
+
+    it("createStreamer is called with tdd and review roles on execute", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, progressSink } = makeUc(ports, config);
+
+      await uc.execute([{ name: "G", slices: [makeSlice()] }]);
+
+      expect(progressSink.createStreamer).toHaveBeenCalledWith("tdd");
+      expect(progressSink.createStreamer).toHaveBeenCalledWith("review");
+    });
+
+    it("createStreamer is called with verify when verify agent spawns", async () => {
+      const ports = makePorts();
+      ports.git.hasChanges.mockResolvedValue(true);
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        reviewSkill: null,
+      });
+      const { uc, progressSink } = makeUc(ports, config);
+
+      await uc.execute([{ name: "G", slices: [makeSlice()] }]);
+
+      expect(progressSink.createStreamer).toHaveBeenCalledWith("verify");
     });
   });
 });
