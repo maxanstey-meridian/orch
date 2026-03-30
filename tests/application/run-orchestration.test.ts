@@ -2850,5 +2850,298 @@ describe("RunOrchestration", () => {
       expect(roles).toContain("tdd");
       expect(roles).toContain("review");
     });
+
+    it("calls logBadge with 'verify' when verify runs", async () => {
+      const ports = makePorts();
+      const { uc, spawner, progressSink } = makeUc(ports);
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+      });
+      spawner.spawn.mockReturnValue(verifyAgent);
+      uc.tddAgent = makeAgent();
+
+      await uc.verify(makeSlice(), "sha0");
+
+      expect(progressSink.logBadge).toHaveBeenCalledWith("verify", "verifying...");
+    });
+
+    it("calls logBadge with 'verify' for re-verify after fix", async () => {
+      const ports = makePorts();
+      const { uc, spawner, gate, progressSink } = makeUc(ports);
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- test broke\n",
+      });
+      spawner.spawn.mockReturnValue(verifyAgent);
+      uc.tddAgent = makeAgent();
+      uc.phase = { kind: "Verifying", sliceNumber: 1 };
+      gate.verifyFailed.mockResolvedValue({ kind: "skip" as const });
+
+      await uc.verify(makeSlice(), "sha0");
+
+      expect(progressSink.logBadge).toHaveBeenCalledWith("verify", "verifying...");
+      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", "fixing...");
+      expect(progressSink.logBadge).toHaveBeenCalledWith("verify", "re-verifying...");
+    });
+
+    it("calls logBadge with 'completeness' when completeness check runs", async () => {
+      const ports = makePorts();
+      const { uc, git, spawner, progressSink } = makeUc(ports);
+      git.hasChanges.mockResolvedValue(true);
+      uc.phase = { kind: "Verifying", sliceNumber: 1 };
+      const completenessAgent = makeAgent({
+        assistantText: "Missing: feature X not implemented",
+      });
+      spawner.spawn.mockReturnValue(completenessAgent);
+      uc.tddAgent = makeAgent();
+
+      await uc.completenessCheck(makeSlice(), "sha0");
+
+      expect(progressSink.logBadge).toHaveBeenCalledWith("completeness", "checking completeness...");
+      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", "fixing...");
+    });
+
+    it("calls logBadge with 'gap' when gap analysis runs", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ gapDisabled: false });
+      const { uc, git, spawner, progressSink } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(true);
+      const gapAgent = makeAgent({ assistantText: "Analysis complete. NO_GAPS_FOUND" });
+      spawner.spawn.mockReturnValue(gapAgent);
+      uc.tddAgent = makeAgent();
+      uc.phase = { kind: "Idle" };
+
+      const group: Group = { name: "G", slices: [makeSlice()] };
+      await uc.gapAnalysis(group, "sha0");
+
+      expect(progressSink.logBadge).toHaveBeenCalledWith("gap", "gap analysis...");
+    });
+
+    it("calls logBadge with 'tdd' fixing during gap fix cycle", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ gapDisabled: false, reviewSkill: null });
+      const { uc, git, spawner, progressSink } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(true);
+      const gapAgent = makeAgent({ assistantText: "Missing tests for X" });
+      spawner.spawn.mockReturnValue(gapAgent);
+      uc.tddAgent = makeAgent();
+      uc.phase = { kind: "Idle" };
+
+      const group: Group = { name: "G", slices: [makeSlice()] };
+      await uc.gapAnalysis(group, "sha0");
+
+      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", "fixing...");
+    });
+
+    it("calls logBadge with 'final' when final passes execute", async () => {
+      const ports = makePorts();
+      const { uc, git, spawner, prompts, progressSink } = makeUc(ports);
+      git.hasChanges.mockResolvedValue(true);
+      prompts.finalPasses.mockReturnValue([
+        { name: "Type fidelity", prompt: "check types" },
+      ]);
+      const finalAgent = makeAgent({ assistantText: "NO_ISSUES_FOUND" });
+      spawner.spawn.mockReturnValue(finalAgent);
+      uc.tddAgent = makeAgent();
+
+      await uc.finalPasses("sha0");
+
+      expect(progressSink.logBadge).toHaveBeenCalledWith("final", "final pass...");
+    });
+
+    it("calls logBadge with 'tdd' fixing during final fix cycle", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ reviewSkill: null });
+      const { uc, git, spawner, prompts, progressSink } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(true);
+      git.captureRef.mockResolvedValue("sha1");
+      prompts.finalPasses.mockReturnValue([
+        { name: "Type check", prompt: "check" },
+      ]);
+      const finalAgent = makeAgent({ assistantText: "Found: any cast in foo.ts" });
+      spawner.spawn.mockReturnValue(finalAgent);
+      uc.tddAgent = makeAgent();
+
+      await uc.finalPasses("sha0");
+
+      expect(progressSink.logBadge).toHaveBeenCalledWith("final", "final pass...");
+      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", "fixing...");
+    });
+
+    it("calls logBadge with 'tdd' fixing in review-fix loop", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: false,
+        gapDisabled: true,
+        verifySkill: "test",
+        reviewSkill: "test",
+      });
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const planAgent = makeAgent({ planText: "the plan" });
+      const verifyAgent = makeAgent({ assistantText: "PASSED" });
+
+      ports.spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd") return tddAgent;
+        if (role === "review") return reviewAgent;
+        if (role === "plan") return planAgent;
+        if (role === "verify") return verifyAgent;
+        return makeAgent();
+      });
+      reviewAgent.send = vi.fn()
+        .mockResolvedValueOnce(makeResult({ assistantText: "Found issues: fix X" }))
+        .mockResolvedValueOnce(makeResult({ assistantText: "LGTM - no issues" }));
+      ports.git.hasChanges.mockResolvedValue(true);
+      ports.git.measureDiff.mockResolvedValue({ added: 50, removed: 10, total: 60 });
+
+      const { uc, progressSink } = makeUc(ports, config);
+      const groups: Group[] = [{ name: "G1", slices: [makeSlice()] }];
+      await uc.execute(groups);
+
+      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", "fixing...");
+    });
+
+    it("calls logBadge with 'tdd' implementing during hard interrupt recovery", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: false,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        auto: true,
+      });
+      const { uc, spawner, git, progressSink } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(false);
+      git.measureDiff.mockResolvedValue({ added: 0, removed: 0, total: 0 });
+
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const planAgent = makeAgent({ planText: "the plan" });
+
+      let tddSendCount = 0;
+      (tddAgent.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        tddSendCount++;
+        if (tddSendCount === 1) {
+          uc.hardInterruptPending = "operator guidance";
+        }
+        return makeResult();
+      });
+
+      const freshTddAgent = makeAgent();
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd" && tddSendCount === 0) return tddAgent;
+        if (role === "tdd") return freshTddAgent;
+        if (role === "review") return reviewAgent;
+        return planAgent;
+      });
+
+      const groups: Group[] = [{ name: "G1", slices: [makeSlice({ number: 1 })] }];
+      await uc.execute(groups);
+
+      // After respawn, logBadge('tdd', 'implementing...') should fire before the interrupt-guidance send
+      const tddBadgeCalls = progressSink.logBadge.mock.calls.filter(
+        ([r, p]: [string, string]) => r === "tdd" && p === "implementing...",
+      );
+      expect(tddBadgeCalls.length).toBeGreaterThanOrEqual(2); // one for execute, one for interrupt recovery
+    });
+
+    it("calls logBadge with 'tdd' implementing during dead session retry", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ planDisabled: false, auto: true, gapDisabled: true, verifySkill: null, reviewSkill: null });
+      const { uc, spawner, progressSink, git } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(false);
+      const planAgent = makeAgent({ planText: "the plan" });
+      uc.phase = { kind: "Planning", sliceNumber: 1, attempt: 1 };
+
+      const deadTddAgent = {
+        ...makeAgent(),
+        alive: false,
+        send: vi.fn().mockResolvedValue(makeResult()),
+      } as unknown as AgentHandle;
+
+      const freshTddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "plan") return planAgent;
+        if (role === "review") return reviewAgent;
+        return freshTddAgent;
+      });
+
+      uc.tddAgent = deadTddAgent;
+      uc.reviewAgent = reviewAgent;
+
+      const result = await uc.planThenExecute("slice content", 1);
+
+      expect(result.skipped).toBe(false);
+      // logBadge called with tdd implementing for both the initial send and the retry
+      const tddImplCalls = progressSink.logBadge.mock.calls.filter(
+        ([r, p]: [string, string]) => r === "tdd" && p === "implementing...",
+      );
+      expect(tddImplCalls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("logSliceIntro is called before the first logBadge in a plan-enabled flow", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: false,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, progressSink } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const planAgent = makeAgent({ planText: "the plan" });
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd") return tddAgent;
+        if (role === "review") return reviewAgent;
+        return planAgent;
+      });
+
+      const callOrder: string[] = [];
+      progressSink.logSliceIntro.mockImplementation(() => callOrder.push("logSliceIntro"));
+      progressSink.logBadge.mockImplementation(() => callOrder.push("logBadge"));
+
+      const groups: Group[] = [{ name: "G1", slices: [makeSlice()] }];
+      await uc.execute(groups);
+
+      expect(callOrder[0]).toBe("logSliceIntro");
+      expect(callOrder.filter((c) => c === "logBadge").length).toBeGreaterThan(0);
+    });
+
+    it("full flow includes logSliceIntro alongside logBadge", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: false,
+        gapDisabled: true,
+        verifySkill: "test",
+        reviewSkill: "test",
+      });
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent({ assistantText: "LGTM - no issues" });
+      const planAgent = makeAgent({ planText: "the plan" });
+      const verifyAgent = makeAgent({ assistantText: "PASSED" });
+
+      ports.spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd") return tddAgent;
+        if (role === "review") return reviewAgent;
+        if (role === "plan") return planAgent;
+        if (role === "verify") return verifyAgent;
+        return makeAgent();
+      });
+      ports.git.hasChanges.mockResolvedValue(true);
+      ports.git.measureDiff.mockResolvedValue({ added: 50, removed: 10, total: 60 });
+
+      const { uc, progressSink } = makeUc(ports, config);
+      const groups: Group[] = [{ name: "G1", slices: [makeSlice()] }];
+      await uc.execute(groups);
+
+      expect(progressSink.logSliceIntro).toHaveBeenCalledOnce();
+      const roles = progressSink.logBadge.mock.calls.map(([r]: [string]) => r);
+      expect(roles).toContain("plan");
+      expect(roles).toContain("tdd");
+      expect(roles).toContain("verify");
+      expect(roles).toContain("completeness");
+      expect(roles).toContain("review");
+    });
   });
 });
