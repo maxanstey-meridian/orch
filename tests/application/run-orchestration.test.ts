@@ -2483,6 +2483,38 @@ describe("RunOrchestration", () => {
       expect(streamerFn).toHaveBeenCalledWith("some agent output");
     });
 
+    it("pipeToSink passes role to createStreamer", async () => {
+      const ports = makePorts();
+      const { uc, spawner, progressSink } = makeUc(ports);
+      const agent = makeAgent();
+      spawner.spawn.mockReturnValue(agent);
+      uc.tddAgent = agent;
+
+      await uc.respawnTdd();
+
+      expect(progressSink.createStreamer).toHaveBeenCalledWith("tdd");
+    });
+
+    it("pipeToSink onSummary routes to progressSink.setActivity", async () => {
+      const ports = makePorts();
+      const { uc, spawner, progressSink } = makeUc(ports);
+      const agent = makeAgent();
+      let pipedOnSummary: ((summary: string) => void) | undefined;
+      (agent.pipe as ReturnType<typeof vi.fn>).mockImplementation(
+        (_onText: (text: string) => void, onSummary: (summary: string) => void) => {
+          pipedOnSummary = onSummary;
+        },
+      );
+      spawner.spawn.mockReturnValue(agent);
+      uc.tddAgent = agent;
+
+      await uc.respawnTdd();
+
+      expect(pipedOnSummary).toBeDefined();
+      pipedOnSummary!("running tests");
+      expect(progressSink.setActivity).toHaveBeenCalledWith("running tests");
+    });
+
     it("pipes tdd and review agents after spawn", async () => {
       const ports = makePorts();
       const config = makeConfig({
@@ -2541,6 +2573,132 @@ describe("RunOrchestration", () => {
       await uc.execute([{ name: "G", slices: [makeSlice()] }]);
 
       expect(progressSink.createStreamer).toHaveBeenCalledWith("verify");
+    });
+
+    it("streamer returned by createStreamer receives piped text during execute", async () => {
+      const ports = makePorts();
+      const tddStreamer = vi.fn();
+      const reviewStreamer = vi.fn();
+      const streamers = [tddStreamer, reviewStreamer];
+      let streamIdx = 0;
+      ports.progressSink.createStreamer.mockImplementation(() => streamers[streamIdx++] ?? vi.fn());
+
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      let tddOnText: ((text: string) => void) | undefined;
+      let reviewOnText: ((text: string) => void) | undefined;
+      (tddAgent.pipe as ReturnType<typeof vi.fn>).mockImplementation(
+        (onText: (text: string) => void) => { tddOnText = onText; },
+      );
+      (reviewAgent.pipe as ReturnType<typeof vi.fn>).mockImplementation(
+        (onText: (text: string) => void) => { reviewOnText = onText; },
+      );
+      ports.spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent);
+
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc } = makeUc(ports, config);
+
+      await uc.execute([{ name: "G", slices: [makeSlice()] }]);
+
+      expect(tddOnText).toBeDefined();
+      expect(reviewOnText).toBeDefined();
+      tddOnText!("tdd output");
+      reviewOnText!("review output");
+      expect(tddStreamer).toHaveBeenCalledWith("tdd output");
+      expect(reviewStreamer).toHaveBeenCalledWith("review output");
+    });
+
+    it("respawnBoth calls createStreamer with tdd and review", async () => {
+      const ports = makePorts();
+      const { uc, spawner, progressSink } = makeUc(ports);
+      uc.tddAgent = makeAgent();
+      uc.reviewAgent = makeAgent();
+      const newTdd = makeAgent();
+      const newReview = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(newTdd)
+        .mockReturnValueOnce(newReview);
+
+      // Clear any prior calls from construction
+      progressSink.createStreamer.mockClear();
+
+      await uc.respawnBoth();
+
+      expect(progressSink.createStreamer).toHaveBeenCalledWith("tdd");
+      expect(progressSink.createStreamer).toHaveBeenCalledWith("review");
+      expect(progressSink.createStreamer).toHaveBeenCalledTimes(2);
+    });
+
+    it("createStreamer is called with plan role when plan agent spawns", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: false,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, gate, progressSink } = makeUc(ports, config);
+      const planAgent = makeAgent({ planText: "the plan" });
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "plan") return planAgent;
+        return makeAgent();
+      });
+      gate.confirmPlan.mockResolvedValue({ kind: "accept" as const });
+
+      await uc.execute([{ name: "G", slices: [makeSlice()] }]);
+
+      expect(progressSink.createStreamer).toHaveBeenCalledWith("plan");
+    });
+
+    it("createStreamer is called with completeness role", async () => {
+      const ports = makePorts();
+      ports.git.hasChanges.mockResolvedValue(true);
+      const { uc, spawner, progressSink } = makeUc(ports);
+      const checkAgent = makeAgent({ assistantText: "SLICE_COMPLETE" });
+      spawner.spawn.mockReturnValue(checkAgent);
+      uc.tddAgent = makeAgent();
+
+      await uc.completenessCheck(makeSlice(), "sha0");
+
+      expect(progressSink.createStreamer).toHaveBeenCalledWith("completeness");
+    });
+
+    it("createStreamer is called with final role", async () => {
+      const ports = makePorts();
+      const { uc, spawner, prompts, progressSink } = makeUc(ports);
+      const finalAgent = makeAgent({ assistantText: "NO_ISSUES_FOUND" });
+      spawner.spawn.mockReturnValue(finalAgent);
+      uc.tddAgent = makeAgent();
+      uc.phase = { kind: "Idle" };
+      ports.git.hasChanges.mockResolvedValue(true);
+      prompts.finalPasses.mockReturnValue([{ name: "lint", prompt: "check lint" }]);
+
+      await uc.finalPasses("sha0");
+
+      expect(progressSink.createStreamer).toHaveBeenCalledWith("final");
+    });
+
+    it("createStreamer is called with gap role", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ gapDisabled: false });
+      const { uc, spawner, progressSink } = makeUc(ports, config);
+      const gapAgent = makeAgent({ assistantText: "NO_GAPS_FOUND" });
+      spawner.spawn.mockReturnValue(gapAgent);
+      uc.tddAgent = makeAgent();
+      uc.phase = { kind: "Idle" };
+      ports.git.hasChanges.mockResolvedValue(true);
+
+      const group: Group = { name: "G", slices: [makeSlice()] };
+      await uc.gapAnalysis(group, "sha0");
+
+      expect(progressSink.createStreamer).toHaveBeenCalledWith("gap");
     });
   });
 });
