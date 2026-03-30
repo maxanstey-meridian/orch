@@ -24,6 +24,13 @@ export const createJsonRpcClient = (proc: ChildProcess): JsonRpcClient => {
 
   const rl = createInterface({ input: proc.stdout! });
 
+  rl.on('close', () => {
+    for (const entry of pending.values()) {
+      entry.reject(new Error('process exited'));
+    }
+    pending.clear();
+  });
+
   rl.on('line', (line) => {
     let msg: Record<string, unknown>;
     try {
@@ -39,8 +46,12 @@ export const createJsonRpcClient = (proc: ChildProcess): JsonRpcClient => {
       pending.delete(msg.id);
 
       if (msg.error) {
-        const err = msg.error as Record<string, unknown>;
-        entry.reject({ code: err.code, message: err.message, data: err.data });
+        if (msg.error && typeof msg.error === 'object' && !Array.isArray(msg.error)) {
+          const err = msg.error as Record<string, unknown>;
+          entry.reject({ code: err.code, message: err.message, data: err.data });
+        } else {
+          entry.reject(new Error(String(msg.error ?? 'unknown JSON-RPC error')));
+        }
       } else {
         entry.resolve(msg.result);
       }

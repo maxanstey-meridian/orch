@@ -103,4 +103,26 @@ describe('JsonRpcClient', () => {
       data: { detail: 'missing field' },
     });
   });
+
+  it('rejects pending requests when process dies unexpectedly', async () => {
+    const { proc, stdout } = makeMockProc();
+    const client = createJsonRpcClient(proc);
+
+    const promise = client.request('willHang', {});
+
+    // Simulate process death — stdout closes
+    stdout.push(null);
+
+    await expect(promise).rejects.toThrow('process exited');
+  });
+
+  it('error response with non-object error rejects with Error', async () => {
+    const { proc, stdout } = makeMockProc();
+    const client = createJsonRpcClient(proc);
+
+    const promise = client.request('bad', {});
+    pushLine(stdout, { jsonrpc: '2.0', id: 1, error: 'just a string' });
+
+    await expect(promise).rejects.toThrow('just a string');
+  });
 });
