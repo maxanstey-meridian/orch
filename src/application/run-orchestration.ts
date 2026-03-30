@@ -205,6 +205,7 @@ export class RunOrchestration {
             this.tddAgent!,
             "tdd-interrupt",
           );
+          this.phase = { kind: "Verifying", sliceNumber: slice.number };
         }
 
         this.tddIsFirst = false;

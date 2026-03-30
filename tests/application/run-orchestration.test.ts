@@ -1701,6 +1701,90 @@ describe("RunOrchestration", () => {
       expect(sendCount).toBeGreaterThanOrEqual(2);
     });
 
+    it("hard interrupt during execute phase does not crash the pipeline", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: false,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        auto: true,
+      });
+      const { uc, spawner, git } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(false);
+      git.measureDiff.mockResolvedValue({ added: 0, removed: 0, total: 0 });
+
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const planAgent = makeAgent({ planText: "the plan" });
+
+      // After TDD execute send, trigger hard interrupt
+      let tddSendCount = 0;
+      (tddAgent.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        tddSendCount++;
+        if (tddSendCount === 1) {
+          // First TDD send is the execute — simulate interrupt
+          uc.hardInterruptPending = "operator guidance";
+        }
+        return makeResult();
+      });
+
+      // After respawnTdd, the spawner returns a fresh agent
+      const freshTddAgent = makeAgent();
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd" && tddSendCount === 0) return tddAgent;
+        if (role === "tdd") return freshTddAgent;
+        if (role === "review") return reviewAgent;
+        return planAgent;
+      });
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+
+      // Before fix: threw "Illegal transition: Executing + VerifyPassed"
+      await expect(uc.execute(groups)).resolves.toBeUndefined();
+      expect(uc.phase).toEqual({ kind: "Idle" });
+    });
+
+    it("hard interrupt during plan phase does not crash the pipeline", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: false,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        auto: true,
+      });
+      const { uc, spawner, git } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(false);
+      git.measureDiff.mockResolvedValue({ added: 0, removed: 0, total: 0 });
+
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const planAgent = makeAgent();
+
+      // Plan agent send triggers hard interrupt (plan phase)
+      (planAgent.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        uc.hardInterruptPending = "operator guidance";
+        return makeResult({ planText: "the plan" });
+      });
+
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd") return tddAgent;
+        if (role === "review") return reviewAgent;
+        return planAgent;
+      });
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+
+      // Before fix: plan-phase interrupt left phase at Idle, then VerifyPassed threw
+      await expect(uc.execute(groups)).resolves.toBeUndefined();
+      expect(uc.phase).toEqual({ kind: "Idle" });
+    });
+
     it("gapAnalysis skipped: no phase error", async () => {
       const ports = makePorts();
       const config = makeConfig({
