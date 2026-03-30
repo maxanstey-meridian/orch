@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseBranchFlag } from "../../src/cli/cli-args.js";
+import { parseBranchFlag } from "../../src/infrastructure/cli/cli-args.js";
 
 describe("parseBranchFlag", () => {
   it("returns provided branch name when --branch has a value", () => {

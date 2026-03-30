@@ -1,0 +1,85 @@
+import { describe, it, expect, vi } from "vitest";
+import { createInjector } from "typed-inject";
+
+vi.mock("../src/infrastructure/agent/agent-factory.js", () => ({
+  spawnAgent: vi.fn(),
+  spawnPlanAgent: vi.fn(),
+  TDD_RULES_REMINDER: "tdd rules",
+  REVIEW_RULES_REMINDER: "review rules",
+  buildRulesReminder: vi.fn((base: string, custom?: string) =>
+    custom ? `${base}\n${custom}` : base,
+  ),
+}));
+
+import type { OrchestratorConfig } from "../src/domain/config.js";
+import { RunOrchestration } from "../src/application/run-orchestration.js";
+
+const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig => ({
+  cwd: "/tmp/test",
+  planPath: "/tmp/plan.json",
+  planContent: "plan content",
+  brief: "brief text",
+  noInteraction: true,
+  auto: false,
+  reviewThreshold: 30,
+  maxReviewCycles: 3,
+  stateFile: "/tmp/state.json",
+  tddSkill: "tdd-skill",
+  reviewSkill: "review-skill",
+  verifySkill: "verify-skill",
+  gapDisabled: false,
+  planDisabled: false,
+  maxReplans: 2,
+  tddRules: "custom tdd",
+  reviewRules: "custom review",
+});
+
+describe("composition-root", () => {
+  it("typed-inject is importable", () => {
+    expect(typeof createInjector).toBe("function");
+  });
+
+  it("createContainer resolves RunOrchestration with all deps", async () => {
+    const { createContainer } = await import("../src/composition-root.js");
+    const config = makeConfig();
+    const dummyHud = {
+      askUser: vi.fn(),
+      update: vi.fn(),
+      setActivity: vi.fn(),
+      teardown: vi.fn(),
+      onKey: vi.fn(),
+      onInterruptSubmit: vi.fn(),
+      startPrompt: vi.fn(),
+      wrapLog: vi.fn(),
+      createWriter: vi.fn(),
+      setSkipping: vi.fn(),
+    } as any;
+
+    const container = createContainer(config, dummyHud);
+    const orch = container.resolve("runOrchestration");
+    expect(orch).toBeInstanceOf(RunOrchestration);
+  });
+
+  it("resolved gate teardown is callable", async () => {
+    const { createContainer } = await import("../src/composition-root.js");
+    const config = makeConfig();
+    const mockTeardown = vi.fn();
+    const dummyHud = {
+      askUser: vi.fn(),
+      update: vi.fn(),
+      setActivity: vi.fn(),
+      teardown: mockTeardown,
+      onKey: vi.fn(),
+      onInterruptSubmit: vi.fn(),
+      startPrompt: vi.fn(),
+      wrapLog: vi.fn(),
+      createWriter: vi.fn(),
+      setSkipping: vi.fn(),
+    } as any;
+
+    const container = createContainer(config, dummyHud);
+    const gate = container.resolve("operatorGate");
+    // noInteraction = true → SilentOperatorGate → teardown is a no-op, shouldn't throw
+    expect(() => gate.teardown()).not.toThrow();
+  });
+});

@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync } from "child_process";
-import { shouldReview, measureDiff } from "../../src/cli/review-threshold.js";
+import { shouldReview, measureDiff } from "../../src/infrastructure/cli/review-threshold.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 

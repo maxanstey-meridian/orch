@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock createAgent before any imports that use it
-vi.mock("../../src/agent/agent.js", () => ({
+vi.mock("../../src/infrastructure/agent/agent.js", () => ({
   createAgent: vi.fn(() => ({
     send: vi.fn(),
     sendQuiet: vi.fn().mockResolvedValue(undefined),
@@ -13,13 +13,13 @@ vi.mock("../../src/agent/agent.js", () => ({
   })),
 }));
 
-import { createAgent } from "../../src/agent/agent.js";
+import { createAgent } from "../../src/infrastructure/agent/agent.js";
 import type { Mock } from "vitest";
 
 const mockedCreateAgent = createAgent as Mock;
 
 const loadModule = async () => {
-  const mod = await import("../../src/agent/agent-factory.js");
+  const mod = await import("../../src/infrastructure/agent/agent-factory.js");
   return mod;
 };
 

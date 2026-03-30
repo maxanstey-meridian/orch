@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, rm, stat } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync } from "child_process";
-import { createWorktree, removeWorktree, verifyWorktree, checkWorktreeResume, runCleanup } from "../../src/git/worktree.js";
-import { saveState } from "../../src/state/state.js";
+import { createWorktree, removeWorktree, verifyWorktree, checkWorktreeResume, runCleanup } from "../../src/infrastructure/git/worktree.js";
+import { saveState } from "../../src/infrastructure/state/state.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
