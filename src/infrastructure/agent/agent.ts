@@ -231,7 +231,7 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
           resultText = typeof event.result === "string" ? event.result : "";
           onEvent = null;
           onDeath = null;
-          persistentOnToolUse?.("");
+          if (!onToolUse) persistentOnToolUse?.("");
           const assistantText = assistantChunks.join("");
           resolve({
             exitCode: 0,
