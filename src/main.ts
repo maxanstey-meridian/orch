@@ -29,7 +29,7 @@ import { CreditExhaustedError } from "./domain/errors.js";
 import type { OrchestratorConfig } from "./domain/config.js";
 import { createContainer } from "./composition-root.js";
 import { runInit, profileToMarkdown } from "./ui/init.js";
-import { spawnClaudeGeneratePlanAgent } from "./infrastructure/claude/claude-agent-factory.js";
+import { planGeneratorSpawnerFactory } from "./infrastructure/factories.js";
 import { getStatus, stashBackup } from "./infrastructure/git/git.js";
 import {
   loadAndResolveOrchrConfig,
@@ -152,6 +152,7 @@ const main = async () => {
   });
 
   // 3. Resolve plan path — generate from inventory or use existing
+  const provider = parseProviderFlag(args);
   let planPath: string;
 
   if (workMode) {
@@ -164,13 +165,13 @@ const main = async () => {
       log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
       planPath = inputPath;
     } else {
-      planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnClaudeGeneratePlanAgent);
+      const spawnPlanGenerator = planGeneratorSpawnerFactory({ provider, cwd });
+      planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnPlanGenerator);
     }
   }
 
   // 4. Derive per-plan state path
   const activePlanId = ensureCanonicalPlan(planPath, orchDir);
-  const provider = parseProviderFlag(args);
   const branchName = parseBranchFlag(args, activePlanId);
   const stateFile = statePathForPlan(orchDir, activePlanId);
   mkdirSync(resolve(orchDir, "state"), { recursive: true });

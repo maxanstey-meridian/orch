@@ -4,6 +4,7 @@ import type { OrchestratorConfig } from "../../src/domain/config.js";
 vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
   spawnClaudeAgent: vi.fn(),
   spawnClaudePlanAgent: vi.fn(),
+  spawnClaudeGeneratePlanAgent: vi.fn(() => ({ send: vi.fn(), kill: vi.fn() })),
   TDD_RULES_REMINDER: "tdd rules",
   REVIEW_RULES_REMINDER: "review rules",
   buildRulesReminder: vi.fn((base: string, custom?: string) =>
@@ -132,6 +133,33 @@ describe("progressSinkFactory", () => {
     } as any;
     const result = progressSinkFactory(config, dummyHud);
     expect(result).toBeInstanceOf(InkProgressSink);
+  });
+});
+
+describe("planGeneratorSpawnerFactory", () => {
+  it("returns a spawner function for claude provider", async () => {
+    const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = planGeneratorSpawnerFactory({ provider: "claude", cwd: "/tmp/test" });
+    expect(typeof spawner).toBe("function");
+  });
+
+  it("throws for codex provider", async () => {
+    const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    expect(() => planGeneratorSpawnerFactory({ provider: "codex", cwd: "/tmp" })).toThrow(
+      "not yet implemented",
+    );
+  });
+
+  it("passes cwd to spawnClaudeGeneratePlanAgent", async () => {
+    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
+    const spawnSpy = vi.mocked(mockModule.spawnClaudeGeneratePlanAgent);
+    spawnSpy.mockClear();
+
+    const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = planGeneratorSpawnerFactory({ provider: "claude", cwd: "/my/project" });
+    spawner();
+
+    expect(spawnSpy).toHaveBeenCalledWith("/my/project");
   });
 });
 

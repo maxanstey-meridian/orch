@@ -1,4 +1,5 @@
-import type { OrchestratorConfig } from "../domain/config.js";
+import type { OrchestratorConfig, Provider } from "../domain/config.js";
+import { spawnClaudeGeneratePlanAgent } from "./claude/claude-agent-factory.js";
 import type { Hud } from "../ui/hud.js";
 import { ClaudeAgentSpawner } from "./claude-agent-spawner.js";
 import { FsStatePersistence } from "./fs-state-persistence.js";
@@ -40,3 +41,12 @@ operatorGateFactory.inject = ["config", "hud"] as const;
 export const progressSinkFactory = (config: OrchestratorConfig, hud: Hud): ProgressSink =>
   config.noInteraction ? new SilentProgressSink() : new InkProgressSink(hud);
 progressSinkFactory.inject = ["config", "hud"] as const;
+
+export const planGeneratorSpawnerFactory = (opts: { provider: Provider; cwd: string }) => {
+  switch (opts.provider) {
+    case "claude":
+      return () => spawnClaudeGeneratePlanAgent(opts.cwd);
+    case "codex":
+      throw new Error("Codex provider is not yet implemented");
+  }
+};
