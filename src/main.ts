@@ -37,7 +37,7 @@ import {
   buildOrchrSummary,
 } from "./infrastructure/config/orchrc.js";
 import { assertGitRepo } from "./infrastructure/git/repo-check.js";
-import { parseBranchFlag } from "./infrastructure/cli/cli-args.js";
+import { parseBranchFlag, parseProviderFlag } from "./infrastructure/cli/cli-args.js";
 import { resolveWorktree } from "./infrastructure/git/worktree-setup.js";
 import { checkWorktreeResume, runCleanup } from "./infrastructure/git/worktree.js";
 import { createHud } from "./ui/hud.js";
@@ -170,6 +170,7 @@ const main = async () => {
 
   // 4. Derive per-plan state path
   const activePlanId = ensureCanonicalPlan(planPath, orchDir);
+  const provider = parseProviderFlag(args);
   const branchName = parseBranchFlag(args, activePlanId);
   const stateFile = statePathForPlan(orchDir, activePlanId);
   mkdirSync(resolve(orchDir, "state"), { recursive: true });
@@ -284,6 +285,7 @@ const main = async () => {
     gapDisabled,
     planDisabled,
     tddRules: orchrc.rules.tdd,
+    provider,
     reviewRules: orchrc.rules.review,
   } satisfies OrchestratorConfig;
 

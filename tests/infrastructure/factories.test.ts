@@ -27,6 +27,7 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   gapDisabled: false,
   planDisabled: false,
   maxReplans: 2,
+  provider: "claude",
   tddRules: "custom tdd",
   reviewRules: "custom review",
   ...overrides,

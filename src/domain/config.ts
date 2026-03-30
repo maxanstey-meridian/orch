@@ -1,3 +1,5 @@
+export type Provider = "claude" | "codex";
+
 export type OrchestratorConfig = {
   readonly cwd: string;
   readonly planPath: string;
@@ -14,6 +16,7 @@ export type OrchestratorConfig = {
   readonly gapDisabled: boolean;
   readonly planDisabled: boolean;
   readonly maxReplans: number;
+  readonly provider: Provider;
   readonly tddRules?: string;
   readonly reviewRules?: string;
 };

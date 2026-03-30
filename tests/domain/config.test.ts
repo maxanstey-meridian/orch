@@ -19,6 +19,7 @@ describe("OrchestratorConfig", () => {
       gapDisabled: false,
       planDisabled: false,
       maxReplans: 2,
+      provider: "claude",
     };
     expect(config.cwd).toBe("/tmp");
   });
@@ -40,6 +41,7 @@ describe("OrchestratorConfig", () => {
       gapDisabled: true,
       planDisabled: true,
       maxReplans: 5,
+      provider: "claude",
       tddRules: "custom rules",
       reviewRules: "custom review rules",
     };

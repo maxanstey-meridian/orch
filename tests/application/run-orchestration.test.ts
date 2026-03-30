@@ -23,6 +23,7 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   gapDisabled: true,
   planDisabled: false,
   maxReplans: 3,
+  provider: "claude",
   ...overrides,
 });
 

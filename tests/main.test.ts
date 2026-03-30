@@ -688,6 +688,7 @@ const makeTestConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorCo
   gapDisabled: true,
   planDisabled: true,
   maxReplans: 2,
+  provider: "claude",
   ...overrides,
 });
 
