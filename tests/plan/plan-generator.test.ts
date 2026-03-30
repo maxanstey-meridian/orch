@@ -30,7 +30,7 @@ const VALID_PLAN = JSON.stringify({
 
 const PLAN_WITH_PREAMBLE = `Here's the plan I generated:\n${VALID_PLAN}\nLet me know if you'd like changes.`;
 
-const mockAgent = (responseText: string): AgentHandle => ({
+const mockAgent = (responseText: string): Pick<AgentHandle, 'send' | 'kill'> => ({
   send: async (_prompt: string) =>
     ({
       exitCode: 0,
@@ -39,13 +39,7 @@ const mockAgent = (responseText: string): AgentHandle => ({
       needsInput: false,
       sessionId: "mock",
     }) as AgentResult,
-  sendQuiet: async (_prompt: string) => responseText,
-  inject: () => {},
   kill: () => {},
-  get alive() { return true; },
-  sessionId: "mock",
-  style: { label: "TEST", color: "", badge: "" },
-  get stderr() { return ""; },
 });
 
 // ─── planFileName ───────────────────────────────────────────────────────────
@@ -347,7 +341,7 @@ describe("generatePlan", () => {
 
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
-    const agent: AgentHandle = {
+    const agent: Pick<AgentHandle, 'send' | 'kill'> = {
       ...mockAgent(VALID_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
@@ -454,7 +448,7 @@ describe("generatePlan", () => {
 
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
-    const agent: AgentHandle = {
+    const agent: Pick<AgentHandle, 'send' | 'kill'> = {
       ...mockAgent(VALID_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
@@ -481,7 +475,7 @@ describe("generatePlan", () => {
 
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
-    const agent: AgentHandle = {
+    const agent: Pick<AgentHandle, 'send' | 'kill'> = {
       ...mockAgent(VALID_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
@@ -607,7 +601,7 @@ describe("doGeneratePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
     const outputDir = join(tmpDir, ".orch");
     const killed: boolean[] = [];
-    const badAgent: AgentHandle = {
+    const badAgent: Pick<AgentHandle, 'send' | 'kill'> = {
       ...mockAgent("not a plan"),
       kill: () => { killed.push(true); },
     };

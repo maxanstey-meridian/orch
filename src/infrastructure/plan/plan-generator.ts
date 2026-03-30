@@ -142,7 +142,7 @@ export type GeneratePlanResult = { planPath: string; planId: string; groups: rea
 export const generatePlan = async (
   inventoryPath: string,
   briefContent: string,
-  agent: AgentHandle,
+  agent: Pick<AgentHandle, 'send'>,
   outputDir: string,
 ): Promise<GeneratePlanResult> => {
   const inventory = readFileSync(inventoryPath, "utf-8");
@@ -198,7 +198,7 @@ export const doGeneratePlan = async (
   briefContent: string,
   outputDir: string,
   log: LogFn,
-  spawnPlanAgent: () => AgentHandle,
+  spawnPlanAgent: () => Pick<AgentHandle, 'send' | 'kill'>,
 ): Promise<string> => {
   log(`${a.bold}Generating plan from inventory...${a.reset}`);
   const planAgent = spawnPlanAgent();
