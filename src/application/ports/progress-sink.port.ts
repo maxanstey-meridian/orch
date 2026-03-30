@@ -1,4 +1,5 @@
 import type { AgentRole } from "../../domain/agent-types.js";
+import type { Slice } from "../../domain/plan.js";
 
 export type InterruptHandler = {
   onGuide(callback: (text: string) => void): void;
@@ -23,5 +24,6 @@ export abstract class ProgressSink {
   abstract setActivity(summary: string): void;
   abstract log(text: string): void;
   abstract createStreamer(role: AgentRole): (text: string) => void;
+  abstract logSliceIntro(slice: Slice): void;
   abstract teardown(): void;
 }

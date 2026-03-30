@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { ProgressSink } from "../../../src/application/ports/progress-sink.port.js";
 import type { InterruptHandler, ProgressUpdate } from "../../../src/application/ports/progress-sink.port.js";
 import type { AgentRole } from "../../../src/domain/agent-types.js";
+import type { Slice } from "../../../src/domain/plan.js";
 import { styleForRole } from "../../../src/ui/ink-operator-gate.js";
 
 class TestProgressSink extends ProgressSink {
@@ -14,6 +15,7 @@ class TestProgressSink extends ProgressSink {
   createStreamer(_role: AgentRole): (text: string) => void {
     return () => {};
   }
+  logSliceIntro(_slice: Slice): void {}
   teardown(): void {}
 }
 

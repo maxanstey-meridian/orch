@@ -82,6 +82,7 @@ const makePorts = () => {
     setActivity: vi.fn(),
     log: vi.fn(),
     createStreamer: vi.fn().mockReturnValue(vi.fn()),
+    logSliceIntro: vi.fn(),
     teardown: vi.fn(),
   };
   const git = {
@@ -2699,6 +2700,61 @@ describe("RunOrchestration", () => {
       await uc.gapAnalysis(group, "sha0");
 
       expect(progressSink.createStreamer).toHaveBeenCalledWith("gap");
+    });
+  });
+
+  describe("logSliceIntro", () => {
+    it("calls logSliceIntro with the slice before execution", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, progressSink } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent);
+
+      const slice = makeSlice({ number: 3 });
+      const groups: Group[] = [{ name: "G1", slices: [slice] }];
+      await uc.execute(groups);
+
+      expect(progressSink.logSliceIntro).toHaveBeenCalledOnce();
+      expect(progressSink.logSliceIntro).toHaveBeenCalledWith(
+        expect.objectContaining({ number: 3 }),
+      );
+    });
+
+    it("does NOT call logSliceIntro for already-completed slices", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      ports.persistence.load.mockResolvedValue({ lastCompletedSlice: 1 });
+      const { uc, spawner, progressSink } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent);
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 }), makeSlice({ number: 2 })] },
+      ];
+      await uc.execute(groups);
+
+      // logSliceIntro should only be called for slice 2, not slice 1
+      expect(progressSink.logSliceIntro).toHaveBeenCalledOnce();
+      expect(progressSink.logSliceIntro).toHaveBeenCalledWith(
+        expect.objectContaining({ number: 2 }),
+      );
     });
   });
 });

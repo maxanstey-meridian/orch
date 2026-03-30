@@ -172,6 +172,8 @@ export class RunOrchestration {
           completedSlices: this.slicesCompleted,
         });
 
+        this.progressSink.logSliceIntro(slice);
+
         const verifyBaseSha = await this.git.captureRef();
 
         // Plan-then-execute with replan loop

@@ -9,7 +9,8 @@ import {
   type ProgressUpdate,
 } from "../application/ports/progress-sink.port.js";
 import type { AgentRole, AgentStyle } from "../domain/agent-types.js";
-import { BOT_TDD, BOT_REVIEW, BOT_GAP, BOT_FINAL, BOT_VERIFY, BOT_PLAN } from "./display.js";
+import type { Slice } from "../domain/plan.js";
+import { BOT_TDD, BOT_REVIEW, BOT_GAP, BOT_FINAL, BOT_VERIFY, BOT_PLAN, printSliceIntro } from "./display.js";
 import { makeStreamer } from "../infrastructure/agent/streamer.js";
 import type { Hud } from "./hud.js";
 
@@ -61,6 +62,8 @@ export class SilentProgressSink extends ProgressSink {
   createStreamer(_role: AgentRole): (text: string) => void {
     return () => {};
   }
+
+  logSliceIntro(_slice: Slice): void {}
 
   teardown(): void {}
 }
@@ -148,6 +151,10 @@ export class InkProgressSink extends ProgressSink {
 
   createStreamer(role: AgentRole): (text: string) => void {
     return makeStreamer(styleForRole(role), this.writer);
+  }
+
+  logSliceIntro(slice: Slice): void {
+    printSliceIntro((...args: unknown[]) => this.writer(String(args[0])), slice);
   }
 
   teardown(): void {
