@@ -628,7 +628,7 @@ export class RunOrchestration {
       this.pipeToSink(finalAgent);
       const finalPrompt = this.prompts.withBrief(pass.prompt);
       const finalResult = await this.withRetry(
-        () => finalAgent.send(finalPrompt, undefined, (s) => this.onToolUse(s)),
+        () => finalAgent.send(finalPrompt),
         finalAgent,
         "final-pass",
       );
@@ -646,7 +646,7 @@ export class RunOrchestration {
       );
       const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
       const fixResult = await this.withRetry(
-        () => this.tddAgent!.send(actualFixPrompt, undefined, (s) => this.onToolUse(s)),
+        () => this.tddAgent!.send(actualFixPrompt),
         this.tddAgent!,
         "final-fix",
       );
@@ -678,7 +678,7 @@ export class RunOrchestration {
     this.pipeToSink(gapAgent);
     const gapPrompt = this.prompts.withBrief(this.prompts.gap(groupContent, groupBaseSha));
     const gapResult = await this.withRetry(
-      () => gapAgent.send(gapPrompt, undefined, (s) => this.onToolUse(s)),
+      () => gapAgent.send(gapPrompt),
       gapAgent,
       "gap",
     );
@@ -699,7 +699,7 @@ export class RunOrchestration {
     );
     const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
     const fixResult = await this.withRetry(
-      () => this.tddAgent!.send(actualFixPrompt, undefined, (s) => this.onToolUse(s)),
+      () => this.tddAgent!.send(actualFixPrompt),
       this.tddAgent!,
       "gap-fix",
     );
@@ -718,10 +718,6 @@ export class RunOrchestration {
 
     gapAgent.kill();
     this.phase = transition(this.phase, { kind: "GapDone" });
-  }
-
-  onToolUse(summary: string): void {
-    this.progressSink.setActivity(summary);
   }
 
   async commitSweep(label: string): Promise<void> {

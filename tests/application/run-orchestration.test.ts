@@ -704,20 +704,23 @@ describe("RunOrchestration", () => {
   });
 
   describe("Slice 14: onToolUse wiring", () => {
-    it("progressSink.setActivity called via onToolUse callback in gap sends", async () => {
+    it("progressSink.setActivity called via pipe in gap sends", async () => {
       const ports = makePorts();
       const config = makeConfig({ gapDisabled: false });
       const { uc, git, spawner, progressSink } = makeUc(ports, config);
       git.hasChanges.mockResolvedValue(true);
 
-      // Capture the onToolUse callback and invoke it
       const gapAgent = makeAgent({ assistantText: "NO_GAPS_FOUND" });
-      (gapAgent.send as ReturnType<typeof vi.fn>).mockImplementation(
-        async (_prompt: string, _onText?: unknown, onToolUse?: (s: string) => void) => {
-          if (onToolUse) onToolUse("running tests");
-          return makeResult({ assistantText: "NO_GAPS_FOUND" });
+      let pipedOnToolUse: ((s: string) => void) | undefined;
+      (gapAgent.pipe as ReturnType<typeof vi.fn>).mockImplementation(
+        (_onText: unknown, onToolUse: (s: string) => void) => {
+          pipedOnToolUse = onToolUse;
         },
       );
+      (gapAgent.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        pipedOnToolUse?.("running tests");
+        return makeResult({ assistantText: "NO_GAPS_FOUND" });
+      });
       spawner.spawn.mockReturnValue(gapAgent);
       uc.tddAgent = makeAgent();
 
@@ -848,6 +851,48 @@ describe("RunOrchestration", () => {
     });
   });
 
+  describe("Slice 4: per-call callback removal", () => {
+    it("onToolUse method does not exist", () => {
+      const { uc } = makeUc();
+      expect((uc as any).onToolUse).toBeUndefined();
+    });
+
+    it("gapAnalysis sends without per-call onToolUse callbacks", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ gapDisabled: false });
+      const { uc, git, spawner } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(true);
+      const gapAgent = makeAgent({ assistantText: "NO_GAPS_FOUND" });
+      spawner.spawn.mockReturnValue(gapAgent);
+      uc.tddAgent = makeAgent();
+
+      await uc.gapAnalysis(
+        { name: "G1", slices: [makeSlice()] },
+        "sha0",
+      );
+
+      const sendCall = (gapAgent.send as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(sendCall[2]).toBeUndefined();
+    });
+
+    it("finalPasses sends without per-call onToolUse callbacks", async () => {
+      const ports = makePorts();
+      const { uc, git, spawner, prompts } = makeUc(ports);
+      git.hasChanges.mockResolvedValue(true);
+      prompts.finalPasses.mockReturnValue([
+        { name: "Type check", prompt: "check" },
+      ]);
+      const finalAgent = makeAgent({ assistantText: "NO_ISSUES_FOUND" });
+      spawner.spawn.mockReturnValue(finalAgent);
+      uc.tddAgent = makeAgent();
+
+      await uc.finalPasses("sha0");
+
+      const sendCall = (finalAgent.send as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(sendCall[2]).toBeUndefined();
+    });
+  });
+
   describe("Slice 14: gapAnalysis", () => {
     const makeGroup = (): Group => ({
       name: "TestGroup",
@@ -915,14 +960,6 @@ describe("RunOrchestration", () => {
       expect(tddAgent.send).toHaveBeenCalled();
       expect(reviewAgent.send).toHaveBeenCalled();
       expect(gapAgent.kill).toHaveBeenCalled();
-    });
-  });
-
-  describe("Slice 14: onToolUse", () => {
-    it("calls progressSink.setActivity", () => {
-      const { uc, progressSink } = makeUc();
-      uc.onToolUse("running tests");
-      expect(progressSink.setActivity).toHaveBeenCalledWith("running tests");
     });
   });
 
