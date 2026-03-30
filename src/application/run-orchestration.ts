@@ -14,6 +14,7 @@ import { isCleanReview } from "../domain/review-check.js";
 import { isAlreadyImplemented } from "../domain/transition.js";
 import { shouldReview } from "../domain/review.js";
 import { CreditExhaustedError } from "../domain/errors.js";
+import { advanceState } from "../domain/state.js";
 
 export type PlanThenExecuteResult = {
   readonly tddResult: AgentResult;
@@ -129,11 +130,8 @@ export class RunOrchestration {
         groupSliceCount: group.slices.length,
         groupCompleted: 0,
       });
-      this.state = {
-        ...this.state,
-        tddSessionId: this.tddAgent.sessionId,
-        reviewSessionId: this.reviewAgent!.sessionId,
-      };
+      this.state = advanceState(this.state, { kind: "agentSpawned", role: "tdd", sessionId: this.tddAgent.sessionId });
+      this.state = advanceState(this.state, { kind: "agentSpawned", role: "review", sessionId: this.reviewAgent!.sessionId });
       await this.persistence.save(this.state);
       const groupBaseSha = await this.git.captureRef();
       let reviewBase = groupBaseSha;
@@ -175,7 +173,7 @@ export class RunOrchestration {
 
         if (pteResult.skipped) {
           this.sliceSkipFlag = false;
-          this.state = { ...this.state, lastCompletedSlice: slice.number };
+          this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
           await this.persistence.save(this.state);
           await this.respawnTdd();
           this.slicesCompleted++;
@@ -236,7 +234,7 @@ export class RunOrchestration {
       await this.commitSweep(group.name);
 
       // Mark group complete
-      this.state = { ...this.state, lastCompletedGroup: group.name };
+      this.state = advanceState(this.state, { kind: "groupDone", groupName: group.name });
       await this.persistence.save(this.state);
 
       // Inter-group transition
@@ -363,11 +361,7 @@ export class RunOrchestration {
     const headAfterTdd = await this.git.captureRef();
 
     if (isAlreadyImplemented(tddText, headAfterTdd, reviewBase)) {
-      this.state = {
-        ...this.state,
-        lastSliceImplemented: slice.number,
-        lastCompletedSlice: slice.number,
-      };
+      this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
       await this.persistence.save(this.state);
       this.slicesCompleted++;
       return { reviewBase, skipped: false };
@@ -387,17 +381,13 @@ export class RunOrchestration {
       return { reviewBase, skipped: true };
     }
 
-    this.state = {
-      ...this.state,
-      lastSliceImplemented: slice.number,
-      reviewBaseSha: verifyBaseSha,
-    };
+    this.state = advanceState(this.state, { kind: "sliceImplemented", sliceNumber: slice.number, reviewBaseSha: verifyBaseSha });
     await this.persistence.save(this.state);
 
     // Review-fix loop — gated on minimum diff threshold
     const diffStats = await this.git.measureDiff(reviewBase);
     if (!shouldReview(diffStats, this.config.reviewThreshold)) {
-      this.state = { ...this.state, lastCompletedSlice: slice.number };
+      this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
       await this.persistence.save(this.state);
       this.slicesCompleted++;
       return { reviewBase, skipped: false };
@@ -421,7 +411,7 @@ export class RunOrchestration {
       `Summarise what you just built for Slice ${slice.number} in this format exactly:\n\n## What was built\n<1-2 sentences>\n\n## Key decisions\n<2-4 bullet points>\n\n## Files touched\n<bulleted list>\n\n## Test coverage\n<1-2 sentences>\n\nBe concrete and specific. No filler.`,
     );
 
-    this.state = { ...this.state, lastCompletedSlice: slice.number };
+    this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
     await this.persistence.save(this.state);
     this.slicesCompleted++;
     this.gate.updateProgress({ activeAgent: undefined, activeAgentActivity: undefined });
@@ -757,7 +747,7 @@ export class RunOrchestration {
     this.tddAgent = this.agents.spawn("tdd", { cwd: this.config.cwd });
     await this.tddAgent.sendQuiet(this.prompts.rulesReminder("tdd"));
     this.tddIsFirst = true;
-    this.state = { ...this.state, tddSessionId: this.tddAgent.sessionId };
+    this.state = advanceState(this.state, { kind: "agentSpawned", role: "tdd", sessionId: this.tddAgent.sessionId });
     await this.persistence.save(this.state);
   }
 
@@ -776,11 +766,8 @@ export class RunOrchestration {
     ]);
     this.tddIsFirst = true;
     this.reviewIsFirst = true;
-    this.state = {
-      ...this.state,
-      tddSessionId: this.tddAgent.sessionId,
-      reviewSessionId: this.reviewAgent.sessionId,
-    };
+    this.state = advanceState(this.state, { kind: "agentSpawned", role: "tdd", sessionId: this.tddAgent.sessionId });
+    this.state = advanceState(this.state, { kind: "agentSpawned", role: "review", sessionId: this.reviewAgent.sessionId });
     await this.persistence.save(this.state);
   }
 }

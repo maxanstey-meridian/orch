@@ -1375,4 +1375,33 @@ describe("RunOrchestration", () => {
       expect(gate.teardown).toHaveBeenCalled();
     });
   });
+
+  describe("advanceState wiring", () => {
+    it("persistence.save is called with state reflecting agentSpawned after spawn", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, persistence } = makeUc(ports, config);
+      const tddAgent = { ...makeAgent(), sessionId: "tdd-111" } as unknown as AgentHandle;
+      const reviewAgent = { ...makeAgent(), sessionId: "rev-222" } as unknown as AgentHandle;
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent)
+        .mockReturnValue(makeAgent());
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      // The first save after agent spawn should contain session IDs set by advanceState
+      expect(persistence.save).toHaveBeenCalledWith(
+        expect.objectContaining({ tddSessionId: "tdd-111", reviewSessionId: "rev-222" }),
+      );
+    });
+  });
 });

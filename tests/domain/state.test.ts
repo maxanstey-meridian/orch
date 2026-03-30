@@ -72,4 +72,18 @@ describe("advanceState", () => {
     const next = advanceState(state, { kind: "agentSpawned", role: "tdd", sessionId: "new" });
     expect(next.tddSessionId).toBe("new");
   });
+
+  it("sliceImplemented sets lastSliceImplemented and reviewBaseSha", () => {
+    const next = advanceState({}, { kind: "sliceImplemented", sliceNumber: 3, reviewBaseSha: "abc123" });
+    expect(next).toEqual({ lastSliceImplemented: 3, reviewBaseSha: "abc123" });
+  });
+
+  it("sliceImplemented preserves existing tddSessionId and lastCompletedSlice", () => {
+    const state: OrchestratorState = { tddSessionId: "t1", lastCompletedSlice: 2 };
+    const next = advanceState(state, { kind: "sliceImplemented", sliceNumber: 3, reviewBaseSha: "abc123" });
+    expect(next.tddSessionId).toBe("t1");
+    expect(next.lastCompletedSlice).toBe(2);
+    expect(next.lastSliceImplemented).toBe(3);
+    expect(next.reviewBaseSha).toBe("abc123");
+  });
 });

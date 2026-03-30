@@ -16,7 +16,8 @@ export type StateEvent =
   | { readonly kind: "sliceDone"; readonly sliceNumber: number }
   | { readonly kind: "groupDone"; readonly groupName: string }
   | { readonly kind: "agentSpawned"; readonly role: "tdd" | "review"; readonly sessionId: string }
-  | { readonly kind: "reviewBaseCaptured"; readonly sha: string };
+  | { readonly kind: "reviewBaseCaptured"; readonly sha: string }
+  | { readonly kind: "sliceImplemented"; readonly sliceNumber: number; readonly reviewBaseSha: string };
 
 export const advanceState = (state: OrchestratorState, event: StateEvent): OrchestratorState => {
   switch (event.kind) {
@@ -30,5 +31,7 @@ export const advanceState = (state: OrchestratorState, event: StateEvent): Orche
         : { ...state, reviewSessionId: event.sessionId };
     case "reviewBaseCaptured":
       return { ...state, reviewBaseSha: event.sha };
+    case "sliceImplemented":
+      return { ...state, lastSliceImplemented: event.sliceNumber, reviewBaseSha: event.reviewBaseSha };
   }
 };
