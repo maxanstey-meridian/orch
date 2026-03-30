@@ -120,6 +120,7 @@ export type AgentProcess = {
   readonly sessionId: string;
   readonly style: AgentStyle;
   readonly stderr: string;
+  readonly pipe: (onText: (text: string) => void, onToolUse: (summary: string) => void) => void;
 };
 
 export type CreateAgentOptions = {
@@ -305,5 +306,6 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
     },
     sessionId,
     style: opts.style,
+    pipe: () => {},
   } satisfies AgentHandle;
 };

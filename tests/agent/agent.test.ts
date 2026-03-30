@@ -793,3 +793,29 @@ describe("createAgent + inject", () => {
     expect(() => agent.inject("should be no-op")).not.toThrow();
   });
 });
+
+describe("createAgent pipe", () => {
+  it("returns an object with a callable pipe method", async () => {
+    const script = await makeScript(
+      tempDir,
+      "agent.sh",
+      [
+        "while IFS= read -r line; do",
+        '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}\'',
+        '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+        "done",
+      ].join("\n"),
+    );
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: "impl", color: "cyan", badge: "I" },
+    });
+
+    expect(typeof agent.pipe).toBe("function");
+    expect(() => agent.pipe(() => {}, () => {})).not.toThrow();
+
+    agent.kill();
+  });
+});
