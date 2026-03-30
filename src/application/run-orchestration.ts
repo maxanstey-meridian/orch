@@ -15,6 +15,8 @@ import { isAlreadyImplemented } from "../domain/transition.js";
 import { shouldReview } from "../domain/review.js";
 import { CreditExhaustedError } from "../domain/errors.js";
 import { advanceState } from "../domain/state.js";
+import type { Phase } from "../domain/phase.js";
+import { transition } from "../domain/transition.js";
 
 export type PlanThenExecuteResult = {
   readonly tddResult: AgentResult;
@@ -35,6 +37,7 @@ export class RunOrchestration {
   ] as const;
 
   state: OrchestratorState = {};
+  phase: Phase = { kind: "Idle" };
   tddAgent: AgentHandle | null = null;
   reviewAgent: AgentHandle | null = null;
   verifyAgent: AgentHandle | null = null;
@@ -159,6 +162,7 @@ export class RunOrchestration {
         const verifyBaseSha = await this.git.captureRef();
 
         // Plan-then-execute with replan loop
+        this.phase = transition(this.phase, { kind: "StartPlanning", sliceNumber: slice.number });
         let replanAttempts = 0;
         let pteResult: PlanThenExecuteResult;
         do {
@@ -172,6 +176,7 @@ export class RunOrchestration {
         }
 
         if (pteResult.skipped) {
+          this.phase = { kind: "Idle" };
           this.sliceSkipFlag = false;
           this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
           await this.persistence.save(this.state);
@@ -217,6 +222,7 @@ export class RunOrchestration {
         // Post-TDD pipeline: verify → review → summary
         const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
         reviewBase = sliceResult.reviewBase;
+        this.phase = { kind: "Idle" };
 
         if (!sliceResult.skipped) {
           groupCompleted++;
@@ -260,6 +266,8 @@ export class RunOrchestration {
     forceAccept = false,
   ): Promise<PlanThenExecuteResult> {
     if (this.config.planDisabled) {
+      this.phase = transition(this.phase, { kind: "PlanReady", planText: "" });
+      this.phase = transition(this.phase, { kind: "PlanAccepted" });
       const prompt = this.tddIsFirst
         ? this.prompts.withBrief(this.prompts.tdd(sliceContent, undefined, sliceNumber))
         : this.prompts.tdd(sliceContent, undefined, sliceNumber);
@@ -269,6 +277,7 @@ export class RunOrchestration {
         "tdd-direct",
       );
       this.tddIsFirst = false;
+      this.phase = transition(this.phase, { kind: "ExecutionDone" });
       return { tddResult, skipped: false };
     }
 
@@ -285,12 +294,14 @@ export class RunOrchestration {
 
     if (this.sliceSkipFlag) {
       planAgent.kill();
+      this.phase = { kind: "Idle" };
       return { tddResult: planResult, skipped: true, planText: plan };
     }
 
     const hardInterruptGuidance = this.hardInterruptPending;
     if (hardInterruptGuidance) {
       planAgent.kill();
+      this.phase = { kind: "Idle" };
       return {
         tddResult: planResult,
         skipped: false,
@@ -301,18 +312,23 @@ export class RunOrchestration {
 
     planAgent.kill();
 
+    this.phase = transition(this.phase, { kind: "PlanReady", planText: plan });
+
     // ── Confirmation gate ──
     const noInteraction = forceAccept || this.config.noInteraction || this.config.auto;
     let operatorGuidance: string | undefined;
     if (!noInteraction) {
       const decision = await this.gate.confirmPlan(plan);
       if (decision.kind === "reject") {
+        this.phase = transition(this.phase, { kind: "PlanRejected" });
         return { tddResult: planResult, skipped: false, replan: true, planText: plan };
       }
       if (decision.kind === "edit") {
         operatorGuidance = decision.guidance;
       }
     }
+
+    this.phase = transition(this.phase, { kind: "PlanAccepted" });
 
     // ── Execute phase ──
     const executePrompt = this.prompts.tddExecute(
@@ -335,10 +351,12 @@ export class RunOrchestration {
         this.tddAgent!,
         "tdd-execute-retry",
       );
+      this.phase = transition(this.phase, { kind: "ExecutionDone" });
       return { tddResult: retryResult, skipped: false, planText: plan };
     }
 
     if (this.sliceSkipFlag) {
+      this.phase = { kind: "Idle" };
       return { tddResult, skipped: true, planText: plan };
     }
 
@@ -348,6 +366,7 @@ export class RunOrchestration {
     }
 
     this.tddIsFirst = false;
+    this.phase = transition(this.phase, { kind: "ExecutionDone" });
     return { tddResult, skipped: false, planText: plan };
   }
 
@@ -361,6 +380,7 @@ export class RunOrchestration {
     const headAfterTdd = await this.git.captureRef();
 
     if (isAlreadyImplemented(tddText, headAfterTdd, reviewBase)) {
+      this.phase = { kind: "Idle" };
       this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
       await this.persistence.save(this.state);
       this.slicesCompleted++;
@@ -381,12 +401,16 @@ export class RunOrchestration {
       return { reviewBase, skipped: true };
     }
 
+    this.phase = transition(this.phase, { kind: "VerifyPassed" });
+    this.phase = transition(this.phase, { kind: "CompletenessOk" });
+
     this.state = advanceState(this.state, { kind: "sliceImplemented", sliceNumber: slice.number, reviewBaseSha: verifyBaseSha });
     await this.persistence.save(this.state);
 
     // Review-fix loop — gated on minimum diff threshold
     const diffStats = await this.git.measureDiff(reviewBase);
     if (!shouldReview(diffStats, this.config.reviewThreshold)) {
+      this.phase = transition(this.phase, { kind: "SliceComplete" });
       this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
       await this.persistence.save(this.state);
       this.slicesCompleted++;
@@ -405,6 +429,8 @@ export class RunOrchestration {
     if (this.sliceSkipFlag) {
       return { reviewBase: newReviewBase, skipped: true };
     }
+
+    this.phase = transition(this.phase, { kind: "ReviewClean" });
 
     // Slice summary
     await this.tddAgent!.sendQuiet(
@@ -522,6 +548,7 @@ export class RunOrchestration {
     let parsed = parseVerifyResult(verifyResult.assistantText ?? "");
 
     if (!parsed.passed) {
+      this.phase = transition(this.phase, { kind: "VerifyFailed" });
       // Send failures to TDD for fixing
       const failureContext =
         parsed.newFailures.length > 0
@@ -535,6 +562,7 @@ export class RunOrchestration {
       );
       await this.checkCredit(fixResult, this.tddAgent!);
 
+      this.phase = transition(this.phase, { kind: "ExecutionDone" });
       // Re-verify
       const reVerifyResult = await this.withRetry(
         () => this.verifyAgent!.send(
@@ -566,6 +594,8 @@ export class RunOrchestration {
 
   async finalPasses(runBaseSha: string): Promise<void> {
     if (!(await this.git.hasChanges(runBaseSha))) return;
+
+    this.phase = transition(this.phase, { kind: "StartFinalPasses" });
 
     const passes = this.prompts.finalPasses(runBaseSha);
 
@@ -608,11 +638,15 @@ export class RunOrchestration {
         }
       }
     }
+
+    this.phase = transition(this.phase, { kind: "AllPassesDone" });
   }
 
   async gapAnalysis(group: Group, groupBaseSha: string): Promise<void> {
     if (!(await this.git.hasChanges(groupBaseSha))) return;
     if (this.config.gapDisabled) return;
+
+    this.phase = transition(this.phase, { kind: "StartGap", groupName: group.name });
 
     const groupContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
     const gapAgent = this.agents.spawn("gap", { cwd: this.config.cwd });
@@ -627,6 +661,7 @@ export class RunOrchestration {
 
     if (gapResult.exitCode !== 0 || gapText.includes("NO_GAPS_FOUND")) {
       gapAgent.kill();
+      this.phase = transition(this.phase, { kind: "GapDone" });
       return;
     }
 
@@ -656,6 +691,7 @@ export class RunOrchestration {
     }
 
     gapAgent.kill();
+    this.phase = transition(this.phase, { kind: "GapDone" });
   }
 
   onToolUse(summary: string): void {

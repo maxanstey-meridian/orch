@@ -173,6 +173,11 @@ describe("transition", () => {
     expect(result).toEqual({ kind: "Complete" });
   });
 
+  it("Idle + ExecutionDone throws", () => {
+    expect(() => transition({ kind: "Idle" }, { kind: "ExecutionDone" }))
+      .toThrow("Illegal transition: Idle + ExecutionDone");
+  });
+
   it("Idle + ReviewIssues throws", () => {
     expect(() => transition({ kind: "Idle" }, { kind: "ReviewIssues" }))
       .toThrow("Illegal transition: Idle + ReviewIssues");
