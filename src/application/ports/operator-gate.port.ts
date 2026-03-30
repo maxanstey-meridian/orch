@@ -14,6 +14,3 @@ export abstract class OperatorGate {
   abstract askUser(prompt: string): Promise<string>;
   abstract confirmNextGroup(groupLabel: string): Promise<boolean>;
 }
-
-// Backward-compat re-exports — consumers migrate in Slice 5
-export type { InterruptHandler, ProgressUpdate } from './progress-sink.port.js';

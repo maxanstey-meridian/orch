@@ -7,6 +7,7 @@ import {
   gitOpsFactory,
   promptBuilderFactory,
   operatorGateFactory,
+  progressSinkFactory,
 } from "./infrastructure/factories.js";
 import { RunOrchestration } from "./application/run-orchestration.js";
 
@@ -19,4 +20,5 @@ export const createContainer = (config: OrchestratorConfig, hud: Hud) =>
     .provideFactory("gitOps", gitOpsFactory)
     .provideFactory("promptBuilder", promptBuilderFactory)
     .provideFactory("operatorGate", operatorGateFactory)
+    .provideFactory("progressSink", progressSinkFactory)
     .provideClass("runOrchestration", RunOrchestration);

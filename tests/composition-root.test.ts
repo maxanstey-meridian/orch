@@ -60,15 +60,14 @@ describe("composition-root", () => {
     expect(orch).toBeInstanceOf(RunOrchestration);
   });
 
-  it("resolved gate teardown is callable", async () => {
+  it("resolved progressSink teardown is callable", async () => {
     const { createContainer } = await import("../src/composition-root.js");
     const config = makeConfig();
-    const mockTeardown = vi.fn();
     const dummyHud = {
       askUser: vi.fn(),
       update: vi.fn(),
       setActivity: vi.fn(),
-      teardown: mockTeardown,
+      teardown: vi.fn(),
       onKey: vi.fn(),
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
@@ -78,8 +77,8 @@ describe("composition-root", () => {
     } as any;
 
     const container = createContainer(config, dummyHud);
-    const gate = container.resolve("operatorGate");
-    // noInteraction = true → SilentOperatorGate → teardown is a no-op, shouldn't throw
-    expect(() => gate.teardown()).not.toThrow();
+    const sink = container.resolve("progressSink");
+    // noInteraction = true → SilentProgressSink → teardown is a no-op, shouldn't throw
+    expect(() => sink.teardown()).not.toThrow();
   });
 });

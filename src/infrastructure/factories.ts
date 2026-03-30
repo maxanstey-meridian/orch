@@ -4,8 +4,9 @@ import { ClaudeAgentSpawner } from "./claude-agent-spawner.js";
 import { FsStatePersistence } from "./fs-state-persistence.js";
 import { ChildProcessGitOps } from "./child-process-git-ops.js";
 import { DefaultPromptBuilder } from "./default-prompt-builder.js";
-import { InkOperatorGate, SilentOperatorGate } from "../ui/ink-operator-gate.js";
+import { InkOperatorGate, SilentOperatorGate, InkProgressSink, SilentProgressSink } from "../ui/ink-operator-gate.js";
 import type { OperatorGate } from "../application/ports/operator-gate.port.js";
+import type { ProgressSink } from "../application/ports/progress-sink.port.js";
 
 export const agentSpawnerFactory = (config: OrchestratorConfig) =>
   new ClaudeAgentSpawner(
@@ -29,3 +30,7 @@ promptBuilderFactory.inject = ["config"] as const;
 export const operatorGateFactory = (config: OrchestratorConfig, hud: Hud): OperatorGate =>
   config.noInteraction ? new SilentOperatorGate() : new InkOperatorGate(hud);
 operatorGateFactory.inject = ["config", "hud"] as const;
+
+export const progressSinkFactory = (config: OrchestratorConfig, hud: Hud): ProgressSink =>
+  config.noInteraction ? new SilentProgressSink() : new InkProgressSink(hud);
+progressSinkFactory.inject = ["config", "hud"] as const;

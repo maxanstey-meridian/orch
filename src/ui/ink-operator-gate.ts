@@ -2,9 +2,12 @@ import {
   OperatorGate,
   type GateDecision,
   type VerifyDecision,
+} from "../application/ports/operator-gate.port.js";
+import {
+  ProgressSink,
   type InterruptHandler,
   type ProgressUpdate,
-} from "../application/ports/operator-gate.port.js";
+} from "../application/ports/progress-sink.port.js";
 import type { Hud } from "./hud.js";
 
 export class SilentOperatorGate extends OperatorGate {
@@ -23,7 +26,9 @@ export class SilentOperatorGate extends OperatorGate {
   async confirmNextGroup(_groupLabel: string): Promise<boolean> {
     return true;
   }
+}
 
+export class SilentProgressSink extends ProgressSink {
   registerInterrupts(): InterruptHandler {
     return {
       onGuide: () => {},
@@ -76,6 +81,12 @@ export class InkOperatorGate extends OperatorGate {
   async confirmNextGroup(groupLabel: string): Promise<boolean> {
     const answer = await this.hud.askUser(`Continue to ${groupLabel}? (Y/n): `);
     return answer.trim().toLowerCase() !== "n";
+  }
+}
+
+export class InkProgressSink extends ProgressSink {
+  constructor(private readonly hud: Hud) {
+    super();
   }
 
   registerInterrupts(): InterruptHandler {

@@ -100,6 +100,34 @@ describe("operatorGateFactory", () => {
   });
 });
 
+describe("progressSinkFactory", () => {
+  it("returns SilentProgressSink when noInteraction", async () => {
+    const { progressSinkFactory } = await import("../../src/infrastructure/factories.js");
+    const { SilentProgressSink } = await import("../../src/ui/ink-operator-gate.js");
+    const config = makeConfig({ noInteraction: true });
+    const dummyHud = {} as any;
+    const result = progressSinkFactory(config, dummyHud);
+    expect(result).toBeInstanceOf(SilentProgressSink);
+    expect(progressSinkFactory.inject).toEqual(["config", "hud"]);
+  });
+
+  it("returns InkProgressSink when interactive", async () => {
+    const { progressSinkFactory } = await import("../../src/infrastructure/factories.js");
+    const { InkProgressSink } = await import("../../src/ui/ink-operator-gate.js");
+    const config = makeConfig({ noInteraction: false });
+    const dummyHud = {
+      update: vi.fn(),
+      teardown: vi.fn(),
+      onKey: vi.fn(),
+      onInterruptSubmit: vi.fn(),
+      startPrompt: vi.fn(),
+      setActivity: vi.fn(),
+    } as any;
+    const result = progressSinkFactory(config, dummyHud);
+    expect(result).toBeInstanceOf(InkProgressSink);
+  });
+});
+
 describe("promptBuilderFactory", () => {
   it("creates DefaultPromptBuilder from config brief, planContent, and rules", async () => {
     const { promptBuilderFactory } = await import("../../src/infrastructure/factories.js");

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { SilentOperatorGate, InkOperatorGate } from "../../src/ui/ink-operator-gate.js";
+import { SilentOperatorGate, InkOperatorGate, InkProgressSink, SilentProgressSink } from "../../src/ui/ink-operator-gate.js";
 import type { Hud } from "../../src/ui/hud.js";
 
 const createMockHud = (overrides: Partial<Hud> = {}): Hud => ({
@@ -41,18 +41,32 @@ describe("SilentOperatorGate", () => {
     expect(result).toBe(true);
   });
 
-  it("display methods are callable no-ops", () => {
-    const gate = new SilentOperatorGate();
-    expect(() => gate.updateProgress({})).not.toThrow();
-    expect(() => gate.setActivity("x")).not.toThrow();
-    expect(() => gate.teardown()).not.toThrow();
+});
 
-    const handler = gate.registerInterrupts();
-    expect(handler).toHaveProperty("onGuide");
-    expect(handler).toHaveProperty("onInterrupt");
+describe("SilentProgressSink", () => {
+  it("registerInterrupts returns no-op handlers", () => {
+    const sink = new SilentProgressSink();
+    const handler = sink.registerInterrupts();
+    expect(typeof handler.onGuide).toBe("function");
+    expect(typeof handler.onInterrupt).toBe("function");
     // Callbacks are no-ops — calling them doesn't throw
     handler.onGuide(() => {});
     handler.onInterrupt(() => {});
+  });
+
+  it("updateProgress is a no-op", () => {
+    const sink = new SilentProgressSink();
+    expect(() => sink.updateProgress({})).not.toThrow();
+  });
+
+  it("setActivity is a no-op", () => {
+    const sink = new SilentProgressSink();
+    expect(() => sink.setActivity("x")).not.toThrow();
+  });
+
+  it("teardown is a no-op", () => {
+    const sink = new SilentProgressSink();
+    expect(() => sink.teardown()).not.toThrow();
   });
 });
 
@@ -173,11 +187,14 @@ describe("InkOperatorGate", () => {
     });
   });
 
+});
+
+describe("InkProgressSink", () => {
   describe("registerInterrupts", () => {
     it("returns InterruptHandler and wires hud handlers", () => {
       const hud = createMockHud();
-      const gate = new InkOperatorGate(hud);
-      const handler = gate.registerInterrupts();
+      const sink = new InkProgressSink(hud);
+      const handler = sink.registerInterrupts();
 
       expect(handler).toHaveProperty("onGuide");
       expect(handler).toHaveProperty("onInterrupt");
@@ -187,18 +204,16 @@ describe("InkOperatorGate", () => {
 
     it("dispatches guide text to onGuide callback", () => {
       const hud = createMockHud();
-      const gate = new InkOperatorGate(hud);
-      const handler = gate.registerInterrupts();
+      const sink = new InkProgressSink(hud);
+      const handler = sink.registerInterrupts();
 
       const guideMessages: string[] = [];
       handler.onGuide((text) => guideMessages.push(text));
 
-      // Simulate: user presses 'g' → hud.startPrompt('guide') called
       const keyHandler = vi.mocked(hud.onKey).mock.calls[0][0];
       keyHandler("g");
       expect(hud.startPrompt).toHaveBeenCalledWith("guide");
 
-      // Simulate: user submits text in guide mode
       const submitHandler = vi.mocked(hud.onInterruptSubmit).mock.calls[0][0];
       submitHandler("fix the tests", "guide");
       expect(guideMessages).toEqual(["fix the tests"]);
@@ -206,8 +221,8 @@ describe("InkOperatorGate", () => {
 
     it("unrecognized key does not call hud.startPrompt", () => {
       const hud = createMockHud();
-      const gate = new InkOperatorGate(hud);
-      gate.registerInterrupts();
+      const sink = new InkProgressSink(hud);
+      sink.registerInterrupts();
 
       const keyHandler = vi.mocked(hud.onKey).mock.calls[0][0];
       keyHandler("x");
@@ -217,9 +232,8 @@ describe("InkOperatorGate", () => {
 
     it("submit before onGuide/onInterrupt registered does not throw", () => {
       const hud = createMockHud();
-      const gate = new InkOperatorGate(hud);
-      gate.registerInterrupts();
-      // Don't register any callbacks via handler.onGuide / handler.onInterrupt
+      const sink = new InkProgressSink(hud);
+      sink.registerInterrupts();
 
       const submitHandler = vi.mocked(hud.onInterruptSubmit).mock.calls[0][0];
       expect(() => submitHandler("some text", "guide")).not.toThrow();
@@ -228,8 +242,8 @@ describe("InkOperatorGate", () => {
 
     it("dispatches interrupt text to onInterrupt callback", () => {
       const hud = createMockHud();
-      const gate = new InkOperatorGate(hud);
-      const handler = gate.registerInterrupts();
+      const sink = new InkProgressSink(hud);
+      const handler = sink.registerInterrupts();
 
       const interruptMessages: string[] = [];
       handler.onInterrupt((text) => interruptMessages.push(text));
@@ -244,26 +258,24 @@ describe("InkOperatorGate", () => {
     });
   });
 
-  describe("display delegation", () => {
-    it("updateProgress delegates to hud.update", () => {
-      const hud = createMockHud();
-      const gate = new InkOperatorGate(hud);
-      gate.updateProgress({ completedSlices: 5 });
-      expect(hud.update).toHaveBeenCalledWith({ completedSlices: 5 });
-    });
+  it("updateProgress delegates to hud.update", () => {
+    const hud = createMockHud();
+    const sink = new InkProgressSink(hud);
+    sink.updateProgress({ completedSlices: 5 });
+    expect(hud.update).toHaveBeenCalledWith({ completedSlices: 5 });
+  });
 
-    it("setActivity delegates to hud.setActivity", () => {
-      const hud = createMockHud();
-      const gate = new InkOperatorGate(hud);
-      gate.setActivity("building...");
-      expect(hud.setActivity).toHaveBeenCalledWith("building...");
-    });
+  it("setActivity delegates to hud.setActivity", () => {
+    const hud = createMockHud();
+    const sink = new InkProgressSink(hud);
+    sink.setActivity("building...");
+    expect(hud.setActivity).toHaveBeenCalledWith("building...");
+  });
 
-    it("teardown delegates to hud.teardown", () => {
-      const hud = createMockHud();
-      const gate = new InkOperatorGate(hud);
-      gate.teardown();
-      expect(hud.teardown).toHaveBeenCalled();
-    });
+  it("teardown delegates to hud.teardown", () => {
+    const hud = createMockHud();
+    const sink = new InkProgressSink(hud);
+    sink.teardown();
+    expect(hud.teardown).toHaveBeenCalled();
   });
 });

@@ -71,6 +71,8 @@ const makePorts = () => {
     verifyFailed: vi.fn().mockResolvedValue({ kind: "retry" as const }),
     askUser: vi.fn().mockResolvedValue(""),
     confirmNextGroup: vi.fn().mockResolvedValue(true),
+  };
+  const progressSink = {
     registerInterrupts: vi.fn().mockReturnValue({
       onGuide: vi.fn(),
       onInterrupt: vi.fn(),
@@ -99,7 +101,7 @@ const makePorts = () => {
     withBrief: vi.fn().mockImplementation((p: string) => `brief: ${p}`),
     rulesReminder: vi.fn().mockReturnValue("rules reminder"),
   };
-  return { spawner, persistence, gate, git, prompts };
+  return { spawner, persistence, gate, progressSink, git, prompts };
 };
 
 const makeUc = (
@@ -113,6 +115,7 @@ const makeUc = (
     ports.git as any,
     ports.prompts as any,
     config,
+    ports.progressSink as any,
   );
   uc.retryDelayMs = 0;
   return { uc, ...ports };
@@ -130,7 +133,7 @@ describe("RunOrchestration", () => {
 
   describe("Cycles 2-4: withRetry", () => {
     it("retries on transient API error then succeeds", async () => {
-      const { uc, gate } = makeUc();
+      const { uc, progressSink } = makeUc();
       const agent = makeAgent();
       const failResult = makeResult({ exitCode: 1, resultText: "529 overloaded" });
       const okResult = makeResult({ assistantText: "done" });
@@ -140,7 +143,7 @@ describe("RunOrchestration", () => {
 
       expect(fn).toHaveBeenCalledTimes(2);
       expect(result).toBe(okResult);
-      expect(gate.setActivity).toHaveBeenCalled();
+      expect(progressSink.setActivity).toHaveBeenCalled();
     });
 
     it("throws CreditExhaustedError on terminal API error", async () => {
@@ -626,7 +629,7 @@ describe("RunOrchestration", () => {
 
     it("stops execution when operator chooses stop on verify failure", async () => {
       const ports = makePorts();
-      const { uc, spawner, gate } = makeUc(ports);
+      const { uc, spawner, gate, progressSink } = makeUc(ports);
       const verifyAgent = makeAgent({
         assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n",
       });
@@ -636,7 +639,7 @@ describe("RunOrchestration", () => {
       gate.verifyFailed.mockResolvedValue({ kind: "stop" as const });
 
       await expect(uc.verify(makeSlice(), "sha0")).rejects.toThrow("Operator stopped");
-      expect(gate.teardown).toHaveBeenCalled();
+      expect(progressSink.teardown).toHaveBeenCalled();
     });
   });
 
@@ -700,10 +703,10 @@ describe("RunOrchestration", () => {
   });
 
   describe("Slice 14: onToolUse wiring", () => {
-    it("gate.setActivity called via onToolUse callback in gap sends", async () => {
+    it("progressSink.setActivity called via onToolUse callback in gap sends", async () => {
       const ports = makePorts();
       const config = makeConfig({ gapDisabled: false });
-      const { uc, git, spawner, gate } = makeUc(ports, config);
+      const { uc, git, spawner, progressSink } = makeUc(ports, config);
       git.hasChanges.mockResolvedValue(true);
 
       // Capture the onToolUse callback and invoke it
@@ -722,7 +725,7 @@ describe("RunOrchestration", () => {
         "sha0",
       );
 
-      expect(gate.setActivity).toHaveBeenCalledWith("running tests");
+      expect(progressSink.setActivity).toHaveBeenCalledWith("running tests");
     });
   });
 
@@ -915,10 +918,10 @@ describe("RunOrchestration", () => {
   });
 
   describe("Slice 14: onToolUse", () => {
-    it("calls gate.setActivity", () => {
-      const { uc, gate } = makeUc();
+    it("calls progressSink.setActivity", () => {
+      const { uc, progressSink } = makeUc();
       uc.onToolUse("running tests");
-      expect(gate.setActivity).toHaveBeenCalledWith("running tests");
+      expect(progressSink.setActivity).toHaveBeenCalledWith("running tests");
     });
   });
 
@@ -1235,7 +1238,7 @@ describe("RunOrchestration", () => {
         reviewSkill: null,
       });
       ports.persistence.load.mockResolvedValue({ lastCompletedSlice: 2 });
-      const { uc, spawner, gate } = makeUc(ports, config);
+      const { uc, spawner, progressSink } = makeUc(ports, config);
       const tddAgent = makeAgent();
       const reviewAgent = makeAgent();
       spawner.spawn
@@ -1253,7 +1256,7 @@ describe("RunOrchestration", () => {
       // The tddAgent.send calls: 1 for slice 3 only
       expect(tddAgent.send).toHaveBeenCalledTimes(1);
       // Progress updated with completedSlices for G1
-      expect(gate.updateProgress).toHaveBeenCalledWith(
+      expect(progressSink.updateProgress).toHaveBeenCalledWith(
         expect.objectContaining({ completedSlices: 2 }),
       );
     });
@@ -1354,8 +1357,8 @@ describe("RunOrchestration", () => {
   });
 
   describe("dispose", () => {
-    it("kills all agents and tears down gate", async () => {
-      const { uc, spawner, gate } = makeUc();
+    it("kills all agents and tears down progressSink", async () => {
+      const { uc, spawner, progressSink } = makeUc();
       const tddAgent = makeAgent();
       const reviewAgent = makeAgent();
       const verifyAgent = makeAgent();
@@ -1379,13 +1382,13 @@ describe("RunOrchestration", () => {
       expect(tddAgent.kill).toHaveBeenCalled();
       expect(reviewAgent.kill).toHaveBeenCalled();
       expect(verifyAgent.kill).toHaveBeenCalled();
-      expect(gate.teardown).toHaveBeenCalled();
+      expect(progressSink.teardown).toHaveBeenCalled();
     });
 
     it("is safe to call before execute (no agents spawned)", () => {
-      const { uc, gate } = makeUc();
+      const { uc, progressSink } = makeUc();
       expect(() => uc.dispose()).not.toThrow();
-      expect(gate.teardown).toHaveBeenCalled();
+      expect(progressSink.teardown).toHaveBeenCalled();
     });
   });
 

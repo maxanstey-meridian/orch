@@ -1,6 +1,7 @@
 import type { AgentSpawner, AgentHandle } from "./ports/agent-spawner.port.js";
 import type { StatePersistence } from "./ports/state-persistence.port.js";
 import type { OperatorGate } from "./ports/operator-gate.port.js";
+import type { ProgressSink } from "./ports/progress-sink.port.js";
 import type { GitOps } from "./ports/git-ops.port.js";
 import type { PromptBuilder } from "./ports/prompt-builder.port.js";
 import type { OrchestratorConfig } from "../domain/config.js";
@@ -34,6 +35,7 @@ export class RunOrchestration {
     "gitOps",
     "promptBuilder",
     "config",
+    "progressSink",
   ] as const;
 
   state: OrchestratorState = {};
@@ -55,13 +57,14 @@ export class RunOrchestration {
     private readonly git: GitOps,
     private readonly prompts: PromptBuilder,
     private readonly config: OrchestratorConfig,
+    private readonly progressSink: ProgressSink,
   ) {}
 
   dispose(): void {
     if (this.tddAgent) this.tddAgent.kill();
     if (this.reviewAgent) this.reviewAgent.kill();
     if (this.verifyAgent) this.verifyAgent.kill();
-    this.gate.teardown();
+    this.progressSink.teardown();
   }
 
   async execute(
@@ -103,7 +106,7 @@ export class RunOrchestration {
     });
 
     // Register keyboard interrupts
-    const interrupts = this.gate.registerInterrupts();
+    const interrupts = this.progressSink.registerInterrupts();
     interrupts.onGuide((text) => {
       if (this.tddAgent) this.tddAgent.inject(text);
     });
@@ -123,12 +126,12 @@ export class RunOrchestration {
         group.slices.every((s) => s.number <= this.state.lastCompletedSlice!);
       if (allSlicesDone) {
         this.slicesCompleted += group.slices.length;
-        this.gate.updateProgress({ completedSlices: this.slicesCompleted });
+        this.progressSink.updateProgress({ completedSlices: this.slicesCompleted });
         continue;
       }
 
       // ── Slice loop ──
-      this.gate.updateProgress({
+      this.progressSink.updateProgress({
         groupName: group.name,
         groupSliceCount: group.slices.length,
         groupCompleted: 0,
@@ -147,14 +150,14 @@ export class RunOrchestration {
         ) {
           this.slicesCompleted++;
           groupCompleted++;
-          this.gate.updateProgress({
+          this.progressSink.updateProgress({
             completedSlices: this.slicesCompleted,
             groupCompleted,
           });
           continue;
         }
 
-        this.gate.updateProgress({
+        this.progressSink.updateProgress({
           currentSlice: { number: slice.number },
           completedSlices: this.slicesCompleted,
         });
@@ -183,7 +186,7 @@ export class RunOrchestration {
           await this.respawnTdd();
           this.slicesCompleted++;
           groupCompleted++;
-          this.gate.updateProgress({
+          this.progressSink.updateProgress({
             completedSlices: this.slicesCompleted,
             groupCompleted,
           });
@@ -227,7 +230,7 @@ export class RunOrchestration {
 
         if (!sliceResult.skipped) {
           groupCompleted++;
-          this.gate.updateProgress({
+          this.progressSink.updateProgress({
             completedSlices: this.slicesCompleted,
             groupCompleted,
           });
@@ -441,7 +444,7 @@ export class RunOrchestration {
     this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
     await this.persistence.save(this.state);
     this.slicesCompleted++;
-    this.gate.updateProgress({ activeAgent: undefined, activeAgentActivity: undefined });
+    this.progressSink.updateProgress({ activeAgent: undefined, activeAgentActivity: undefined });
     return { reviewBase: newReviewBase, skipped: false };
   }
 
@@ -454,7 +457,7 @@ export class RunOrchestration {
 
       if (!(await this.git.hasChanges(reviewSha))) break;
 
-      this.gate.updateProgress({
+      this.progressSink.updateProgress({
         activeAgent: "REV",
         activeAgentActivity: `reviewing (cycle ${cycle})...`,
       });
@@ -540,7 +543,7 @@ export class RunOrchestration {
   }
 
   async verify(slice: Slice, verifyBaseSha: string): Promise<boolean> {
-    this.gate.updateProgress({ activeAgent: "VFY", activeAgentActivity: "verifying..." });
+    this.progressSink.updateProgress({ activeAgent: "VFY", activeAgentActivity: "verifying..." });
 
     if (!this.verifyAgent) {
       this.verifyAgent = this.agents.spawn("verify", { cwd: this.config.cwd });
@@ -587,7 +590,7 @@ export class RunOrchestration {
         const decision = await this.gate.verifyFailed(slice.number, failSummary);
 
         if (decision.kind === "stop") {
-          this.gate.teardown();
+          this.progressSink.teardown();
           throw new Error("Operator stopped");
         }
         if (decision.kind === "skip") {
@@ -704,7 +707,7 @@ export class RunOrchestration {
   }
 
   onToolUse(summary: string): void {
-    this.gate.setActivity(summary);
+    this.progressSink.setActivity(summary);
   }
 
   async commitSweep(label: string): Promise<void> {
@@ -772,7 +775,7 @@ export class RunOrchestration {
         throw new Error(`Max retries (${maxRetries}) exceeded for ${label}: ${apiError.kind}`);
       }
 
-      this.gate.setActivity(`waiting to retry (${apiError.kind})...`);
+      this.progressSink.setActivity(`waiting to retry (${apiError.kind})...`);
       await new Promise((r) => setTimeout(r, delayMs * attempt));
     }
   }
