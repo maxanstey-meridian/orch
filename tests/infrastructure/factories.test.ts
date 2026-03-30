@@ -46,6 +46,27 @@ describe("agentSpawnerFactory", () => {
     expect(agentSpawnerFactory.inject).toEqual(["config"]);
   });
 
+  it("passes config skills and cwd through to the spawner", async () => {
+    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
+    const spawnClaudeAgent = vi.mocked(mockModule.spawnClaudeAgent);
+    spawnClaudeAgent.mockClear();
+
+    const { agentSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const config = makeConfig({
+      tddSkill: "my-tdd-skill",
+      cwd: "/custom/cwd",
+    });
+    const spawner = agentSpawnerFactory(config);
+    spawner.spawn("tdd");
+
+    expect(spawnClaudeAgent).toHaveBeenCalledWith(
+      expect.anything(),      // style
+      "my-tdd-skill",         // systemPrompt from skills.tdd
+      undefined,              // resumeSessionId
+      "/custom/cwd",          // cwd from config
+    );
+  });
+
   it("throws for codex provider (not yet implemented)", async () => {
     const { agentSpawnerFactory } = await import("../../src/infrastructure/factories.js");
     const config = makeConfig({ provider: "codex" });
@@ -148,6 +169,17 @@ describe("planGeneratorSpawnerFactory", () => {
     expect(() => planGeneratorSpawnerFactory({ provider: "codex", cwd: "/tmp" })).toThrow(
       "not yet implemented",
     );
+  });
+
+  it("returned spawner produces an object with send and kill", async () => {
+    const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = planGeneratorSpawnerFactory({ provider: "claude", cwd: "/tmp" });
+    const agent = spawner();
+
+    expect(agent).toHaveProperty("send");
+    expect(agent).toHaveProperty("kill");
+    expect(typeof agent.send).toBe("function");
+    expect(typeof agent.kill).toBe("function");
   });
 
   it("passes cwd to spawnClaudeGeneratePlanAgent", async () => {

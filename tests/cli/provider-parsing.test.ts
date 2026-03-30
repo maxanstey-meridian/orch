@@ -31,4 +31,10 @@ describe("parseProviderFlag", () => {
       /--provider requires a value/i,
     );
   });
+
+  it("finds --provider amid other flags", () => {
+    expect(
+      parseProviderFlag(["--work", "plan.md", "--provider", "codex", "--auto"]),
+    ).toBe("codex");
+  });
 });
