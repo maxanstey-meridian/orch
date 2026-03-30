@@ -1,4 +1,5 @@
 #!/usr/bin/env npx ts-node
+// smoke test
 /**
  * main.ts — TDD orchestrator CLI
  *
@@ -260,6 +261,7 @@ const main = async () => {
   // Stash unrelated working tree changes (skip if using worktree — it's clean by definition)
   const didStash = skipStash ? false : await stashBackup(cwd);
   if (didStash) log(`${ts()} ${a.dim}Backed up working tree to git stash${a.reset}`);
+  log(`${ts()} ${a.dim}Initialising agents — this may take a few minutes...${a.reset}`);
 
   const planContent = await readFile(planPath, "utf-8");
 
