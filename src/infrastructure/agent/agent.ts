@@ -5,6 +5,7 @@ import { detectQuestion } from "./question-detector.js";
 
 export type { AgentStyle, AgentResult } from "../../domain/agent-types.js";
 import type { AgentStyle, AgentResult } from "../../domain/agent-types.js";
+import type { AgentHandle } from "../../application/ports/agent-spawner.port.js";
 
 type ToolUseBlock = {
   readonly type: "tool_use";
@@ -304,5 +305,5 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
     },
     sessionId,
     style: opts.style,
-  };
+  } satisfies AgentHandle;
 };
