@@ -471,6 +471,7 @@ export class RunOrchestration {
 
       if (!reviewText || isCleanReview(reviewText)) break;
 
+      this.phase = transition(this.phase, { kind: "ReviewIssues" });
       priorFindings = reviewText;
       const preFixSha = await this.git.captureRef();
       const fixPrompt = this.prompts.tdd(content, reviewText);
@@ -510,6 +511,10 @@ export class RunOrchestration {
     const text = result.assistantText ?? "";
     if (text.includes("SLICE_COMPLETE")) return;
 
+    // Phase: Verifying → CompletenessCheck → Executing (issues found)
+    this.phase = transition(this.phase, { kind: "VerifyPassed" });
+    this.phase = transition(this.phase, { kind: "CompletenessIssues" });
+
     // Send findings to TDD for fixing
     const fixPrompt = this.prompts.tdd(
       slice.content,
@@ -526,6 +531,9 @@ export class RunOrchestration {
     if (fixResult.needsInput) {
       await this.followUp(fixResult, this.tddAgent!);
     }
+
+    // Phase: Executing → Verifying (ready for runSlice)
+    this.phase = transition(this.phase, { kind: "ExecutionDone" });
 
     await this.commitSweep(`Slice ${slice.number} completeness fix`);
   }

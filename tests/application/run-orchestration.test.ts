@@ -519,6 +519,7 @@ describe("RunOrchestration", () => {
       const reviewAgent = makeAgent({ assistantText: "found issues: fix X" });
       uc.reviewAgent = reviewAgent;
       uc.tddAgent = makeAgent();
+      uc.phase = { kind: "Reviewing", sliceNumber: 1, cycle: 1 };
       git.hasChanges.mockResolvedValue(true);
       git.captureRef.mockResolvedValue("sha1");
 
@@ -546,6 +547,7 @@ describe("RunOrchestration", () => {
       const ports = makePorts();
       const { uc, git, spawner, prompts } = makeUc(ports);
       git.hasChanges.mockResolvedValue(true);
+      uc.phase = { kind: "Verifying", sliceNumber: 1 };
       const completenessAgent = makeAgent({
         assistantText: "Missing: feature X not implemented",
       });
@@ -1798,6 +1800,104 @@ describe("RunOrchestration", () => {
         sliceNumber: 1,
         planText: "the plan",
         attempt: 1,
+      });
+    });
+    it("review issues fires ReviewIssues when review finds problems", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: "test",
+        reviewThreshold: 0,
+        maxReviewCycles: 2,
+      });
+      const { uc, spawner, git } = makeUc(ports, config);
+      git.captureRef.mockResolvedValue("sha1");
+      git.hasChanges.mockResolvedValue(true);
+      git.measureDiff.mockResolvedValue({ added: 10, removed: 0, total: 10 });
+
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      let reviewSendCount = 0;
+      let phaseAtSecondReview: unknown;
+      (reviewAgent.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        reviewSendCount++;
+        if (reviewSendCount === 1) {
+          return makeResult({ assistantText: "found issues: fix X" });
+        }
+        if (reviewSendCount === 2) {
+          phaseAtSecondReview = { ...uc.phase };
+        }
+        return makeResult({ assistantText: "REVIEW_CLEAN" });
+      });
+
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd") return tddAgent;
+        if (role === "review") return reviewAgent;
+        return makeAgent();
+      });
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      // After first review found issues, ReviewIssues should have fired,
+      // incrementing the cycle counter
+      expect(phaseAtSecondReview).toEqual({
+        kind: "Reviewing",
+        sliceNumber: 1,
+        cycle: 2,
+      });
+    });
+
+    it("completeness issues fires CompletenessIssues then loops back through Executing", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, git } = makeUc(ports, config);
+      // hasChanges: true for completenessCheck entry, false for finalPasses
+      git.hasChanges
+        .mockResolvedValueOnce(true)   // completenessCheck entry
+        .mockResolvedValueOnce(false); // finalPasses
+      git.measureDiff.mockResolvedValue({ added: 0, removed: 0, total: 0 });
+
+      const tddAgent = makeAgent();
+      let tddSendCount = 0;
+      let phaseAtCompletnessFix: unknown;
+      (tddAgent.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        tddSendCount++;
+        // First send is planThenExecute (plan disabled), second is completeness fix
+        if (tddSendCount === 2) {
+          phaseAtCompletnessFix = { ...uc.phase };
+        }
+        return makeResult();
+      });
+
+      const completenessAgent = makeAgent({
+        assistantText: "Missing: feature X not implemented",
+      });
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd") return tddAgent;
+        if (role === "review") return makeAgent();
+        if (role === "completeness") return completenessAgent;
+        return makeAgent();
+      });
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      expect(phaseAtCompletnessFix).toEqual({
+        kind: "Executing",
+        sliceNumber: 1,
+        planText: null,
       });
     });
   });
