@@ -656,9 +656,10 @@ describeIntegration("fingerprint force wiring (integration)", () => {
 
 // ─── Composition root integration ───────────────────────────────────────────
 
-vi.mock("../src/infrastructure/agent/agent-factory.js", () => ({
-  spawnAgent: vi.fn(),
-  spawnPlanAgent: vi.fn(),
+vi.mock("../src/infrastructure/claude/claude-agent-factory.js", () => ({
+  spawnClaudeAgent: vi.fn(),
+  spawnClaudePlanAgent: vi.fn(),
+  spawnClaudeGeneratePlanAgent: vi.fn(),
   TDD_RULES_REMINDER: "tdd rules",
   REVIEW_RULES_REMINDER: "review rules",
   buildRulesReminder: vi.fn((base: string, custom?: string) =>
