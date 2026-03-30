@@ -26,6 +26,10 @@ describe('categorizeCodexError', () => {
     expect(categorizeCodexError({ code: 'timeout', message: 'request timed out' })).toBe('retryable');
   });
 
+  it('maps connectionReset to retryable', () => {
+    expect(categorizeCodexError({ code: 'connectionReset', message: 'reset' })).toBe('retryable');
+  });
+
   it('maps unknown code to unknown', () => {
     expect(categorizeCodexError({ code: 'somethingWeird', message: 'wat' })).toBe('unknown');
   });

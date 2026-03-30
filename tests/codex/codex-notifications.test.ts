@@ -72,6 +72,45 @@ describe('normalizeNotification', () => {
     });
   });
 
+  it('returns ignored for item/completed with no recognized tool params', () => {
+    expect(
+      normalizeNotification({ method: 'item/completed', params: { someOther: true } }),
+    ).toEqual({ kind: 'ignored' });
+  });
+
+  it('falls back to params.text when params.result is absent in turn/completed', () => {
+    expect(
+      normalizeNotification({ method: 'turn/completed', params: { text: 'fallback text' } }),
+    ).toEqual({ kind: 'turnCompleted', resultText: 'fallback text' });
+  });
+
+  it('defaults code and message to unknown when error params are empty', () => {
+    expect(
+      normalizeNotification({ method: 'error', params: {} }),
+    ).toEqual({ kind: 'turnFailed', error: { code: 'unknown', message: 'unknown' } });
+  });
+
+  it('returns ignored for approval request with invalid kind', () => {
+    expect(
+      normalizeNotification({
+        method: 'codex/approvalRequest',
+        params: { id: 'x', kind: 'invalidThing', summary: 's' },
+      }),
+    ).toEqual({ kind: 'ignored' });
+  });
+
+  it('defaults id and summary to empty strings when missing from approval request', () => {
+    expect(
+      normalizeNotification({
+        method: 'codex/approvalRequest',
+        params: { kind: 'command' },
+      }),
+    ).toEqual({
+      kind: 'approvalRequested',
+      request: { id: '', kind: 'command', summary: '' },
+    });
+  });
+
   it('maps approval request to approvalRequested', () => {
     expect(
       normalizeNotification({

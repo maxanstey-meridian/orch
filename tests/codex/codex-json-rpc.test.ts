@@ -116,6 +116,21 @@ describe('JsonRpcClient', () => {
     await expect(promise).rejects.toThrow('process exited');
   });
 
+  it('writes correctly formatted JSON-RPC message to stdin', async () => {
+    const { proc, stdin, stdout } = makeMockProc();
+    const client = createJsonRpcClient(proc);
+
+    const chunks: Buffer[] = [];
+    stdin.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+    const promise = client.request('foo', { bar: 1 });
+    pushLine(stdout, { jsonrpc: '2.0', id: 1, result: 'ok' });
+    await promise;
+
+    const written = Buffer.concat(chunks).toString();
+    expect(written).toBe('{"jsonrpc":"2.0","id":1,"method":"foo","params":{"bar":1}}\n');
+  });
+
   it('error response with non-object error rejects with Error', async () => {
     const { proc, stdout } = makeMockProc();
     const client = createJsonRpcClient(proc);
