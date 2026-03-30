@@ -2076,4 +2076,156 @@ describe("RunOrchestration", () => {
       );
     });
   });
+
+  describe("ProgressSink gap coverage", () => {
+    it("registerInterrupts onGuide callback injects text into tddAgent", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true });
+
+      // Capture the onGuide callback when registerInterrupts is called
+      let capturedGuide: ((text: string) => void) | null = null;
+      ports.progressSink.registerInterrupts.mockReturnValue({
+        onGuide: vi.fn((cb: (text: string) => void) => { capturedGuide = cb; }),
+        onInterrupt: vi.fn(),
+      });
+
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn.mockReturnValueOnce(tddAgent).mockReturnValueOnce(reviewAgent);
+
+      const group: Group = { name: "G", slices: [makeSlice()] };
+      const execPromise = uc.execute([group]);
+
+      // Wait for execute to wire up the callbacks
+      await execPromise;
+
+      // Simulate guide text — callback should inject into tddAgent
+      expect(capturedGuide).not.toBeNull();
+      capturedGuide!("focus on edge cases");
+      expect(tddAgent.inject).toHaveBeenCalledWith("focus on edge cases");
+    });
+
+    it("registerInterrupts onInterrupt callback kills tddAgent and sets hardInterruptPending", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true });
+
+      let capturedInterrupt: ((text: string) => void) | null = null;
+      ports.progressSink.registerInterrupts.mockReturnValue({
+        onGuide: vi.fn(),
+        onInterrupt: vi.fn((cb: (text: string) => void) => { capturedInterrupt = cb; }),
+      });
+
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn.mockReturnValueOnce(tddAgent).mockReturnValueOnce(reviewAgent);
+
+      const group: Group = { name: "G", slices: [makeSlice()] };
+      await uc.execute([group]);
+
+      expect(capturedInterrupt).not.toBeNull();
+      capturedInterrupt!("stop and rethink");
+      expect(uc.hardInterruptPending).toBe("stop and rethink");
+      expect(tddAgent.kill).toHaveBeenCalled();
+    });
+
+    it("updateProgress is called with group metadata at group start", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true });
+      const { uc, spawner, progressSink } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn.mockReturnValueOnce(tddAgent).mockReturnValueOnce(reviewAgent);
+
+      const group: Group = {
+        name: "Domain",
+        slices: [makeSlice({ number: 1 }), makeSlice({ number: 2 })],
+      };
+      await uc.execute([group]);
+
+      expect(progressSink.updateProgress).toHaveBeenCalledWith(
+        expect.objectContaining({ groupName: "Domain", groupSliceCount: 2, groupCompleted: 0 }),
+      );
+    });
+
+    it("updateProgress is called with currentSlice at slice start", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true });
+      const { uc, spawner, progressSink } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn.mockReturnValueOnce(tddAgent).mockReturnValueOnce(reviewAgent);
+
+      const group: Group = { name: "G", slices: [makeSlice({ number: 7 })] };
+      await uc.execute([group]);
+
+      expect(progressSink.updateProgress).toHaveBeenCalledWith(
+        expect.objectContaining({ currentSlice: { number: 7 } }),
+      );
+    });
+
+    it("updateProgress is called with VFY agent activity during verify", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ verifySkill: "test" });
+      const { uc, spawner, progressSink } = makeUc(ports, config);
+
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+      });
+      spawner.spawn.mockReturnValue(verifyAgent);
+      uc.tddAgent = makeAgent();
+      uc.phase = { kind: "Verifying", sliceNumber: 1 };
+
+      await uc.verify(makeSlice(), "sha0");
+
+      expect(progressSink.updateProgress).toHaveBeenCalledWith(
+        expect.objectContaining({ activeAgent: "VFY", activeAgentActivity: "verifying..." }),
+      );
+    });
+
+    it("updateProgress is called with REV agent activity during reviewFix", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ reviewSkill: "test", maxReviewCycles: 1 });
+      const { uc, git, progressSink } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(true);
+
+      const reviewAgent = makeAgent({ assistantText: "REVIEW_CLEAN" });
+      uc.reviewAgent = reviewAgent;
+      uc.tddAgent = makeAgent();
+
+      await uc.reviewFix("content", "sha0");
+
+      expect(progressSink.updateProgress).toHaveBeenCalledWith(
+        expect.objectContaining({ activeAgent: "REV" }),
+      );
+    });
+
+    it("updateProgress resets activeAgent after runSlice completes", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ verifySkill: "test", reviewSkill: "test", reviewThreshold: 0 });
+      const { uc, git, spawner, progressSink } = makeUc(ports, config);
+      uc.phase = { kind: "Verifying", sliceNumber: 1 };
+      git.captureRef.mockResolvedValue("sha1");
+      git.hasChanges.mockResolvedValue(true);
+      git.measureDiff.mockResolvedValue({ added: 30, removed: 20, total: 50 });
+
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+      });
+      spawner.spawn.mockReturnValue(verifyAgent);
+
+      const reviewAgent = makeAgent({ assistantText: "REVIEW_CLEAN" });
+      uc.reviewAgent = reviewAgent;
+
+      const tddAgent = makeAgent();
+      uc.tddAgent = tddAgent;
+
+      await uc.runSlice(makeSlice(), "sha0", makeResult({ assistantText: "implemented" }), "sha0");
+
+      expect(progressSink.updateProgress).toHaveBeenCalledWith(
+        expect.objectContaining({ activeAgent: undefined, activeAgentActivity: undefined }),
+      );
+    });
+  });
 });
