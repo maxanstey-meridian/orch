@@ -644,6 +644,21 @@ describe("doGeneratePlan", () => {
     expect(all).toContain("3 slices");
   });
 
+  it("kills the agent on the success path", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+    const outputDir = join(tmpDir, ".orch");
+    const killed: boolean[] = [];
+    const agent: PromptAgent = {
+      ...mockAgent(VALID_PLAN),
+      kill: () => { killed.push(true); },
+    };
+    const log = () => {};
+
+    await doGeneratePlan(inventoryPath, "", outputDir, log, () => agent);
+    expect(killed).toHaveLength(1);
+  });
+
   it("kills the agent even if generatePlan throws", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
