@@ -151,6 +151,7 @@ describe("progressSinkFactory", () => {
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
       setActivity: vi.fn(),
+      createWriter: vi.fn(() => vi.fn()),
     } as any;
     const result = progressSinkFactory(config, dummyHud);
     expect(result).toBeInstanceOf(InkProgressSink);
