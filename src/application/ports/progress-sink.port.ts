@@ -1,3 +1,5 @@
+import type { AgentRole } from "../../domain/agent-types.js";
+
 export type InterruptHandler = {
   onGuide(callback: (text: string) => void): void;
   onInterrupt(callback: (text: string) => void): void;
@@ -19,5 +21,7 @@ export abstract class ProgressSink {
   abstract registerInterrupts(): InterruptHandler;
   abstract updateProgress(update: ProgressUpdate): void;
   abstract setActivity(summary: string): void;
+  abstract log(text: string): void;
+  abstract createStreamer(role: AgentRole): (text: string) => void;
   abstract teardown(): void;
 }

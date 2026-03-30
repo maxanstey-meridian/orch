@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { ProgressSink } from "../../../src/application/ports/progress-sink.port.js";
 import type { InterruptHandler, ProgressUpdate } from "../../../src/application/ports/progress-sink.port.js";
+import type { AgentRole } from "../../../src/domain/agent-types.js";
+import { styleForRole } from "../../../src/ui/ink-operator-gate.js";
 
 class TestProgressSink extends ProgressSink {
   registerInterrupts(): InterruptHandler {
@@ -8,6 +10,10 @@ class TestProgressSink extends ProgressSink {
   }
   updateProgress(_update: ProgressUpdate): void {}
   setActivity(_summary: string): void {}
+  log(_text: string): void {}
+  createStreamer(_role: AgentRole): (text: string) => void {
+    return () => {};
+  }
   teardown(): void {}
 }
 
@@ -20,6 +26,12 @@ describe("ProgressSink", () => {
   it("can be extended and instantiated", () => {
     const sink = new TestProgressSink();
     expect(sink).toBeInstanceOf(ProgressSink);
+  });
+
+  it("createStreamer returns a callable function", () => {
+    const sink = new TestProgressSink();
+    const streamer = sink.createStreamer("tdd");
+    expect(typeof streamer).toBe("function");
   });
 });
 
@@ -47,5 +59,19 @@ describe("ProgressUpdate", () => {
 
     expect(shapes).toHaveLength(8);
     shapes.forEach((s) => expect(s).toBeDefined());
+  });
+});
+
+describe("styleForRole", () => {
+  it.each([
+    ["tdd", "TDD"],
+    ["review", "REVIEW"],
+    ["gap", "GAP"],
+    ["final", "FINAL"],
+    ["verify", "VERIFY"],
+    ["plan", "PLAN"],
+    ["completeness", "TDD"],
+  ] as const)("maps %s → label %s", (role, expectedLabel) => {
+    expect(styleForRole(role).label).toBe(expectedLabel);
   });
 });

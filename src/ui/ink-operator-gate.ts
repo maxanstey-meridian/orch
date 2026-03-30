@@ -8,6 +8,9 @@ import {
   type InterruptHandler,
   type ProgressUpdate,
 } from "../application/ports/progress-sink.port.js";
+import type { AgentRole, AgentStyle } from "../domain/agent-types.js";
+import { BOT_TDD, BOT_REVIEW, BOT_GAP, BOT_FINAL, BOT_VERIFY, BOT_PLAN } from "./display.js";
+import { makeStreamer } from "../infrastructure/agent/streamer.js";
 import type { Hud } from "./hud.js";
 
 export class SilentOperatorGate extends OperatorGate {
@@ -28,6 +31,19 @@ export class SilentOperatorGate extends OperatorGate {
   }
 }
 
+export const styleForRole = (role: AgentRole): AgentStyle => {
+  const map: Record<AgentRole, AgentStyle> = {
+    tdd: BOT_TDD,
+    review: BOT_REVIEW,
+    gap: BOT_GAP,
+    final: BOT_FINAL,
+    verify: BOT_VERIFY,
+    plan: BOT_PLAN,
+    completeness: BOT_TDD,
+  };
+  return map[role];
+};
+
 export class SilentProgressSink extends ProgressSink {
   registerInterrupts(): InterruptHandler {
     return {
@@ -39,6 +55,12 @@ export class SilentProgressSink extends ProgressSink {
   updateProgress(_update: ProgressUpdate): void {}
 
   setActivity(_summary: string): void {}
+
+  log(_text: string): void {}
+
+  createStreamer(_role: AgentRole): (text: string) => void {
+    return () => {};
+  }
 
   teardown(): void {}
 }
@@ -85,8 +107,11 @@ export class InkOperatorGate extends OperatorGate {
 }
 
 export class InkProgressSink extends ProgressSink {
+  private readonly writer: (text: string) => void;
+
   constructor(private readonly hud: Hud) {
     super();
+    this.writer = hud.createWriter();
   }
 
   registerInterrupts(): InterruptHandler {
@@ -115,6 +140,14 @@ export class InkProgressSink extends ProgressSink {
 
   setActivity(summary: string): void {
     this.hud.setActivity(summary);
+  }
+
+  log(text: string): void {
+    this.writer(text);
+  }
+
+  createStreamer(role: AgentRole): (text: string) => void {
+    return makeStreamer(styleForRole(role), this.writer);
   }
 
   teardown(): void {
