@@ -708,6 +708,7 @@ const makeTestAgent = (): AgentHandle => ({
   sendQuiet: vi.fn().mockResolvedValue("quiet"),
   inject: vi.fn(),
   kill: vi.fn(),
+  pipe: vi.fn(),
 });
 
 describe("composition root integration", () => {

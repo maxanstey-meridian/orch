@@ -44,6 +44,7 @@ const makeAgent = (resultOverrides?: Partial<AgentResult>, stderr = ""): AgentHa
   sendQuiet: vi.fn().mockResolvedValue("quiet response"),
   inject: vi.fn(),
   kill: vi.fn(),
+  pipe: vi.fn(),
 });
 
 const makeSlice = (overrides?: Partial<Slice>): Slice => ({
@@ -2225,6 +2226,186 @@ describe("RunOrchestration", () => {
 
       expect(progressSink.updateProgress).toHaveBeenCalledWith(
         expect.objectContaining({ activeAgent: undefined, activeAgentActivity: undefined }),
+      );
+    });
+  });
+
+  describe("pipe wiring", () => {
+    it("pipes verify agent on first verify call", async () => {
+      const ports = makePorts();
+      const { uc, spawner } = makeUc(ports);
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+      });
+      spawner.spawn.mockReturnValue(verifyAgent);
+      uc.tddAgent = makeAgent();
+      uc.phase = { kind: "Verifying", sliceNumber: 1 };
+
+      await uc.verify(makeSlice(), "sha0");
+
+      expect(verifyAgent.pipe).toHaveBeenCalledOnce();
+      expect(verifyAgent.pipe).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.any(Function),
+      );
+    });
+
+    it("pipes new tdd agent after respawnTdd", async () => {
+      const ports = makePorts();
+      const { uc, spawner } = makeUc(ports);
+      uc.tddAgent = makeAgent();
+      const newTdd = makeAgent();
+      spawner.spawn.mockReturnValue(newTdd);
+
+      await uc.respawnTdd();
+
+      expect(newTdd.pipe).toHaveBeenCalledOnce();
+      expect(newTdd.pipe).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.any(Function),
+      );
+    });
+
+    it("pipes both new agents after respawnBoth", async () => {
+      const ports = makePorts();
+      const { uc, spawner } = makeUc(ports);
+      uc.tddAgent = makeAgent();
+      uc.reviewAgent = makeAgent();
+      uc.verifyAgent = makeAgent();
+      const newTdd = makeAgent();
+      const newReview = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(newTdd)
+        .mockReturnValueOnce(newReview);
+
+      await uc.respawnBoth();
+
+      expect(newTdd.pipe).toHaveBeenCalledOnce();
+      expect(newTdd.pipe).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.any(Function),
+      );
+      expect(newReview.pipe).toHaveBeenCalledOnce();
+      expect(newReview.pipe).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.any(Function),
+      );
+    });
+
+    it("pipes plan agent after spawn", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: false,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, gate } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const planAgent = makeAgent({ planText: "the plan" });
+
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd") return tddAgent;
+        if (role === "review") return reviewAgent;
+        return planAgent;
+      });
+      gate.confirmPlan.mockResolvedValue({ kind: "accept" as const });
+
+      await uc.execute([{ name: "G", slices: [makeSlice()] }]);
+
+      expect(planAgent.pipe).toHaveBeenCalledOnce();
+      expect(planAgent.pipe).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.any(Function),
+      );
+    });
+
+    it("pipes completeness agent after spawn", async () => {
+      const ports = makePorts();
+      const { uc, spawner } = makeUc(ports);
+      const checkAgent = makeAgent({ assistantText: "SLICE_COMPLETE" });
+      spawner.spawn.mockReturnValue(checkAgent);
+      uc.tddAgent = makeAgent();
+
+      ports.git.hasChanges.mockResolvedValue(true);
+
+      await uc.completenessCheck(makeSlice(), "sha0");
+
+      expect(checkAgent.pipe).toHaveBeenCalledOnce();
+      expect(checkAgent.pipe).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.any(Function),
+      );
+    });
+
+    it("pipes final agent after spawn", async () => {
+      const ports = makePorts();
+      const { uc, spawner, prompts } = makeUc(ports);
+      const finalAgent = makeAgent({ assistantText: "NO_ISSUES_FOUND" });
+      spawner.spawn.mockReturnValue(finalAgent);
+
+      uc.tddAgent = makeAgent();
+      uc.phase = { kind: "Idle" };
+      ports.git.hasChanges.mockResolvedValue(true);
+      prompts.finalPasses.mockReturnValue([{ name: "lint", prompt: "check lint" }]);
+
+      await uc.finalPasses("sha0");
+
+      expect(finalAgent.pipe).toHaveBeenCalledOnce();
+      expect(finalAgent.pipe).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.any(Function),
+      );
+    });
+
+    it("pipes gap agent after spawn", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ gapDisabled: false });
+      const { uc, spawner } = makeUc(ports, config);
+      const gapAgent = makeAgent({ assistantText: "NO_GAPS_FOUND" });
+      spawner.spawn.mockReturnValue(gapAgent);
+
+      uc.tddAgent = makeAgent();
+      uc.phase = { kind: "Idle" };
+      ports.git.hasChanges.mockResolvedValue(true);
+
+      const group: Group = { name: "G", slices: [makeSlice()] };
+      await uc.gapAnalysis(group, "sha0");
+
+      expect(gapAgent.pipe).toHaveBeenCalledOnce();
+      expect(gapAgent.pipe).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.any(Function),
+      );
+    });
+
+    it("pipes tdd and review agents after spawn", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent);
+
+      await uc.execute([{ name: "G", slices: [makeSlice()] }]);
+
+      expect(tddAgent.pipe).toHaveBeenCalledOnce();
+      expect(tddAgent.pipe).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.any(Function),
+      );
+      expect(reviewAgent.pipe).toHaveBeenCalledOnce();
+      expect(reviewAgent.pipe).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.any(Function),
       );
     });
   });

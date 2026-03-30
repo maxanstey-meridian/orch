@@ -60,6 +60,13 @@ export class RunOrchestration {
     private readonly progressSink: ProgressSink,
   ) {}
 
+  private pipeToSink(agent: AgentHandle): void {
+    agent.pipe(
+      (text) => this.progressSink.setActivity(text.slice(0, 80)),
+      (summary) => this.progressSink.setActivity(summary),
+    );
+  }
+
   dispose(): void {
     if (this.tddAgent) this.tddAgent.kill();
     if (this.reviewAgent) this.reviewAgent.kill();
@@ -86,6 +93,8 @@ export class RunOrchestration {
       resumeSessionId: this.state.reviewSessionId,
       cwd: this.config.cwd,
     });
+    this.pipeToSink(this.tddAgent);
+    this.pipeToSink(this.reviewAgent);
 
     // Send rules reminders (skip if resuming)
     const reminders: Promise<string>[] = [];
@@ -288,6 +297,7 @@ export class RunOrchestration {
     // ── Plan phase ──
     const planPrompt = this.prompts.plan(sliceContent, sliceNumber);
     const planAgent = this.agents.spawn("plan", { cwd: this.config.cwd });
+    this.pipeToSink(planAgent);
     const planResult = await this.withRetry(
       () => planAgent.send(planPrompt),
       planAgent,
@@ -505,6 +515,7 @@ export class RunOrchestration {
 
     const prompt = this.prompts.completeness(slice.content, baseSha, slice.number);
     const checkAgent = this.agents.spawn("completeness", { cwd: this.config.cwd });
+    this.pipeToSink(checkAgent);
     const result = await this.withRetry(
       () => checkAgent.send(prompt),
       checkAgent,
@@ -547,6 +558,7 @@ export class RunOrchestration {
 
     if (!this.verifyAgent) {
       this.verifyAgent = this.agents.spawn("verify", { cwd: this.config.cwd });
+      this.pipeToSink(this.verifyAgent);
     }
 
     const verifyPrompt = this.prompts.withBrief(
@@ -613,6 +625,7 @@ export class RunOrchestration {
 
     for (const pass of passes) {
       const finalAgent = this.agents.spawn("final", { cwd: this.config.cwd });
+      this.pipeToSink(finalAgent);
       const finalPrompt = this.prompts.withBrief(pass.prompt);
       const finalResult = await this.withRetry(
         () => finalAgent.send(finalPrompt, undefined, (s) => this.onToolUse(s)),
@@ -662,6 +675,7 @@ export class RunOrchestration {
 
     const groupContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
     const gapAgent = this.agents.spawn("gap", { cwd: this.config.cwd });
+    this.pipeToSink(gapAgent);
     const gapPrompt = this.prompts.withBrief(this.prompts.gap(groupContent, groupBaseSha));
     const gapResult = await this.withRetry(
       () => gapAgent.send(gapPrompt, undefined, (s) => this.onToolUse(s)),
@@ -793,6 +807,7 @@ export class RunOrchestration {
   async respawnTdd(): Promise<void> {
     if (this.tddAgent) this.tddAgent.kill();
     this.tddAgent = this.agents.spawn("tdd", { cwd: this.config.cwd });
+    this.pipeToSink(this.tddAgent);
     await this.tddAgent.sendQuiet(this.prompts.rulesReminder("tdd"));
     this.tddIsFirst = true;
     this.state = advanceState(this.state, { kind: "agentSpawned", role: "tdd", sessionId: this.tddAgent.sessionId });
@@ -808,6 +823,8 @@ export class RunOrchestration {
     }
     this.tddAgent = this.agents.spawn("tdd", { cwd: this.config.cwd });
     this.reviewAgent = this.agents.spawn("review", { cwd: this.config.cwd });
+    this.pipeToSink(this.tddAgent);
+    this.pipeToSink(this.reviewAgent);
     await Promise.all([
       this.tddAgent.sendQuiet(this.prompts.rulesReminder("tdd")),
       this.reviewAgent.sendQuiet(this.prompts.rulesReminder("review")),
