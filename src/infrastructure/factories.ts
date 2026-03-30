@@ -18,6 +18,10 @@ export const agentSpawnerFactory = (config: OrchestratorConfig) => {
       );
     case "codex":
       throw new Error("Codex provider is not yet implemented");
+    default: {
+      const _exhaustive: never = config.provider;
+      throw new Error(`Unknown provider: ${_exhaustive}`);
+    }
   }
 };
 agentSpawnerFactory.inject = ["config"] as const;
@@ -48,5 +52,9 @@ export const planGeneratorSpawnerFactory = (opts: { provider: Provider; cwd: str
       return () => spawnClaudeGeneratePlanAgent(opts.cwd);
     case "codex":
       throw new Error("Codex provider is not yet implemented");
+    default: {
+      const _exhaustive: never = opts.provider;
+      throw new Error(`Unknown provider: ${_exhaustive}`);
+    }
   }
 };
