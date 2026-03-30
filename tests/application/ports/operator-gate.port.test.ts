@@ -5,8 +5,6 @@ import {
 import type {
   GateDecision,
   VerifyDecision,
-  InterruptHandler,
-  ProgressUpdate,
 } from "../../../src/application/ports/operator-gate.port.js";
 
 describe("GateDecision", () => {
@@ -34,37 +32,6 @@ describe("VerifyDecision", () => {
   });
 });
 
-describe("InterruptHandler", () => {
-  it("accepts valid handler object", () => {
-    const handler: InterruptHandler = {
-      onGuide: (_cb: (text: string) => void) => {},
-      onInterrupt: (_cb: (text: string) => void) => {},
-    };
-
-    expect(typeof handler.onGuide).toBe("function");
-    expect(typeof handler.onInterrupt).toBe("function");
-  });
-});
-
-// TODO: When OperatorGate replaces HUD, trace each shape below to its actual hud.update() call site in orchestrator.ts
-describe("ProgressUpdate", () => {
-  it("accepts all hud.update() call shapes", () => {
-    const shapes: ProgressUpdate[] = [
-      { activeAgent: "TDD", activeAgentActivity: "executing plan..." },
-      { activeAgent: undefined, activeAgentActivity: undefined },
-      { completedSlices: 5 },
-      { groupName: "Domain", groupSliceCount: 3, groupCompleted: 0 },
-      { currentSlice: { number: 2 }, completedSlices: 1 },
-      { totalSlices: 10, completedSlices: 0, startTime: Date.now() },
-      { activeAgent: "GAP", activeAgentActivity: "scanning for gaps..." },
-      { activeAgent: "REV", activeAgentActivity: "completeness check (slice 3)..." },
-    ];
-
-    expect(shapes).toHaveLength(8);
-    shapes.forEach((s) => expect(s).toBeDefined());
-  });
-});
-
 class AutoOperatorGate extends OperatorGate {
   async confirmPlan(_planPreview: string): Promise<GateDecision> {
     return { kind: "accept" };
@@ -78,12 +45,6 @@ class AutoOperatorGate extends OperatorGate {
   async confirmNextGroup(_groupLabel: string): Promise<boolean> {
     return true;
   }
-  registerInterrupts(): InterruptHandler {
-    return { onGuide: () => {}, onInterrupt: () => {} };
-  }
-  updateProgress(_update: ProgressUpdate): void {}
-  setActivity(_summary: string): void {}
-  teardown(): void {}
 }
 
 describe("OperatorGate", () => {
@@ -116,15 +77,4 @@ describe("OperatorGate", () => {
     expect(confirmed).toBe(true);
   });
 
-  it("display methods are no-ops", () => {
-    const gate = new AutoOperatorGate();
-
-    expect(() => gate.updateProgress({ completedSlices: 1 })).not.toThrow();
-    expect(() => gate.setActivity("building...")).not.toThrow();
-    expect(() => gate.teardown()).not.toThrow();
-
-    const handler = gate.registerInterrupts();
-    expect(() => handler.onGuide(() => {})).not.toThrow();
-    expect(() => handler.onInterrupt(() => {})).not.toThrow();
-  });
 });
