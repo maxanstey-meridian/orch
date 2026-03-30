@@ -12,6 +12,8 @@ export type AgentHandle = {
   pipe(onText: (text: string) => void, onToolUse: (summary: string) => void): void;
 };
 
+export type PromptAgent = Pick<AgentHandle, 'send' | 'kill'>;
+
 export abstract class AgentSpawner {
   abstract spawn(role: AgentRole, opts?: {
     readonly resumeSessionId?: string;

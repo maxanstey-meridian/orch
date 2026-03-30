@@ -5,7 +5,7 @@ import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { extractJson, planSummaryLines, generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../../src/infrastructure/plan/plan-generator.js";
 import { PlanSchema, parsePlanJson } from "../../src/infrastructure/plan/plan-schema.js";
-import type { AgentHandle } from "../../src/application/ports/agent-spawner.port.js";
+import type { PromptAgent } from "../../src/application/ports/agent-spawner.port.js";
 import type { AgentResult } from "../../src/domain/agent-types.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -30,7 +30,7 @@ const VALID_PLAN = JSON.stringify({
 
 const PLAN_WITH_PREAMBLE = `Here's the plan I generated:\n${VALID_PLAN}\nLet me know if you'd like changes.`;
 
-const mockAgent = (responseText: string): Pick<AgentHandle, 'send' | 'kill'> => ({
+const mockAgent = (responseText: string): PromptAgent => ({
   send: async (_prompt: string) =>
     ({
       exitCode: 0,
@@ -244,6 +244,28 @@ describe("generatePlan", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("accepts a minimal PromptAgent (compile-time narrowing proof)", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+    const outputDir = join(tmpDir, ".orch");
+
+    // Minimal object — only send and kill, no sessionId/style/alive/inject/etc.
+    const minimal: PromptAgent = {
+      send: async () =>
+        ({
+          exitCode: 0,
+          assistantText: VALID_PLAN,
+          resultText: "",
+          needsInput: false,
+          sessionId: "mock",
+        }) as AgentResult,
+      kill: () => {},
+    };
+
+    const result = await generatePlan(inventoryPath, "", minimal, outputDir);
+    expect(result.groups).toHaveLength(2);
+  });
+
   it("writes plan to plan-<id>.json and returns planPath and planId", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Login\nUsers can log in.\n\n## Dashboard\nWidgets.");
@@ -301,7 +323,7 @@ describe("generatePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
     const outputDir = join(tmpDir, ".orch");
-    const agent: Pick<AgentHandle, 'send'> = {
+    const agent: PromptAgent = {
       send: async () =>
         ({
           exitCode: 0,
@@ -311,6 +333,7 @@ describe("generatePlan", () => {
           sessionId: "mock",
           planText: VALID_PLAN,
         }) as AgentResult,
+      kill: () => {},
     };
 
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
@@ -366,7 +389,7 @@ describe("generatePlan", () => {
 
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
-    const agent: Pick<AgentHandle, 'send' | 'kill'> = {
+    const agent: PromptAgent = {
       ...mockAgent(VALID_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
@@ -473,7 +496,7 @@ describe("generatePlan", () => {
 
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
-    const agent: Pick<AgentHandle, 'send' | 'kill'> = {
+    const agent: PromptAgent = {
       ...mockAgent(VALID_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
@@ -500,7 +523,7 @@ describe("generatePlan", () => {
 
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
-    const agent: Pick<AgentHandle, 'send' | 'kill'> = {
+    const agent: PromptAgent = {
       ...mockAgent(VALID_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
@@ -626,7 +649,7 @@ describe("doGeneratePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
     const outputDir = join(tmpDir, ".orch");
     const killed: boolean[] = [];
-    const badAgent: Pick<AgentHandle, 'send' | 'kill'> = {
+    const badAgent: PromptAgent = {
       ...mockAgent("not a plan"),
       kill: () => { killed.push(true); },
     };
