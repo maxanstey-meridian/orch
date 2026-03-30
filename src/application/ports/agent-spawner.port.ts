@@ -9,6 +9,7 @@ export type AgentHandle = {
   sendQuiet(prompt: string): Promise<string>;
   inject(message: string): void;
   kill(): void;
+  pipe(onText: (text: string) => void, onToolUse: (summary: string) => void): void;
 };
 
 export abstract class AgentSpawner {

@@ -23,6 +23,7 @@ describe("AgentHandle", () => {
       sendQuiet: vi.fn().mockResolvedValue("quiet response"),
       inject: vi.fn(),
       kill: vi.fn(),
+      pipe: vi.fn(),
     };
 
     expect(handle.sessionId).toBe("sess-1");
@@ -40,6 +41,32 @@ describe("AgentHandle", () => {
 
     handle.kill();
     expect(handle.kill).toHaveBeenCalled();
+  });
+
+  it("pipe is callable with onText and onToolUse callbacks", () => {
+    const handle: AgentHandle = {
+      sessionId: "sess-1",
+      style: { label: "TDD", color: "green", badge: "T" },
+      alive: true,
+      stderr: "",
+      send: vi.fn().mockResolvedValue({
+        exitCode: 0,
+        assistantText: "",
+        resultText: "",
+        needsInput: false,
+        sessionId: "sess-1",
+      }),
+      sendQuiet: vi.fn().mockResolvedValue(""),
+      inject: vi.fn(),
+      kill: vi.fn(),
+      pipe: vi.fn(),
+    };
+
+    const onText = vi.fn();
+    const onToolUse = vi.fn();
+    handle.pipe(onText, onToolUse);
+
+    expect(handle.pipe).toHaveBeenCalledWith(onText, onToolUse);
   });
 
   it("send accepts optional onText and onToolUse callbacks", async () => {
@@ -60,6 +87,7 @@ describe("AgentHandle", () => {
       sendQuiet: vi.fn().mockResolvedValue(""),
       inject: vi.fn(),
       kill: vi.fn(),
+      pipe: vi.fn(),
     };
 
     const onText = vi.fn();
@@ -89,6 +117,7 @@ describe("AgentSpawner", () => {
       sendQuiet: vi.fn().mockResolvedValue(""),
       inject: vi.fn(),
       kill: vi.fn(),
+      pipe: vi.fn(),
     };
 
     class MockAgentSpawner extends AgentSpawner {
@@ -119,6 +148,7 @@ describe("AgentSpawner", () => {
       sendQuiet: vi.fn().mockResolvedValue(""),
       inject: vi.fn(),
       kill: vi.fn(),
+      pipe: vi.fn(),
     };
 
     class MockAgentSpawner extends AgentSpawner {
