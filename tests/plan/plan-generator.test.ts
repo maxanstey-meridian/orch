@@ -296,6 +296,31 @@ describe("generatePlan", () => {
     expect(parsed.groups[1].slices).toHaveLength(1);
   });
 
+  it("prefers planText from ExitPlanMode over assistantText", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const agent: Pick<AgentHandle, 'send'> = {
+      send: async () =>
+        ({
+          exitCode: 0,
+          assistantText: "preamble junk that is not valid JSON",
+          resultText: "",
+          needsInput: false,
+          sessionId: "mock",
+          planText: VALID_PLAN,
+        }) as AgentResult,
+    };
+
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
+
+    const written = readFileSync(planPath, "utf-8");
+    const parsed = JSON.parse(written);
+    expect(parsed.groups).toHaveLength(2);
+    expect(parsed.groups[0].name).toBe("Auth");
+  });
+
   it("throws when agent produces invalid JSON", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Login\nLogin.");
@@ -607,7 +632,7 @@ describe("doGeneratePlan", () => {
     };
     const log = () => {};
 
-    await expect(doGeneratePlan(inventoryPath, "", outputDir, log, () => badAgent)).rejects.toThrow();
+    await expect(doGeneratePlan(inventoryPath, "", outputDir, log, () => badAgent)).rejects.toThrow("Invalid JSON");
     expect(killed).toHaveLength(1);
   });
 });

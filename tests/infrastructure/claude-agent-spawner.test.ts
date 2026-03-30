@@ -15,6 +15,7 @@ vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
     sendQuiet: vi.fn().mockResolvedValue(""),
     inject: vi.fn(),
     kill: vi.fn(),
+    pipe: vi.fn(),
     alive: true,
     stderr: "hidden",
     sessionId: "mock-sess",
@@ -31,6 +32,7 @@ vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
     sendQuiet: vi.fn().mockResolvedValue(""),
     inject: vi.fn(),
     kill: vi.fn(),
+    pipe: vi.fn(),
     alive: true,
     stderr: "hidden",
     sessionId: "mock-plan-sess",
@@ -300,6 +302,7 @@ describe("ClaudeAgentSpawner", () => {
         sendQuiet: vi.fn(),
         inject: vi.fn(),
         kill: vi.fn(),
+        pipe: vi.fn(),
         alive: true,
         stderr: "error output",
         sessionId: "sess-123",
@@ -309,6 +312,28 @@ describe("ClaudeAgentSpawner", () => {
       const spawner = makeSpawner();
       const handle = spawner.spawn("tdd");
       expect(handle.stderr).toBe("error output");
+    });
+
+    it("delegates pipe to underlying AgentProcess", () => {
+      const mockPipe = vi.fn();
+      mockedSpawnAgent.mockReturnValueOnce({
+        send: vi.fn(),
+        sendQuiet: vi.fn(),
+        inject: vi.fn(),
+        kill: vi.fn(),
+        pipe: mockPipe,
+        alive: true,
+        stderr: "",
+        sessionId: "sess-123",
+        style: { label: "TDD", color: "", badge: "" },
+      });
+
+      const spawner = makeSpawner();
+      const handle = spawner.spawn("tdd");
+      const onText = vi.fn();
+      const onToolUse = vi.fn();
+      handle.pipe(onText, onToolUse);
+      expect(mockPipe).toHaveBeenCalledWith(onText, onToolUse);
     });
   });
 });
