@@ -857,6 +857,27 @@ describe("RunOrchestration", () => {
       expect((uc as any).onToolUse).toBeUndefined();
     });
 
+    it("gapAnalysis tddAgent fix send has no per-call callbacks", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ gapDisabled: false, reviewSkill: null });
+      const { uc, git, spawner } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(true);
+      const gapAgent = makeAgent({ assistantText: "Gap: missing edge case test" });
+      spawner.spawn.mockReturnValue(gapAgent);
+      const tddAgent = makeAgent();
+      uc.tddAgent = tddAgent;
+
+      await uc.gapAnalysis(
+        { name: "G1", slices: [makeSlice()] },
+        "sha0",
+      );
+
+      // tddAgent.send is the fix cycle — no 2nd or 3rd arg
+      const tddSendCall = (tddAgent.send as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(tddSendCall[1]).toBeUndefined();
+      expect(tddSendCall[2]).toBeUndefined();
+    });
+
     it("gapAnalysis sends without per-call onToolUse callbacks", async () => {
       const ports = makePorts();
       const config = makeConfig({ gapDisabled: false });
@@ -873,6 +894,27 @@ describe("RunOrchestration", () => {
 
       const sendCall = (gapAgent.send as ReturnType<typeof vi.fn>).mock.calls[0];
       expect(sendCall[2]).toBeUndefined();
+    });
+
+    it("finalPasses tddAgent fix send has no per-call callbacks", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ reviewSkill: null });
+      const { uc, git, spawner, prompts } = makeUc(ports, config);
+      git.hasChanges.mockResolvedValue(true);
+      prompts.finalPasses.mockReturnValue([
+        { name: "Type check", prompt: "check" },
+      ]);
+      const finalAgent = makeAgent({ assistantText: "Found: any cast in foo.ts" });
+      spawner.spawn.mockReturnValue(finalAgent);
+      const tddAgent = makeAgent();
+      uc.tddAgent = tddAgent;
+
+      await uc.finalPasses("sha0");
+
+      // tddAgent.send is the fix cycle — no 2nd or 3rd arg
+      const tddSendCall = (tddAgent.send as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(tddSendCall[1]).toBeUndefined();
+      expect(tddSendCall[2]).toBeUndefined();
     });
 
     it("finalPasses sends without per-call onToolUse callbacks", async () => {
@@ -2415,6 +2457,28 @@ describe("RunOrchestration", () => {
         expect.any(Function),
         expect.any(Function),
       );
+    });
+
+    it("pipeToSink onText truncates text to 80 chars", async () => {
+      const ports = makePorts();
+      const { uc, spawner, progressSink } = makeUc(ports);
+      const agent = makeAgent();
+      // Capture the onText callback passed to pipe
+      let pipedOnText: ((text: string) => void) | undefined;
+      (agent.pipe as ReturnType<typeof vi.fn>).mockImplementation(
+        (onText: (text: string) => void) => {
+          pipedOnText = onText;
+        },
+      );
+      spawner.spawn.mockReturnValue(agent);
+      uc.tddAgent = agent;
+
+      await uc.respawnTdd();
+
+      expect(pipedOnText).toBeDefined();
+      const longText = "A".repeat(100);
+      pipedOnText!(longText);
+      expect(progressSink.setActivity).toHaveBeenCalledWith("A".repeat(80));
     });
 
     it("pipes tdd and review agents after spawn", async () => {
