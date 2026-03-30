@@ -190,6 +190,14 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
     proc.stdin!.write(msg + "\n");
   };
 
+  let persistentOnText: ((text: string) => void) | null = null;
+  let persistentOnToolUse: ((summary: string) => void) | null = null;
+
+  const pipe = (onText: (text: string) => void, onToolUse: (summary: string) => void) => {
+    persistentOnText = onText;
+    persistentOnToolUse = onToolUse;
+  };
+
   const send = (
     prompt: string,
     onText?: (text: string) => void,
@@ -210,19 +218,20 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
           for (const block of event.message.content) {
             if (block.type === "text" && block.text) {
               assistantChunks.push(block.text);
-              if (onText) onText(block.text);
+              (onText ?? persistentOnText)?.(block.text);
             } else if (block.type === "tool_use") {
               const tb = block as ToolUseBlock;
               if (tb.name === "ExitPlanMode" && typeof tb.input.plan === "string") {
                 planText = tb.input.plan;
               }
-              if (onToolUse) onToolUse(summarizeToolUse(tb));
+              (onToolUse ?? persistentOnToolUse)?.(summarizeToolUse(tb));
             }
           }
         } else if (event.type === "result") {
           resultText = typeof event.result === "string" ? event.result : "";
           onEvent = null;
           onDeath = null;
+          persistentOnToolUse?.("");
           const assistantText = assistantChunks.join("");
           resolve({
             exitCode: 0,
@@ -306,6 +315,6 @@ export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
     },
     sessionId,
     style: opts.style,
-    pipe: () => {},
+    pipe,
   } satisfies AgentHandle;
 };
