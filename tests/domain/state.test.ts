@@ -43,17 +43,6 @@ describe("advanceState", () => {
     expect(state).toEqual({});
   });
 
-  it("reviewBaseCaptured updates reviewBaseSha", () => {
-    const next = advanceState({}, { kind: "reviewBaseCaptured", sha: "abc123" });
-    expect(next).toEqual({ reviewBaseSha: "abc123" });
-  });
-
-  it("reviewBaseCaptured does not mutate the original state", () => {
-    const state: OrchestratorState = {};
-    advanceState(state, { kind: "reviewBaseCaptured", sha: "abc123" });
-    expect(state).toEqual({});
-  });
-
   it("sliceDone preserves existing worktree and sessionIds", () => {
     const state: OrchestratorState = {
       tddSessionId: "t1",

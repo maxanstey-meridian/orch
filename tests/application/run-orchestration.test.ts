@@ -1377,7 +1377,7 @@ describe("RunOrchestration", () => {
   });
 
   describe("advanceState wiring", () => {
-    it("persistence.save is called with state reflecting agentSpawned after spawn", async () => {
+    it("persistence.save reflects agentSpawned session IDs", async () => {
       const ports = makePorts();
       const config = makeConfig({
         planDisabled: true,
@@ -1398,9 +1398,68 @@ describe("RunOrchestration", () => {
       ];
       await uc.execute(groups);
 
-      // The first save after agent spawn should contain session IDs set by advanceState
       expect(persistence.save).toHaveBeenCalledWith(
         expect.objectContaining({ tddSessionId: "tdd-111", reviewSessionId: "rev-222" }),
+      );
+    });
+
+    it("persistence.save reflects sliceDone with lastCompletedSlice and lastSliceImplemented", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, persistence } = makeUc(ports, config);
+      spawner.spawn.mockReturnValue(makeAgent());
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 5 })] },
+      ];
+      await uc.execute(groups);
+
+      // sliceDone sets both lastCompletedSlice and lastSliceImplemented
+      expect(persistence.save).toHaveBeenCalledWith(
+        expect.objectContaining({ lastCompletedSlice: 5, lastSliceImplemented: 5 }),
+      );
+    });
+
+    it("persistence.save reflects sliceImplemented with reviewBaseSha", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: "test",
+        reviewSkill: null,
+      });
+      const { uc, spawner, persistence, git } = makeUc(ports, config);
+      // Different SHAs so isAlreadyImplemented returns false
+      git.captureRef
+        .mockResolvedValueOnce("run-base")   // runBaseSha
+        .mockResolvedValueOnce("group-base") // groupBaseSha
+        .mockResolvedValueOnce("verify-base") // verifyBaseSha
+        .mockResolvedValueOnce("head-after"); // headAfterTdd (different from reviewBase)
+      git.hasChanges.mockResolvedValue(false);
+      git.measureDiff.mockResolvedValue({ added: 0, removed: 0, total: 0 });
+
+      // Verify passes
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+      });
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "verify") return verifyAgent;
+        return makeAgent();
+      });
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 3 })] },
+      ];
+      await uc.execute(groups);
+
+      // sliceImplemented sets lastSliceImplemented + reviewBaseSha
+      expect(persistence.save).toHaveBeenCalledWith(
+        expect.objectContaining({ lastSliceImplemented: 3, reviewBaseSha: "verify-base" }),
       );
     });
   });
