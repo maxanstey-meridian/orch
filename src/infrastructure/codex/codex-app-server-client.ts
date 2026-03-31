@@ -4,7 +4,7 @@ import { normalizeNotification, type CodexEvent } from './codex-notifications.js
 
 export type ThreadOptions = {
   readonly developerInstructions?: string;
-  readonly sandbox?: string;
+  readonly sandbox?: 'read-only' | 'workspace-write';
 };
 
 export type CodexAppServerClient = {

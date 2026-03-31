@@ -109,8 +109,10 @@ export class CodexAgentSpawner extends AgentSpawner {
         try {
           await ready;
 
-          const resultText = await client.startTurn(prompt, () => {
-            // Intentionally ignore all events
+          const resultText = await client.startTurn(prompt, (event) => {
+            if (event.kind === 'approvalRequested' && modeConfig.approvalMode === 'auto-approve') {
+              client.respondToApproval(event.request.id, true);
+            }
           });
 
           return resultText;

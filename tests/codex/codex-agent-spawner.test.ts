@@ -540,6 +540,26 @@ describe('CodexAgentSpawner', () => {
       expect(approvalResponse!.params?.approved).toBe(true);
     });
 
+    it('sendQuiet() auto-approves approval events in auto-approve mode', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'approvalRequested', request: { id: 'req-q1', kind: 'command', summary: 'run npm test' } },
+        { kind: 'turnCompleted', resultText: 'quiet result' },
+      ]);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: true, noInteraction: false }, () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      const text = await handle.sendQuiet('go');
+
+      expect(text).toBe('quiet result');
+      const approvalResponse = fake.receivedNotifications.find(
+        (n) => n.method === 'codex/approvalResponse',
+      );
+      expect(approvalResponse).toBeDefined();
+      expect(approvalResponse!.params?.id).toBe('req-q1');
+      expect(approvalResponse!.params?.approved).toBe(true);
+    });
+
     it('interactive mode does NOT auto-approve approval events', async () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
