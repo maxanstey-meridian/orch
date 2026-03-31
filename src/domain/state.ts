@@ -16,12 +16,20 @@ export type StateEvent =
   | { readonly kind: "sliceDone"; readonly sliceNumber: number }
   | { readonly kind: "groupDone"; readonly groupName: string }
   | { readonly kind: "agentSpawned"; readonly role: "tdd" | "review"; readonly sessionId: string }
-  | { readonly kind: "sliceImplemented"; readonly sliceNumber: number; readonly reviewBaseSha: string };
+  | {
+      readonly kind: "sliceImplemented";
+      readonly sliceNumber: number;
+      readonly reviewBaseSha: string;
+    };
 
 export const advanceState = (state: OrchestratorState, event: StateEvent): OrchestratorState => {
   switch (event.kind) {
     case "sliceDone":
-      return { ...state, lastCompletedSlice: event.sliceNumber, lastSliceImplemented: event.sliceNumber };
+      return {
+        ...state,
+        lastCompletedSlice: event.sliceNumber,
+        lastSliceImplemented: event.sliceNumber,
+      };
     case "groupDone":
       return { ...state, lastCompletedGroup: event.groupName };
     case "agentSpawned":
@@ -29,6 +37,10 @@ export const advanceState = (state: OrchestratorState, event: StateEvent): Orche
         ? { ...state, tddSessionId: event.sessionId }
         : { ...state, reviewSessionId: event.sessionId };
     case "sliceImplemented":
-      return { ...state, lastSliceImplemented: event.sliceNumber, reviewBaseSha: event.reviewBaseSha };
+      return {
+        ...state,
+        lastSliceImplemented: event.sliceNumber,
+        reviewBaseSha: event.reviewBaseSha,
+      };
   }
 };

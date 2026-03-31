@@ -151,7 +151,7 @@ describeAgentHandleContract('CodexAgentSpawner', () => {
   return {
     spawner: new CodexAgentSpawner(
       '/tmp/test',
-      { auto: false, noInteraction: false },
+      { auto: false },
       () => fake.proc,
       new SilentRuntimeInteractionGate(),
     ),

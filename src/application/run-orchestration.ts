@@ -62,10 +62,7 @@ export class RunOrchestration {
 
   private pipeToSink(agent: AgentHandle, role: AgentRole): void {
     const streamer = this.progressSink.createStreamer(role);
-    agent.pipe(
-      streamer,
-      (summary) => this.progressSink.setActivity(summary),
-    );
+    agent.pipe(streamer, (summary) => this.progressSink.setActivity(summary));
   }
 
   dispose(): void {
@@ -146,8 +143,16 @@ export class RunOrchestration {
         groupSliceCount: group.slices.length,
         groupCompleted: 0,
       });
-      this.state = advanceState(this.state, { kind: "agentSpawned", role: "tdd", sessionId: this.tddAgent.sessionId });
-      this.state = advanceState(this.state, { kind: "agentSpawned", role: "review", sessionId: this.reviewAgent!.sessionId });
+      this.state = advanceState(this.state, {
+        kind: "agentSpawned",
+        role: "tdd",
+        sessionId: this.tddAgent.sessionId,
+      });
+      this.state = advanceState(this.state, {
+        kind: "agentSpawned",
+        role: "review",
+        sessionId: this.reviewAgent!.sessionId,
+      });
       await this.persistence.save(this.state);
       const groupBaseSha = await this.git.captureRef();
       let reviewBase = groupBaseSha;
@@ -214,10 +219,7 @@ export class RunOrchestration {
           await this.respawnTdd();
           this.progressSink.logBadge("tdd", "implementing...");
           tddResult = await this.withRetry(
-            () =>
-              this.tddAgent!.send(
-                this.prompts.withBrief(guidance),
-              ),
+            () => this.tddAgent!.send(this.prompts.withBrief(guidance)),
             this.tddAgent!,
             "tdd-interrupt",
           );
@@ -264,7 +266,7 @@ export class RunOrchestration {
       if (i < groups.length - 1) {
         await this.respawnBoth();
 
-        if (!this.config.auto && !this.config.noInteraction) {
+        if (!this.config.auto) {
           const next = groups[i + 1];
           const nextLabel = `${next.name} (${next.slices.map((s) => `Slice ${s.number}`).join(", ")})`;
           const proceed = await this.gate.confirmNextGroup(nextLabel);
@@ -304,11 +306,7 @@ export class RunOrchestration {
     const planAgent = this.agents.spawn("plan", { cwd: this.config.cwd });
     this.pipeToSink(planAgent, "plan");
     this.progressSink.logBadge("plan", "planning...");
-    const planResult = await this.withRetry(
-      () => planAgent.send(planPrompt),
-      planAgent,
-      "plan",
-    );
+    const planResult = await this.withRetry(() => planAgent.send(planPrompt), planAgent, "plan");
 
     const plan = planResult.planText ?? planResult.assistantText ?? "";
 
@@ -335,9 +333,9 @@ export class RunOrchestration {
     this.phase = transition(this.phase, { kind: "PlanReady", planText: plan });
 
     // ── Confirmation gate ──
-    const noInteraction = forceAccept || this.config.noInteraction || this.config.auto;
+    const skipConfirm = forceAccept || this.config.auto;
     let operatorGuidance: string | undefined;
-    if (!noInteraction) {
+    if (!skipConfirm) {
       const decision = await this.gate.confirmPlan(plan);
       if (decision.kind === "reject") {
         this.phase = transition(this.phase, { kind: "PlanRejected" });
@@ -426,7 +424,11 @@ export class RunOrchestration {
     this.phase = transition(this.phase, { kind: "VerifyPassed" });
     this.phase = transition(this.phase, { kind: "CompletenessOk" });
 
-    this.state = advanceState(this.state, { kind: "sliceImplemented", sliceNumber: slice.number, reviewBaseSha: verifyBaseSha });
+    this.state = advanceState(this.state, {
+      kind: "sliceImplemented",
+      sliceNumber: slice.number,
+      reviewBaseSha: verifyBaseSha,
+    });
     await this.persistence.save(this.state);
 
     // Review-fix loop — gated on minimum diff threshold
@@ -500,10 +502,7 @@ export class RunOrchestration {
       const fixPrompt = this.prompts.tdd(content, reviewText);
       this.progressSink.logBadge("tdd", "fixing...");
       const fixResult = await this.withRetry(
-        () =>
-          this.tddAgent!.send(
-            this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt,
-          ),
+        () => this.tddAgent!.send(this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt),
         this.tddAgent!,
         "review-fix",
       );
@@ -586,13 +585,16 @@ export class RunOrchestration {
 
     if (!parsed.passed) {
       this.phase = transition(this.phase, { kind: "VerifyFailed" });
-      // Send failures to TDD for fixing
+
       const failureContext =
         parsed.newFailures.length > 0
           ? parsed.newFailures.join("\n")
           : "Verification checks failed. Run the test/lint/typecheck pipeline and fix any failures.";
-      const retryPrompt = `Verification found new failures after your implementation. Fix them:\n\n${failureContext}`;
+
+      // Send findings to TDD for fixing
+      const retryPrompt = `Verification found issues after your implementation. Fix them:\n\n${failureContext}`;
       this.progressSink.logBadge("tdd", "fixing...");
+      const preFixSha = await this.git.captureRef();
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(retryPrompt),
         this.tddAgent!,
@@ -601,19 +603,40 @@ export class RunOrchestration {
       await this.checkCredit(fixResult, this.tddAgent!);
 
       this.phase = transition(this.phase, { kind: "ExecutionDone" });
-      // Re-verify
+
+      // If TDD made no changes, surface to operator — don't re-verify endlessly
+      if (!(await this.git.hasChanges(preFixSha))) {
+        const failSummary =
+          parsed.newFailures.join("\n") || "Verification issues remain but TDD made no changes.";
+        const decision = await this.gate.verifyFailed(slice.number, failSummary);
+
+        if (decision.kind === "stop") {
+          this.progressSink.teardown();
+          throw new Error("Operator stopped");
+        }
+        if (decision.kind === "skip") {
+          return false;
+        }
+        // Operator chose retry — continue to review, don't loop
+        return true;
+      }
+
+      // Re-verify — tell the verifier what TDD fixed
+      const fixSummary = fixResult.assistantText?.slice(0, 500) ?? "TDD attempted fixes.";
       this.progressSink.logBadge("verify", "re-verifying...");
       const reVerifyResult = await this.withRetry(
-        () => this.verifyAgent!.send(
-          `Re-verify changes since ${verifyBaseSha}. The TDD bot attempted fixes.`,
-        ),
+        () =>
+          this.verifyAgent!.send(
+            `Re-verify changes since ${verifyBaseSha}. The TDD bot made the following fixes:\n\n${fixSummary}\n\nCheck if the original issues are resolved.`,
+          ),
         this.verifyAgent!,
         "re-verify",
       );
       parsed = parseVerifyResult(reVerifyResult.assistantText ?? "");
 
       if (!parsed.passed) {
-        const failSummary = parsed.newFailures.join("\n") || "Checks still failing after retry.";
+        const failSummary =
+          parsed.newFailures.join("\n") || "Checks still failing after fix attempt.";
         const decision = await this.gate.verifyFailed(slice.number, failSummary);
 
         if (decision.kind === "stop") {
@@ -655,7 +678,6 @@ export class RunOrchestration {
       if (!findings || findings.includes("NO_ISSUES_FOUND")) continue;
 
       // Fix cycle
-      const preFixSha = await this.git.captureRef();
       const fixPrompt = this.prompts.tdd(
         this.config.planContent,
         `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
@@ -674,11 +696,7 @@ export class RunOrchestration {
         await this.followUp(fixResult, this.tddAgent!);
       }
 
-      if (await this.git.hasChanges(preFixSha)) {
-        if (this.config.reviewSkill !== null) {
-          await this.reviewFix(this.config.planContent, preFixSha);
-        }
-      }
+      await this.commitSweep(`${pass.name} final fix`);
     }
 
     this.phase = transition(this.phase, { kind: "AllPassesDone" });
@@ -695,11 +713,7 @@ export class RunOrchestration {
     this.pipeToSink(gapAgent, "gap");
     const gapPrompt = this.prompts.withBrief(this.prompts.gap(groupContent, groupBaseSha));
     this.progressSink.logBadge("gap", "gap analysis...");
-    const gapResult = await this.withRetry(
-      () => gapAgent.send(gapPrompt),
-      gapAgent,
-      "gap",
-    );
+    const gapResult = await this.withRetry(() => gapAgent.send(gapPrompt), gapAgent, "gap");
 
     const gapText = gapResult.assistantText ?? "";
 
@@ -710,7 +724,6 @@ export class RunOrchestration {
     }
 
     // Fix cycle
-    const gapBaseSha = await this.git.captureRef();
     const fixPrompt = this.prompts.tdd(
       groupContent,
       `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
@@ -729,11 +742,7 @@ export class RunOrchestration {
       await this.followUp(fixResult, this.tddAgent!);
     }
 
-    if (await this.git.hasChanges(gapBaseSha)) {
-      if (this.config.reviewSkill !== null) {
-        await this.reviewFix(groupContent, gapBaseSha);
-      }
-    }
+    await this.commitSweep(`${group.name} gap fixes`);
 
     gapAgent.kill();
     this.phase = transition(this.phase, { kind: "GapDone" });
@@ -760,7 +769,7 @@ export class RunOrchestration {
     let current = result;
     let followUps = 0;
 
-    while (current.needsInput && !this.config.noInteraction && followUps < maxFollowUps) {
+    while (current.needsInput && !this.config.auto && followUps < maxFollowUps) {
       const answer = await this.gate.askUser("Your response (or Enter to skip): ");
 
       if (!answer.trim()) {
@@ -825,7 +834,11 @@ export class RunOrchestration {
     this.pipeToSink(this.tddAgent, "tdd");
     await this.tddAgent.sendQuiet(this.prompts.rulesReminder("tdd"));
     this.tddIsFirst = true;
-    this.state = advanceState(this.state, { kind: "agentSpawned", role: "tdd", sessionId: this.tddAgent.sessionId });
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "tdd",
+      sessionId: this.tddAgent.sessionId,
+    });
     await this.persistence.save(this.state);
   }
 
@@ -846,8 +859,16 @@ export class RunOrchestration {
     ]);
     this.tddIsFirst = true;
     this.reviewIsFirst = true;
-    this.state = advanceState(this.state, { kind: "agentSpawned", role: "tdd", sessionId: this.tddAgent.sessionId });
-    this.state = advanceState(this.state, { kind: "agentSpawned", role: "review", sessionId: this.reviewAgent.sessionId });
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "tdd",
+      sessionId: this.tddAgent.sessionId,
+    });
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "review",
+      sessionId: this.reviewAgent.sessionId,
+    });
     await this.persistence.save(this.state);
   }
 }

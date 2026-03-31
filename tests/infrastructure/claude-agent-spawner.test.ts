@@ -46,7 +46,8 @@ import type { Mock } from "vitest";
 const mockedSpawnAgent = spawnClaudeAgent as Mock;
 const mockedSpawnPlanAgent = spawnClaudePlanAgent as Mock;
 
-import { ROLE_STYLES, ClaudeAgentSpawner } from "../../src/infrastructure/claude-agent-spawner.js";
+import { ClaudeAgentSpawner } from "../../src/infrastructure/claude-agent-spawner.js";
+import { ROLE_STYLES } from "../../src/ui/agent-role-styles.js";
 import { BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL } from "../../src/ui/display.js";
 
 describe("ClaudeAgentProcess / AgentHandle structural compatibility", () => {

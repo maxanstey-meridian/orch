@@ -66,7 +66,7 @@ describe.skipIf(!hasCodex)('CodexAgentSpawner integration (real codex binary)', 
   it('kill() on spawned handle does not crash the process', async () => {
     const spawner = new CodexAgentSpawner(
       process.cwd(),
-      { auto: true, noInteraction: false },
+      { auto: true },
       spawnAppServer,
       new SilentRuntimeInteractionGate(),
     );
@@ -84,7 +84,7 @@ describe.skipIf(!hasCodex)('CodexAgentSpawner integration (real codex binary)', 
   it('auto-approve mode completes tool-using turn without deadlock', async () => {
     const spawner = new CodexAgentSpawner(
       process.cwd(),
-      { auto: true, noInteraction: false },
+      { auto: true },
       spawnAppServer,
       new SilentRuntimeInteractionGate(),
     );

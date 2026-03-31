@@ -105,7 +105,6 @@ describe('InkRuntimeInteractionGate', () => {
 describe('runtimeInteractionGateFactory', () => {
   const baseConfig = {
     auto: false,
-    noInteraction: false,
     cwd: '/tmp',
     planPath: '',
     planContent: '',
@@ -127,8 +126,8 @@ describe('runtimeInteractionGateFactory', () => {
     expect(gate).toBeInstanceOf(SilentRuntimeInteractionGate);
   });
 
-  it('returns SilentRuntimeInteractionGate when noInteraction is true', () => {
-    const gate = runtimeInteractionGateFactory({ ...baseConfig, noInteraction: true }, mockHud(''));
+  it('returns SilentRuntimeInteractionGate when auto is true', () => {
+    const gate = runtimeInteractionGateFactory({ ...baseConfig, auto: true }, mockHud(''));
     expect(gate).toBeInstanceOf(SilentRuntimeInteractionGate);
   });
 

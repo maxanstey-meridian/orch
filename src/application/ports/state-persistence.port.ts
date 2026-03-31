@@ -1,4 +1,4 @@
-import type { OrchestratorState } from '../../domain/state.js';
+import type { OrchestratorState } from "../../domain/state.js";
 
 export abstract class StatePersistence {
   abstract load(): Promise<OrchestratorState>;

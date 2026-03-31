@@ -7,13 +7,19 @@ import { CodexAgentSpawner } from "./codex/codex-agent-spawner.js";
 import { FsStatePersistence } from "./fs-state-persistence.js";
 import { ChildProcessGitOps } from "./child-process-git-ops.js";
 import { DefaultPromptBuilder } from "./default-prompt-builder.js";
-import { InkOperatorGate, SilentOperatorGate, InkProgressSink, SilentProgressSink } from "../ui/ink-operator-gate.js";
-import { SilentRuntimeInteractionGate, InkRuntimeInteractionGate } from "../ui/ink-runtime-interaction-gate.js";
+import { InkOperatorGate, SilentOperatorGate, InkProgressSink } from "../ui/ink-operator-gate.js";
+import {
+  SilentRuntimeInteractionGate,
+  InkRuntimeInteractionGate,
+} from "../ui/ink-runtime-interaction-gate.js";
 import type { OperatorGate } from "../application/ports/operator-gate.port.js";
 import type { ProgressSink } from "../application/ports/progress-sink.port.js";
 import type { RuntimeInteractionGate } from "../application/ports/runtime-interaction.port.js";
 
-export const agentSpawnerFactory = (config: OrchestratorConfig, runtimeInteractionGate: RuntimeInteractionGate) => {
+export const agentSpawnerFactory = (
+  config: OrchestratorConfig,
+  runtimeInteractionGate: RuntimeInteractionGate,
+) => {
   switch (config.provider) {
     case "claude":
       return new ClaudeAgentSpawner(
@@ -23,7 +29,7 @@ export const agentSpawnerFactory = (config: OrchestratorConfig, runtimeInteracti
     case "codex":
       return new CodexAgentSpawner(
         config.cwd,
-        { auto: config.auto, noInteraction: config.noInteraction },
+        { auto: config.auto },
         () => spawn("codex", ["app-server"], { cwd: config.cwd, stdio: ["pipe", "pipe", "pipe"] }),
         runtimeInteractionGate,
       );
@@ -39,8 +45,7 @@ export const statePersistenceFactory = (config: OrchestratorConfig) =>
   new FsStatePersistence(config.stateFile);
 statePersistenceFactory.inject = ["config"] as const;
 
-export const gitOpsFactory = (config: OrchestratorConfig) =>
-  new ChildProcessGitOps(config.cwd);
+export const gitOpsFactory = (config: OrchestratorConfig) => new ChildProcessGitOps(config.cwd);
 gitOpsFactory.inject = ["config"] as const;
 
 export const promptBuilderFactory = (config: OrchestratorConfig) =>
@@ -48,17 +53,18 @@ export const promptBuilderFactory = (config: OrchestratorConfig) =>
 promptBuilderFactory.inject = ["config"] as const;
 
 export const operatorGateFactory = (config: OrchestratorConfig, hud: Hud): OperatorGate =>
-  config.noInteraction ? new SilentOperatorGate() : new InkOperatorGate(hud);
+  config.auto ? new SilentOperatorGate() : new InkOperatorGate(hud);
 operatorGateFactory.inject = ["config", "hud"] as const;
 
-export const progressSinkFactory = (config: OrchestratorConfig, hud: Hud): ProgressSink =>
-  config.noInteraction ? new SilentProgressSink() : new InkProgressSink(hud);
+export const progressSinkFactory = (_config: OrchestratorConfig, hud: Hud): ProgressSink =>
+  new InkProgressSink(hud);
 progressSinkFactory.inject = ["config", "hud"] as const;
 
-export const runtimeInteractionGateFactory = (config: OrchestratorConfig, hud: Hud): RuntimeInteractionGate =>
-  config.auto || config.noInteraction
-    ? new SilentRuntimeInteractionGate()
-    : new InkRuntimeInteractionGate(hud);
+export const runtimeInteractionGateFactory = (
+  config: OrchestratorConfig,
+  hud: Hud,
+): RuntimeInteractionGate =>
+  config.auto ? new SilentRuntimeInteractionGate() : new InkRuntimeInteractionGate(hud);
 runtimeInteractionGateFactory.inject = ["config", "hud"] as const;
 
 export const planGeneratorSpawnerFactory = (opts: { provider: Provider; cwd: string }) => {

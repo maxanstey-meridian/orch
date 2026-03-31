@@ -5,7 +5,6 @@ export type OrchestratorConfig = {
   readonly planPath: string;
   readonly planContent: string;
   readonly brief: string;
-  readonly noInteraction: boolean;
   readonly auto: boolean;
   readonly reviewThreshold: number;
   readonly maxReviewCycles: number;

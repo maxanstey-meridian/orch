@@ -35,7 +35,6 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   planPath: "/tmp/plan.json",
   planContent: "plan content",
   brief: "brief text",
-  noInteraction: false,
   auto: false,
   reviewThreshold: 30,
   maxReviewCycles: 3,
@@ -123,40 +122,31 @@ describe("gitOpsFactory", () => {
 });
 
 describe("operatorGateFactory", () => {
-  it("returns SilentOperatorGate when config.noInteraction is true", async () => {
+  it("returns SilentOperatorGate when config.auto is true", async () => {
     const { operatorGateFactory } = await import("../../src/infrastructure/factories.js");
     const { SilentOperatorGate } = await import("../../src/ui/ink-operator-gate.js");
-    const config = makeConfig({ noInteraction: true });
+    const config = makeConfig({ auto: true });
     const result = operatorGateFactory(config, fakeHud());
     expect(result).toBeInstanceOf(SilentOperatorGate);
     expect(operatorGateFactory.inject).toEqual(["config", "hud"]);
   });
 
-  it("returns InkOperatorGate when config.noInteraction is false", async () => {
+  it("returns InkOperatorGate when config.auto is false", async () => {
     const { operatorGateFactory } = await import("../../src/infrastructure/factories.js");
     const { InkOperatorGate } = await import("../../src/ui/ink-operator-gate.js");
-    const config = makeConfig({ noInteraction: false });
+    const config = makeConfig({ auto: false });
     const result = operatorGateFactory(config, fakeHud());
     expect(result).toBeInstanceOf(InkOperatorGate);
   });
 });
 
 describe("progressSinkFactory", () => {
-  it("returns SilentProgressSink when noInteraction", async () => {
-    const { progressSinkFactory } = await import("../../src/infrastructure/factories.js");
-    const { SilentProgressSink } = await import("../../src/ui/ink-operator-gate.js");
-    const config = makeConfig({ noInteraction: true });
-    const result = progressSinkFactory(config, fakeHud());
-    expect(result).toBeInstanceOf(SilentProgressSink);
-    expect(progressSinkFactory.inject).toEqual(["config", "hud"]);
-  });
-
-  it("returns InkProgressSink when interactive", async () => {
+  it("always returns InkProgressSink regardless of auto flag", async () => {
     const { progressSinkFactory } = await import("../../src/infrastructure/factories.js");
     const { InkProgressSink } = await import("../../src/ui/ink-operator-gate.js");
-    const config = makeConfig({ noInteraction: false });
-    const result = progressSinkFactory(config, fakeHud());
-    expect(result).toBeInstanceOf(InkProgressSink);
+    expect(progressSinkFactory(makeConfig({ auto: true }), fakeHud())).toBeInstanceOf(InkProgressSink);
+    expect(progressSinkFactory(makeConfig({ auto: false }), fakeHud())).toBeInstanceOf(InkProgressSink);
+    expect(progressSinkFactory.inject).toEqual(["config", "hud"]);
   });
 });
 

@@ -677,7 +677,6 @@ const makeTestConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorCo
   planPath: "/tmp/plan.json",
   planContent: "plan content",
   brief: "brief text",
-  noInteraction: true,
   auto: false,
   reviewThreshold: 0,
   maxReviewCycles: 3,
@@ -725,7 +724,7 @@ describe("composition root integration", () => {
       onKey: vi.fn(),
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
-      wrapLog: vi.fn(),
+      wrapLog: vi.fn().mockReturnValue(vi.fn()),
       createWriter: vi.fn(),
       setSkipping: vi.fn(),
     } as any;
@@ -790,7 +789,7 @@ describe("composition root integration", () => {
       onKey: vi.fn(),
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
-      wrapLog: vi.fn(),
+      wrapLog: vi.fn().mockReturnValue(vi.fn()),
       createWriter: vi.fn(),
       setSkipping: vi.fn(),
     } as any;
@@ -818,7 +817,7 @@ describe("composition root integration", () => {
       onKey: vi.fn(),
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
-      wrapLog: vi.fn(),
+      wrapLog: vi.fn().mockReturnValue(vi.fn()),
       createWriter: vi.fn(),
       setSkipping: vi.fn(),
     } as any;
@@ -837,7 +836,7 @@ describe("composition root integration", () => {
 
     expect(tddAgent.kill).toHaveBeenCalled();
     expect(reviewAgent.kill).toHaveBeenCalled();
-    // SilentOperatorGate teardown is a no-op (noInteraction: true),
+    // SilentOperatorGate teardown is a no-op (auto: true),
     // but it's still called — proves the cascade works
   });
 
@@ -847,7 +846,7 @@ describe("composition root integration", () => {
     // ... container creation ...
     // cleanup = () => orch.dispose();      // upgraded
     const { createContainer } = await import("../src/composition-root.js");
-    const config = makeTestConfig();
+    const config = makeTestConfig({ auto: true });
     const hudTeardown = vi.fn();
     const dummyHud = {
       askUser: vi.fn().mockResolvedValue(""),
@@ -857,7 +856,7 @@ describe("composition root integration", () => {
       onKey: vi.fn(),
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
-      wrapLog: vi.fn(),
+      wrapLog: vi.fn().mockReturnValue(vi.fn()),
       createWriter: vi.fn(),
       setSkipping: vi.fn(),
     } as any;
@@ -878,9 +877,8 @@ describe("composition root integration", () => {
 
     // orch.dispose kills agents — proves the reassignment worked
     expect(tddAgent.kill).toHaveBeenCalled();
-    // hud.teardown is NOT called directly — it's called via gate.teardown inside dispose
-    // (SilentOperatorGate teardown is a no-op, so hudTeardown won't be called)
-    expect(hudTeardown).not.toHaveBeenCalled();
+    // hud.teardown IS called indirectly via progressSink.teardown inside dispose
+    expect(hudTeardown).toHaveBeenCalled();
   });
 
   it("early cleanup (before container) calls hud.teardown directly", () => {
@@ -908,7 +906,7 @@ describe("composition root integration", () => {
       onKey: vi.fn(),
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
-      wrapLog: vi.fn(),
+      wrapLog: vi.fn().mockReturnValue(vi.fn()),
       createWriter: vi.fn(),
       setSkipping: vi.fn(),
     } as any;

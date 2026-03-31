@@ -1,5 +1,5 @@
 #!/usr/bin/env npx ts-node
-// smoke test
+
 /**
  * main.ts — TDD orchestrator CLI
  *
@@ -10,8 +10,7 @@
  *   npx ts-node src/main.ts --plan inventory.md              # generate plan and exit
  *   npx ts-node src/main.ts --work plan.md                    # execute a plan
  *   npx ts-node src/main.ts --work plan.md --group Auth       # start from group
- *   npx ts-node src/main.ts --work plan.md --auto             # no inter-group prompts
- *   npx ts-node src/main.ts --work plan.md --no-interaction   # suppress all prompts
+ *   npx ts-node src/main.ts --work plan.md --auto             # auto-accept all prompts (--no-interaction is an alias)
  *   npx ts-node src/main.ts --work plan.json --show-plan       # inspect plan structure
  *   npx ts-node src/main.ts --work plan.md --reset            # clear state and re-run
  *   npx ts-node src/main.ts --init --plan inventory.md        # interactive project init
@@ -21,8 +20,17 @@ import { resolve } from "path";
 import { readFileSync, mkdirSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { parsePlan } from "./infrastructure/plan/plan-parser.js";
-import { isPlanFormat, ensureCanonicalPlan, doGeneratePlan } from "./infrastructure/plan/plan-generator.js";
-import { loadState, clearState, statePathForPlan, type OrchestratorState } from "./infrastructure/state/state.js";
+import {
+  isPlanFormat,
+  ensureCanonicalPlan,
+  doGeneratePlan,
+} from "./infrastructure/plan/plan-generator.js";
+import {
+  loadState,
+  clearState,
+  statePathForPlan,
+  type OrchestratorState,
+} from "./infrastructure/state/state.js";
 import { runFingerprint } from "./infrastructure/fingerprint.js";
 import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "./ui/display.js";
 import { CreditExhaustedError } from "./domain/errors.js";
@@ -69,9 +77,8 @@ const main = async () => {
   const workMode = args.includes("--work");
   const workRaw = getArg("--work");
   const workPath = workRaw && !workRaw.startsWith("-") ? workRaw : undefined;
-  const auto = args.includes("--auto");
+  const auto = args.includes("--auto") || args.includes("--no-interaction");
   const skipFingerprint = args.includes("--skip-fingerprint");
-  const noInteraction = args.includes("--no-interaction");
   const resetState = args.includes("--reset");
   const cleanupMode = args.includes("--cleanup");
   const groupFilter = getArg("--group");
@@ -234,7 +241,7 @@ const main = async () => {
     stateFile,
     log,
   });
-  const interactive = !noInteraction && isTTY;
+  const interactive = !auto && isTTY;
 
   // 7. Signal handlers + cleanup
   // cleanup is set to hud.teardown initially, then upgraded to orch.dispose()
@@ -273,7 +280,6 @@ const main = async () => {
     planPath,
     planContent,
     brief,
-    noInteraction,
     auto,
     reviewThreshold:
       rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),

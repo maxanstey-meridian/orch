@@ -17,10 +17,16 @@ type ReceivedNotification = {
   readonly params?: Record<string, unknown>;
 };
 
+type ReceivedResponse = {
+  readonly id: number | string;
+  readonly result?: unknown;
+};
+
 export type FakeAppServer = {
   readonly proc: ChildProcess;
   readonly receivedRequests: ReceivedRequest[];
   readonly receivedNotifications: ReceivedNotification[];
+  readonly receivedResponses: ReceivedResponse[];
   readonly stdout: PassThrough;
   setTurnScript(events: TurnScript): void;
   hangOnTurn(): void;
@@ -36,6 +42,7 @@ export const createFakeAppServer = (): FakeAppServer => {
 
   const receivedRequests: ReceivedRequest[] = [];
   const receivedNotifications: ReceivedNotification[] = [];
+  const receivedResponses: ReceivedResponse[] = [];
   let turnScript: TurnScript = [];
   let shouldHangOnTurn = false;
 
@@ -45,8 +52,15 @@ export const createFakeAppServer = (): FakeAppServer => {
     clientStdout.push(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
   };
 
+  let nextServerRequestId = 1000;
+
   const sendNotification = (method: string, params?: Record<string, unknown>) => {
     clientStdout.push(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
+  };
+
+  const sendServerRequest = (method: string, params?: Record<string, unknown>) => {
+    const id = nextServerRequestId++;
+    clientStdout.push(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
   };
 
   const eventToNotification = (event: CodexEvent): { method: string; params?: Record<string, unknown> } => {
@@ -70,7 +84,7 @@ export const createFakeAppServer = (): FakeAppServer => {
       case 'turnFailed':
         return { method: 'error', params: { code: event.error.code, message: event.error.message } };
       case 'approvalRequested':
-        return { method: 'codex/approvalRequest', params: { id: event.request.id, kind: event.request.kind, summary: event.request.summary } };
+        return { method: 'item/commandExecution/requestApproval', params: { itemId: event.request.id, reason: event.request.summary, command: event.request.summary } };
       case 'ignored':
         return { method: 'some/unknown' };
     }
@@ -84,14 +98,16 @@ export const createFakeAppServer = (): FakeAppServer => {
       return;
     }
 
-    const id = msg.id as number;
-    const method = msg.method as string;
+    const id = msg.id as number | string | undefined;
+    const method = msg.method as string | undefined;
     const params = msg.params as Record<string, unknown> | undefined;
 
-    if (typeof id === 'number') {
-      receivedRequests.push({ id, method, params });
-    } else {
-      // Record notifications (no id)
+    if (id != null && !method) {
+      // Client response to our server request
+      receivedResponses.push({ id, result: msg.result });
+    } else if (id != null && method) {
+      receivedRequests.push({ id: id as number, method, params });
+    } else if (method) {
       receivedNotifications.push({ method, params });
     }
 
@@ -110,10 +126,14 @@ export const createFakeAppServer = (): FakeAppServer => {
         if (shouldHangOnTurn) break;
         // Immediate ack with inProgress status (matches real Codex)
         sendResponse(id, { turn: { id: `turn-${Date.now()}`, status: 'inProgress' } });
-        // Emit scripted events as notifications (including turnCompleted)
+        // Emit scripted events — approvals as server requests, rest as notifications
         for (const event of turnScript) {
           const notif = eventToNotification(event);
-          sendNotification(notif.method, notif.params);
+          if (event.kind === 'approvalRequested') {
+            sendServerRequest(notif.method, notif.params);
+          } else {
+            sendNotification(notif.method, notif.params);
+          }
         }
         // If no turnCompleted in the script, send one
         if (!turnScript.some((e) => e.kind === 'turnCompleted')) {
@@ -134,6 +154,7 @@ export const createFakeAppServer = (): FakeAppServer => {
     proc,
     receivedRequests,
     receivedNotifications,
+    receivedResponses,
     stdout: clientStdout,
     setTurnScript: (events) => { turnScript = events; },
     hangOnTurn: () => { shouldHangOnTurn = true; },

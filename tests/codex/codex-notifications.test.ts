@@ -117,6 +117,37 @@ describe('normalizeNotification', () => {
     });
   });
 
+  it('maps item/commandExecution/requestApproval to approvalRequested', () => {
+    expect(
+      normalizeNotification({
+        method: 'item/commandExecution/requestApproval',
+        params: {
+          itemId: 'call_abc123',
+          reason: 'Do you want to allow Git index updates?',
+          command: '/bin/zsh -lc \'git add file.txt\'',
+        },
+      }),
+    ).toEqual({
+      kind: 'approvalRequested',
+      request: { id: 'call_abc123', kind: 'command', summary: 'Do you want to allow Git index updates?' },
+    });
+  });
+
+  it('maps item/commandExecution/requestApproval falls back to command when reason missing', () => {
+    expect(
+      normalizeNotification({
+        method: 'item/commandExecution/requestApproval',
+        params: {
+          itemId: 'call_xyz',
+          command: 'git commit -m test',
+        },
+      }),
+    ).toEqual({
+      kind: 'approvalRequested',
+      request: { id: 'call_xyz', kind: 'command', summary: 'git commit -m test' },
+    });
+  });
+
   it('maps approval request to approvalRequested', () => {
     expect(
       normalizeNotification({

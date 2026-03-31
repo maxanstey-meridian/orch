@@ -12,7 +12,6 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   planPath: "/tmp/plan.json",
   planContent: "plan content",
   brief: "brief",
-  noInteraction: false,
   auto: false,
   reviewThreshold: 0,
   maxReviewCycles: 3,
@@ -658,7 +657,6 @@ describe("RunOrchestration", () => {
         verifySkill: null,
         reviewSkill: null,
         auto: false,
-        noInteraction: false,
       });
       const { uc, spawner, gate } = makeUc(ports, config);
       gate.confirmNextGroup.mockResolvedValue(true);
@@ -688,7 +686,6 @@ describe("RunOrchestration", () => {
         verifySkill: null,
         reviewSkill: null,
         auto: false,
-        noInteraction: false,
       });
       const { uc, spawner, gate } = makeUc(ports, config);
       gate.confirmNextGroup.mockResolvedValue(false);
@@ -830,11 +827,12 @@ describe("RunOrchestration", () => {
       expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     });
 
-    it("sends findings to TDD, runs review-fix", async () => {
+    it("sends findings to TDD, does not trigger review-fix", async () => {
       const ports = makePorts();
       const config = makeConfig({ reviewSkill: "test" });
       const { uc, git, spawner, prompts } = makeUc(ports, config);
       git.hasChanges.mockResolvedValue(true);
+      git.hasDirtyTree.mockResolvedValue(false);
       git.captureRef.mockResolvedValue("sha1");
       prompts.finalPasses.mockReturnValue([
         { name: "Type check", prompt: "check" },
@@ -852,7 +850,7 @@ describe("RunOrchestration", () => {
       const tddCallArg = prompts.tdd.mock.calls[0][1] as string;
       expect(tddCallArg).toContain("Found: any cast in foo.ts");
       expect(tddAgent.send).toHaveBeenCalled();
-      expect(reviewAgent.send).toHaveBeenCalled();
+      expect(reviewAgent.send).not.toHaveBeenCalled();
     });
   });
 
@@ -986,11 +984,12 @@ describe("RunOrchestration", () => {
       expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     });
 
-    it("sends findings to TDD, runs review-fix cycle", async () => {
+    it("sends findings to TDD, does not trigger review-fix", async () => {
       const ports = makePorts();
       const config = makeConfig({ gapDisabled: false, reviewSkill: "test" });
       const { uc, git, spawner, prompts } = makeUc(ports, config);
       git.hasChanges.mockResolvedValue(true);
+      git.hasDirtyTree.mockResolvedValue(false);
       git.captureRef.mockResolvedValue("sha1");
       const gapAgent = makeAgent({ assistantText: "Missing tests for X" });
       spawner.spawn.mockReturnValue(gapAgent);
@@ -1005,7 +1004,7 @@ describe("RunOrchestration", () => {
       const tddCallArg = prompts.tdd.mock.calls[0][1] as string;
       expect(tddCallArg).toContain("Missing tests for X");
       expect(tddAgent.send).toHaveBeenCalled();
-      expect(reviewAgent.send).toHaveBeenCalled();
+      expect(reviewAgent.send).not.toHaveBeenCalled();
       expect(gapAgent.kill).toHaveBeenCalled();
     });
   });
@@ -2885,7 +2884,8 @@ describe("RunOrchestration", () => {
 
     it("calls logBadge with 'verify' for re-verify after fix", async () => {
       const ports = makePorts();
-      const { uc, spawner, gate, progressSink } = makeUc(ports);
+      const { uc, spawner, gate, git, progressSink } = makeUc(ports);
+      git.hasChanges.mockResolvedValue(true);
       const verifyAgent = makeAgent({
         assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- test broke\n",
       });

@@ -1,12 +1,12 @@
 export type GateDecision =
-  | { readonly kind: 'accept' }
-  | { readonly kind: 'reject' }
-  | { readonly kind: 'edit'; readonly guidance: string };
+  | { readonly kind: "accept" }
+  | { readonly kind: "reject" }
+  | { readonly kind: "edit"; readonly guidance: string };
 
 export type VerifyDecision =
-  | { readonly kind: 'retry' }
-  | { readonly kind: 'skip' }
-  | { readonly kind: 'stop' };
+  | { readonly kind: "retry" }
+  | { readonly kind: "skip" }
+  | { readonly kind: "stop" };
 
 export abstract class OperatorGate {
   abstract confirmPlan(planPreview: string): Promise<GateDecision>;

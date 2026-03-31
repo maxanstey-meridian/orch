@@ -21,7 +21,7 @@ describe('CodexAgentSpawner', () => {
 
   it('spawn with no resumeSessionId calls thread/start and sessionId is the thread id', async () => {
     fake = createFakeAppServer();
-    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
 
     // sessionId is not available synchronously — need to await ready via send
@@ -41,7 +41,7 @@ describe('CodexAgentSpawner', () => {
       { kind: 'textDelta', text: 'world' },
       { kind: 'turnCompleted', resultText: '' },
     ]);
-    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
 
     const result = await handle.send('do something');
@@ -59,7 +59,7 @@ describe('CodexAgentSpawner', () => {
       { kind: 'textDelta', text: 'line two\n' },
       { kind: 'turnCompleted', resultText: '' },
     ]);
-    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
     const onText = vi.fn();
 
@@ -76,7 +76,7 @@ describe('CodexAgentSpawner', () => {
       { kind: 'toolActivity', summary: 'command: npm test' },
       { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
     ]);
-    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
     const onToolUse = vi.fn();
 
@@ -91,7 +91,7 @@ describe('CodexAgentSpawner', () => {
       { kind: 'textDelta', text: 'the answer' },
       { kind: 'turnCompleted', resultText: '' },
     ]);
-    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
     const onText = vi.fn();
     const onToolUse = vi.fn();
@@ -111,7 +111,7 @@ describe('CodexAgentSpawner', () => {
       { kind: 'toolActivity', summary: 'command: test' },
       { kind: 'turnCompleted', resultText: '' },
     ]);
-    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
     const onText = vi.fn();
     const onToolUse = vi.fn();
@@ -126,7 +126,7 @@ describe('CodexAgentSpawner', () => {
 
   it('spawn with planMode and systemPrompt passes developerInstructions to thread/start', async () => {
     fake = createFakeAppServer();
-    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
     spawner.spawn('plan', { planMode: true, systemPrompt: 'plan instructions' });
 
     await tick();
@@ -169,7 +169,7 @@ describe('CodexAgentSpawner', () => {
 
   it('alive becomes false when process dies unexpectedly', async () => {
     fake = createFakeAppServer();
-    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
 
     fake.setTurnScript([{ kind: 'turnCompleted', resultText: '' }]);
@@ -187,7 +187,7 @@ describe('CodexAgentSpawner', () => {
   it('send() resolves with exitCode 1 when process dies mid-turn', async () => {
     fake = createFakeAppServer();
     fake.hangOnTurn();
-    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
 
     // Wait for ready (initialize + thread/start)
@@ -208,7 +208,7 @@ describe('CodexAgentSpawner', () => {
   it('sendQuiet() returns empty string when process dies mid-turn', async () => {
     fake = createFakeAppServer();
     fake.hangOnTurn();
-    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
 
     await new Promise((r) => setTimeout(r, 10));
@@ -266,7 +266,7 @@ describe('CodexAgentSpawner', () => {
       { kind: 'turnFailed', error: { code: 'serverOverloaded', message: 'Server is overloaded' } },
       { kind: 'turnCompleted', resultText: '' },
     ]);
-    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
 
     const result = await handle.send('go');
@@ -352,7 +352,7 @@ describe('CodexAgentSpawner', () => {
     it('inject() during active turn sends turn/steer', async () => {
       fake = createFakeAppServer();
       fake.hangOnTurn();
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       await tick(); // wait for ready
@@ -373,7 +373,7 @@ describe('CodexAgentSpawner', () => {
 
     it('inject() between turns queues the message (no RPC sent)', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       await tick(); // wait for ready
@@ -387,7 +387,7 @@ describe('CodexAgentSpawner', () => {
 
     it('queued guidance prepended to next send()', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -409,7 +409,7 @@ describe('CodexAgentSpawner', () => {
 
     it('multiple queued messages appear in insertion order', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -427,7 +427,7 @@ describe('CodexAgentSpawner', () => {
 
     it('queue is cleared after flush', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -448,7 +448,7 @@ describe('CodexAgentSpawner', () => {
     it('kill() during active turn sends interrupt then closes', async () => {
       fake = createFakeAppServer();
       fake.hangOnTurn();
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -468,7 +468,7 @@ describe('CodexAgentSpawner', () => {
 
     it('kill() while idle closes without interrupt', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -483,7 +483,7 @@ describe('CodexAgentSpawner', () => {
 
     it('after kill(), alive is false', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -496,7 +496,7 @@ describe('CodexAgentSpawner', () => {
 
   it('spawn with resumeSessionId calls thread/resume with that id', async () => {
     fake = createFakeAppServer();
-    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd', { resumeSessionId: 'prev-thread' });
 
     await tick();
@@ -510,7 +510,7 @@ describe('CodexAgentSpawner', () => {
   describe('mode config and sandbox', () => {
     it('plan role passes read-only sandbox to thread/start', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       spawner.spawn('plan');
 
       await tick();
@@ -521,7 +521,7 @@ describe('CodexAgentSpawner', () => {
 
     it('tdd role passes workspace-write sandbox to thread/start', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       spawner.spawn('tdd');
 
       await tick();
@@ -536,19 +536,19 @@ describe('CodexAgentSpawner', () => {
         { kind: 'approvalRequested', request: { id: 'req-1', kind: 'command', summary: 'run npm test' } },
         { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: true, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: true }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       const result = await handle.send('go');
 
       expect(result.resultText).toBe('done');
       // Check that an approval response was sent
-      const approvalResponse = fake.receivedNotifications.find(
-        (n) => n.method === 'codex/approvalResponse',
+      const approvalResponse = fake.receivedResponses.find(
+        (r) => r.result != null,
       );
       expect(approvalResponse).toBeDefined();
-      expect(approvalResponse!.params?.id).toBe('req-1');
-      expect(approvalResponse!.params?.approved).toBe(true);
+      // id is the JSON-RPC server request id, not the event itemId;
+      expect((approvalResponse!.result as any)?.decision).toBe('accept');
     });
 
     it('sendQuiet() auto-approves approval events in auto-approve mode', async () => {
@@ -557,23 +557,23 @@ describe('CodexAgentSpawner', () => {
         { kind: 'approvalRequested', request: { id: 'req-q1', kind: 'command', summary: 'run npm test' } },
         { kind: 'textDelta', text: 'quiet result' }, { kind: 'turnCompleted', resultText: '' },
       ]);
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: true, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: true }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       const text = await handle.sendQuiet('go');
 
       expect(text).toBe('quiet result');
-      const approvalResponse = fake.receivedNotifications.find(
-        (n) => n.method === 'codex/approvalResponse',
+      const approvalResponse = fake.receivedResponses.find(
+        (r) => r.result != null,
       );
       expect(approvalResponse).toBeDefined();
-      expect(approvalResponse!.params?.id).toBe('req-q1');
-      expect(approvalResponse!.params?.approved).toBe(true);
+      // id is the JSON-RPC server request id;
+      expect((approvalResponse!.result as any)?.decision).toBe('accept');
     });
 
     it('resumed session passes sandbox to thread/resume', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       spawner.spawn('plan', { resumeSessionId: 'prev-thread' });
 
       await tick();
@@ -591,7 +591,7 @@ describe('CodexAgentSpawner', () => {
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
       };
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, gate);
       const handle = spawner.spawn('tdd');
 
       await handle.send('go');
@@ -599,11 +599,11 @@ describe('CodexAgentSpawner', () => {
 
       // Gate was consulted (not bypassed like auto-approve mode)
       expect(gate.decide).toHaveBeenCalledOnce();
-      const approvalResponse = fake.receivedNotifications.find(
-        (n) => n.method === 'codex/approvalResponse',
+      const approvalResponse = fake.receivedResponses.find(
+        (r) => r.result != null,
       );
       expect(approvalResponse).toBeDefined();
-      expect(approvalResponse!.params?.approved).toBe(true);
+      expect((approvalResponse!.result as any)?.decision).toBe('accept');
     });
   });
 
@@ -617,7 +617,7 @@ describe('CodexAgentSpawner', () => {
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
       };
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, gate);
       const handle = spawner.spawn('tdd');
 
       await handle.send('go');
@@ -639,18 +639,18 @@ describe('CodexAgentSpawner', () => {
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
       };
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, gate);
       const handle = spawner.spawn('tdd');
 
       await handle.send('go');
       await tick();
 
-      const approvalResponse = fake.receivedNotifications.find(
-        (n) => n.method === 'codex/approvalResponse',
+      const approvalResponse = fake.receivedResponses.find(
+        (r) => r.result != null,
       );
       expect(approvalResponse).toBeDefined();
-      expect(approvalResponse!.params?.id).toBe('req-1');
-      expect(approvalResponse!.params?.approved).toBe(true);
+      // id is the JSON-RPC server request id, not the event itemId;
+      expect((approvalResponse!.result as any)?.decision).toBe('accept');
     });
 
     it('rejected decision sends rejection response', async () => {
@@ -662,18 +662,18 @@ describe('CodexAgentSpawner', () => {
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'reject' }),
       };
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, gate);
       const handle = spawner.spawn('tdd');
 
       await handle.send('go');
       await tick();
 
-      const approvalResponse = fake.receivedNotifications.find(
-        (n) => n.method === 'codex/approvalResponse',
+      const approvalResponse = fake.receivedResponses.find(
+        (r) => r.result != null,
       );
       expect(approvalResponse).toBeDefined();
-      expect(approvalResponse!.params?.id).toBe('req-2');
-      expect(approvalResponse!.params?.approved).toBe(false);
+      // id is the JSON-RPC server request id;
+      expect((approvalResponse!.result as any)?.decision).toBe('cancel');
     });
 
     it('cancel decision interrupts turn', async () => {
@@ -682,7 +682,7 @@ describe('CodexAgentSpawner', () => {
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'cancel' }),
       };
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, gate);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -716,18 +716,18 @@ describe('CodexAgentSpawner', () => {
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
       };
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: true, noInteraction: false }, () => fake.proc, gate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: true }, () => fake.proc, gate);
       const handle = spawner.spawn('tdd');
 
       await handle.send('go');
       await tick();
 
       expect(gate.decide).not.toHaveBeenCalled();
-      const approvalResponse = fake.receivedNotifications.find(
-        (n) => n.method === 'codex/approvalResponse',
+      const approvalResponse = fake.receivedResponses.find(
+        (r) => r.result != null,
       );
       expect(approvalResponse).toBeDefined();
-      expect(approvalResponse!.params?.approved).toBe(true);
+      expect((approvalResponse!.result as any)?.decision).toBe('accept');
     });
 
     it('multiple approvals in single turn handled sequentially', async () => {
@@ -748,7 +748,7 @@ describe('CodexAgentSpawner', () => {
           return { kind: 'approve' };
         }),
       };
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, gate);
       const handle = spawner.spawn('tdd');
 
       await handle.send('go');
@@ -759,12 +759,10 @@ describe('CodexAgentSpawner', () => {
       // First call must complete before second starts
       expect(callOrder).toEqual(['first', 'second']);
 
-      const approvalResponses = fake.receivedNotifications.filter(
-        (n) => n.method === 'codex/approvalResponse',
-      );
+      const approvalResponses = fake.receivedResponses;
       expect(approvalResponses).toHaveLength(2);
-      expect(approvalResponses[0].params?.id).toBe('req-a');
-      expect(approvalResponses[1].params?.id).toBe('req-b');
+      expect((approvalResponses[0].result as any)?.decision).toBe('accept');
+      expect((approvalResponses[1].result as any)?.decision).toBe('accept');
     });
 
     it('sendQuiet() routes approvals through gate in interactive mode', async () => {
@@ -776,7 +774,7 @@ describe('CodexAgentSpawner', () => {
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
       };
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, gate);
       const handle = spawner.spawn('tdd');
 
       const text = await handle.sendQuiet('go');
@@ -784,53 +782,32 @@ describe('CodexAgentSpawner', () => {
 
       expect(text).toBe('quiet done');
       expect(gate.decide).toHaveBeenCalledOnce();
-      const approvalResponse = fake.receivedNotifications.find(
-        (n) => n.method === 'codex/approvalResponse',
+      const approvalResponse = fake.receivedResponses.find(
+        (r) => r.result != null,
       );
       expect(approvalResponse).toBeDefined();
-      expect(approvalResponse!.params?.approved).toBe(true);
+      expect((approvalResponse!.result as any)?.decision).toBe('accept');
     });
 
-    it('fileChange approval maps to fileChangeApproval request', async () => {
+    it('approval with different summary text passes summary through to gate', async () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
-        { kind: 'approvalRequested', request: { id: 'req-fc', kind: 'fileChange', summary: 'modify src/foo.ts' } },
+        { kind: 'approvalRequested', request: { id: 'req-fc', kind: 'command', summary: 'Allow git index updates for git add' } },
         { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
       };
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, gate);
       const handle = spawner.spawn('tdd');
 
       await handle.send('go');
       await tick();
 
       expect(gate.decide).toHaveBeenCalledWith({
-        kind: 'fileChangeApproval',
-        summary: 'modify src/foo.ts',
-        files: [],
-      });
-    });
-
-    it('permission approval maps to permissionApproval request', async () => {
-      fake = createFakeAppServer();
-      fake.setTurnScript([
-        { kind: 'approvalRequested', request: { id: 'req-perm', kind: 'permission', summary: 'access network' } },
-        { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
-      ]);
-      const gate: RuntimeInteractionGate = {
-        decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
-      };
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
-      const handle = spawner.spawn('tdd');
-
-      await handle.send('go');
-      await tick();
-
-      expect(gate.decide).toHaveBeenCalledWith({
-        kind: 'permissionApproval',
-        summary: 'access network',
+        kind: 'commandApproval',
+        summary: 'Allow git index updates for git add',
+        command: 'Allow git index updates for git add',
       });
     });
 
@@ -843,7 +820,7 @@ describe('CodexAgentSpawner', () => {
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockRejectedValue(new Error('hud crashed')),
       };
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, gate);
       const handle = spawner.spawn('tdd');
 
       const result = await handle.send('go');
@@ -855,12 +832,12 @@ describe('CodexAgentSpawner', () => {
       // Gate was called
       expect(gate.decide).toHaveBeenCalledOnce();
       // Fail-safe rejection should have been sent
-      const approvalResponse = fake.receivedNotifications.find(
-        (n) => n.method === 'codex/approvalResponse',
+      const approvalResponse = fake.receivedResponses.find(
+        (r) => r.result != null,
       );
       expect(approvalResponse).toBeDefined();
-      expect(approvalResponse!.params?.id).toBe('req-err');
-      expect(approvalResponse!.params?.approved).toBe(false);
+      // id is the JSON-RPC server request id;
+      expect((approvalResponse!.result as any)?.decision).toBe('cancel');
     });
 
     it('sendQuiet() with piped callbacks suppresses text streaming but routes approvals', async () => {
@@ -873,7 +850,7 @@ describe('CodexAgentSpawner', () => {
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
       };
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, gate);
       const handle = spawner.spawn('tdd');
 
       const pipedOnText = vi.fn();
@@ -895,7 +872,7 @@ describe('CodexAgentSpawner', () => {
   describe('gap coverage', () => {
     it('sendQuiet() flushes pending guidance queue', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -918,7 +895,7 @@ describe('CodexAgentSpawner', () => {
         { kind: 'textDelta', text: 'hello\n' },
         { kind: 'turnCompleted', resultText: '' },
       ]);
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       const pipedOnText = vi.fn();
@@ -939,7 +916,7 @@ describe('CodexAgentSpawner', () => {
         { kind: 'textDelta', text: 'Should I proceed?' },
         { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       const result = await handle.send('go');
@@ -953,7 +930,7 @@ describe('CodexAgentSpawner', () => {
         { kind: 'textDelta', text: 'All done.' },
         { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       const result = await handle.send('go');
@@ -967,7 +944,7 @@ describe('CodexAgentSpawner', () => {
         { kind: 'turnFailed', error: { code: 'serverOverloaded', message: 'overloaded' } },
         { kind: 'turnCompleted', resultText: '' },
       ]);
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       const result = await handle.send('go');
@@ -983,7 +960,7 @@ describe('CodexAgentSpawner', () => {
         { kind: 'turnFailed', error: { code: 'usageLimitExceeded', message: 'Usage limit exceeded' } },
         { kind: 'turnCompleted', resultText: '' },
       ]);
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       const result = await handle.send('go');
@@ -1001,7 +978,7 @@ describe('CodexAgentSpawner', () => {
         { kind: 'turnFailed', error: { code: 'rateLimited', message: 'Too many requests' } },
         { kind: 'turnCompleted', resultText: '' },
       ]);
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       const result = await handle.send('go');
@@ -1019,7 +996,7 @@ describe('CodexAgentSpawner', () => {
         { kind: 'turnFailed', error: { code: 'serverOverloaded', message: 'Server is overloaded' } },
         { kind: 'turnCompleted', resultText: '' },
       ]);
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       const result = await handle.send('go');
@@ -1052,7 +1029,7 @@ describe('CodexAgentSpawner', () => {
         { kind: 'toolActivity', summary: 'command: npm test' },
         { kind: 'turnCompleted', resultText: '' },
       ]);
-      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
       const result = await handle.send('go');

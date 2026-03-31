@@ -33,7 +33,12 @@ export class DefaultPromptBuilder extends PromptBuilder {
     return buildTddPrompt(sliceContent, fixInstructions, this.planContent, sliceNumber);
   }
 
-  tddExecute(planText: string, sliceNumber: number, firstSlice: boolean, operatorGuidance?: string): string {
+  tddExecute(
+    planText: string,
+    sliceNumber: number,
+    firstSlice: boolean,
+    operatorGuidance?: string,
+  ): string {
     const firstSliceContext = firstSlice
       ? `## Full Plan Context\nYou are implementing Slice ${sliceNumber}. Here is the full plan — do NOT implement other slices.\n\n${this.planContent}\n\n---\n\n`
       : "";
