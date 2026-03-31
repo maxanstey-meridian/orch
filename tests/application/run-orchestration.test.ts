@@ -2919,6 +2919,10 @@ describe("RunOrchestration", () => {
       const { uc, spawner, gate, git, progressSink } = makeUc(ports);
       git.hasChanges.mockResolvedValue(true);
       const callOrder: string[] = [];
+      git.captureRef.mockImplementation(async () => {
+        callOrder.push("capture-ref");
+        return "sha1";
+      });
       const verifyAgent = {
         ...makeAgent(),
         send: vi.fn()
@@ -2954,9 +2958,15 @@ describe("RunOrchestration", () => {
 
       await uc.verify(makeSlice(), "sha0");
 
-      expect(callOrder.indexOf("verify-badge-1")).toBeLessThan(callOrder.indexOf("verify-send-1"));
-      expect(callOrder.indexOf("tdd-badge")).toBeLessThan(callOrder.indexOf("tdd-send"));
-      expect(callOrder.indexOf("verify-badge-2")).toBeLessThan(callOrder.indexOf("verify-send-2"));
+      expect(callOrder).toEqual([
+        "verify-badge-1",
+        "verify-send-1",
+        "capture-ref",
+        "tdd-badge",
+        "tdd-send",
+        "verify-badge-2",
+        "verify-send-2",
+      ]);
     });
 
     it("does not use a completeness badge when completeness check runs", async () => {

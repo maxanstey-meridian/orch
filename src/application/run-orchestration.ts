@@ -592,8 +592,8 @@ export class RunOrchestration {
 
       // Send findings to TDD for fixing
       const retryPrompt = `Verification found issues after your implementation. Fix them:\n\n${failureContext}`;
-      this.progressSink.logBadge("tdd", "implementing...");
       const preFixSha = await this.git.captureRef();
+      this.progressSink.logBadge("tdd", "implementing...");
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(retryPrompt),
         this.tddAgent!,
