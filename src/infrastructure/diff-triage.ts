@@ -46,6 +46,7 @@ Return a JSON object with exactly these keys:
 - reason
 
 Use booleans for the first four fields and a short string for reason.
+Output ONLY the raw JSON object. No markdown code fences, no commentary, no explanation before or after.
 
 ## Diff
 ${diff}`;

@@ -91,6 +91,20 @@ describe("parseTriageResult", () => {
       ),
     ).toEqual(FULL_TRIAGE);
   });
+
+  it("returns FULL_TRIAGE when fields have the wrong primitive types", () => {
+    expect(
+      parseTriageResult(
+        JSON.stringify({
+          completeness: true,
+          verify: "false",
+          review: true,
+          gap: false,
+          reason: "typed wrong",
+        }),
+      ),
+    ).toEqual(FULL_TRIAGE);
+  });
 });
 
 describe("buildTriagePrompt", () => {
@@ -111,5 +125,13 @@ describe("buildTriagePrompt", () => {
     expect(prompt).toContain("review");
     expect(prompt).toContain("gap");
     expect(prompt).toContain("reason");
+  });
+
+  it("requires raw JSON output without commentary or code fences", () => {
+    const prompt = buildTriagePrompt("diff --git a/file.ts b/file.ts");
+
+    expect(prompt).toContain("Output ONLY the raw JSON object");
+    expect(prompt).toContain("No markdown code fences");
+    expect(prompt).toContain("no commentary");
   });
 });
