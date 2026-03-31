@@ -1,6 +1,8 @@
 import type { ChildProcess } from 'node:child_process';
 import { AgentSpawner, type AgentHandle } from '../../application/ports/agent-spawner.port.js';
 import type { AgentRole } from '../../domain/agent-types.js';
+import type { RuntimeInteractionGate, RuntimeInteractionRequest } from '../../application/ports/runtime-interaction.port.js';
+import type { CodexApprovalRequest } from './codex-notifications.js';
 import { ROLE_STYLES } from '../claude-agent-spawner.js';
 import { createCodexAppServerClient } from './codex-app-server-client.js';
 import { detectQuestion } from '../agent/question-detector.js';
@@ -8,11 +10,23 @@ import { resolveCodexModeConfig } from './codex-mode-config.js';
 
 type ProcessFactory = () => ChildProcess;
 
+const mapApprovalToInteraction = (request: CodexApprovalRequest): RuntimeInteractionRequest => {
+  switch (request.kind) {
+    case 'command':
+      return { kind: 'commandApproval', summary: request.summary, command: request.summary };
+    case 'fileChange':
+      return { kind: 'fileChangeApproval', summary: request.summary, files: [] };
+    case 'permission':
+      return { kind: 'permissionApproval', summary: request.summary };
+  }
+};
+
 export class CodexAgentSpawner extends AgentSpawner {
   constructor(
     private readonly defaultCwd: string,
     private readonly config: { readonly auto: boolean; readonly noInteraction: boolean },
     private readonly processFactory: ProcessFactory,
+    private readonly gate?: RuntimeInteractionGate,
   ) {
     super();
   }
@@ -35,6 +49,28 @@ export class CodexAgentSpawner extends AgentSpawner {
     let persistentOnText: ((text: string) => void) | undefined;
     let persistentOnToolUse: ((summary: string) => void) | undefined;
     const pendingGuidance: string[] = [];
+    let approvalChain = Promise.resolve();
+
+    const handleApprovalEvent = (request: CodexApprovalRequest) => {
+      if (modeConfig.approvalMode === 'auto-approve') {
+        client.respondToApproval(request.id, true);
+      } else if (this.gate) {
+        approvalChain = approvalChain.then(async () => {
+          const decision = await this.gate!.decide(mapApprovalToInteraction(request));
+          switch (decision.kind) {
+            case 'approve':
+              client.respondToApproval(request.id, true);
+              break;
+            case 'reject':
+              client.respondToApproval(request.id, false);
+              break;
+            case 'cancel':
+              client.interruptTurn().catch(() => {});
+              break;
+          }
+        });
+      }
+    };
 
     const threadOpts = {
       developerInstructions: opts?.systemPrompt,
@@ -86,9 +122,7 @@ export class CodexAgentSpawner extends AgentSpawner {
                 assistantText += `\n[Error: ${event.error.code} — ${event.error.message}]`;
                 break;
               case 'approvalRequested':
-                if (modeConfig.approvalMode === 'auto-approve') {
-                  client.respondToApproval(event.request.id, true);
-                }
+                handleApprovalEvent(event.request);
                 break;
             }
           });
@@ -116,8 +150,8 @@ export class CodexAgentSpawner extends AgentSpawner {
           }
 
           const resultText = await client.startTurn(effectivePrompt, (event) => {
-            if (event.kind === 'approvalRequested' && modeConfig.approvalMode === 'auto-approve') {
-              client.respondToApproval(event.request.id, true);
+            if (event.kind === 'approvalRequested') {
+              handleApprovalEvent(event.request);
             }
           });
 

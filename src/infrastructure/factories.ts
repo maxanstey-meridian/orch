@@ -25,6 +25,7 @@ export const agentSpawnerFactory = (config: OrchestratorConfig, runtimeInteracti
         config.cwd,
         { auto: config.auto, noInteraction: config.noInteraction },
         () => spawn("codex", ["app-server"], { cwd: config.cwd, stdio: ["pipe", "pipe", "pipe"] }),
+        runtimeInteractionGate,
       );
     default: {
       const _exhaustive: never = config.provider;

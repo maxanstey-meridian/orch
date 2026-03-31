@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createFakeAppServer, type FakeAppServer } from './fake-app-server.js';
 import { CodexAgentSpawner } from '../../src/infrastructure/codex/codex-agent-spawner.js';
+import { SilentRuntimeInteractionGate } from '../../src/ui/ink-runtime-interaction-gate.js';
+import type { RuntimeInteractionGate } from '../../src/application/ports/runtime-interaction.port.js';
 
 const tick = () => new Promise((r) => setTimeout(r, 10));
 
@@ -586,6 +588,236 @@ describe('CodexAgentSpawner', () => {
         (n) => n.method === 'codex/approvalResponse',
       );
       expect(approvalResponse).toBeUndefined();
+    });
+  });
+
+  describe('approval routing', () => {
+    const silentGate = new SilentRuntimeInteractionGate();
+
+    it('approval request triggers gate.decide() in interactive mode', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'approvalRequested', request: { id: 'req-1', kind: 'command', summary: 'run npm test' } },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const gate: RuntimeInteractionGate = {
+        decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
+      };
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const handle = spawner.spawn('tdd');
+
+      await handle.send('go');
+      await tick();
+
+      expect(gate.decide).toHaveBeenCalledWith({
+        kind: 'commandApproval',
+        summary: 'run npm test',
+        command: 'run npm test',
+      });
+    });
+
+    it('approved decision sends approval response', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'approvalRequested', request: { id: 'req-1', kind: 'command', summary: 'run npm test' } },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const gate: RuntimeInteractionGate = {
+        decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
+      };
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const handle = spawner.spawn('tdd');
+
+      await handle.send('go');
+      await tick();
+
+      const approvalResponse = fake.receivedNotifications.find(
+        (n) => n.method === 'codex/approvalResponse',
+      );
+      expect(approvalResponse).toBeDefined();
+      expect(approvalResponse!.params?.id).toBe('req-1');
+      expect(approvalResponse!.params?.approved).toBe(true);
+    });
+
+    it('rejected decision sends rejection response', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'approvalRequested', request: { id: 'req-2', kind: 'command', summary: 'rm -rf /' } },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const gate: RuntimeInteractionGate = {
+        decide: vi.fn().mockResolvedValue({ kind: 'reject' }),
+      };
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const handle = spawner.spawn('tdd');
+
+      await handle.send('go');
+      await tick();
+
+      const approvalResponse = fake.receivedNotifications.find(
+        (n) => n.method === 'codex/approvalResponse',
+      );
+      expect(approvalResponse).toBeDefined();
+      expect(approvalResponse!.params?.id).toBe('req-2');
+      expect(approvalResponse!.params?.approved).toBe(false);
+    });
+
+    it('cancel decision interrupts turn', async () => {
+      fake = createFakeAppServer();
+      fake.hangOnTurn();
+      const gate: RuntimeInteractionGate = {
+        decide: vi.fn().mockResolvedValue({ kind: 'cancel' }),
+      };
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const handle = spawner.spawn('tdd');
+
+      await tick();
+
+      // Start the turn (it will hang — not resolved)
+      const sendPromise = handle.send('go').catch(() => {});
+      await tick();
+
+      // Now emit an approval request into the hanging turn
+      fake.stdout.push(JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'codex/approvalRequest',
+        params: { id: 'req-cancel', kind: 'command', summary: 'dangerous op' },
+      }) + '\n');
+      await tick();
+      await tick();
+
+      const interrupt = fake.receivedRequests.find((r) => r.method === 'turn/interrupt');
+      expect(interrupt).toBeDefined();
+
+      handle.kill();
+      await sendPromise;
+    });
+
+    it('auto-approve mode bypasses gate entirely', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'approvalRequested', request: { id: 'req-auto', kind: 'command', summary: 'npm test' } },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const gate: RuntimeInteractionGate = {
+        decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
+      };
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: true, noInteraction: false }, () => fake.proc, gate);
+      const handle = spawner.spawn('tdd');
+
+      await handle.send('go');
+      await tick();
+
+      expect(gate.decide).not.toHaveBeenCalled();
+      const approvalResponse = fake.receivedNotifications.find(
+        (n) => n.method === 'codex/approvalResponse',
+      );
+      expect(approvalResponse).toBeDefined();
+      expect(approvalResponse!.params?.approved).toBe(true);
+    });
+
+    it('multiple approvals in single turn handled sequentially', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'approvalRequested', request: { id: 'req-a', kind: 'command', summary: 'first' } },
+        { kind: 'approvalRequested', request: { id: 'req-b', kind: 'command', summary: 'second' } },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const callOrder: string[] = [];
+      const gate: RuntimeInteractionGate = {
+        decide: vi.fn().mockImplementation(async (req) => {
+          callOrder.push(req.summary);
+          // Add a small delay to the first call to verify serialization
+          if (req.summary === 'first') {
+            await new Promise((r) => setTimeout(r, 20));
+          }
+          return { kind: 'approve' };
+        }),
+      };
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const handle = spawner.spawn('tdd');
+
+      await handle.send('go');
+      await tick();
+      await tick();
+
+      expect(gate.decide).toHaveBeenCalledTimes(2);
+      // First call must complete before second starts
+      expect(callOrder).toEqual(['first', 'second']);
+
+      const approvalResponses = fake.receivedNotifications.filter(
+        (n) => n.method === 'codex/approvalResponse',
+      );
+      expect(approvalResponses).toHaveLength(2);
+      expect(approvalResponses[0].params?.id).toBe('req-a');
+      expect(approvalResponses[1].params?.id).toBe('req-b');
+    });
+
+    it('sendQuiet() routes approvals through gate in interactive mode', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'approvalRequested', request: { id: 'req-quiet', kind: 'command', summary: 'npm test' } },
+        { kind: 'turnCompleted', resultText: 'quiet done' },
+      ]);
+      const gate: RuntimeInteractionGate = {
+        decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
+      };
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const handle = spawner.spawn('tdd');
+
+      const text = await handle.sendQuiet('go');
+      await tick();
+
+      expect(text).toBe('quiet done');
+      expect(gate.decide).toHaveBeenCalledOnce();
+      const approvalResponse = fake.receivedNotifications.find(
+        (n) => n.method === 'codex/approvalResponse',
+      );
+      expect(approvalResponse).toBeDefined();
+      expect(approvalResponse!.params?.approved).toBe(true);
+    });
+
+    it('fileChange approval maps to fileChangeApproval request', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'approvalRequested', request: { id: 'req-fc', kind: 'fileChange', summary: 'modify src/foo.ts' } },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const gate: RuntimeInteractionGate = {
+        decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
+      };
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const handle = spawner.spawn('tdd');
+
+      await handle.send('go');
+      await tick();
+
+      expect(gate.decide).toHaveBeenCalledWith({
+        kind: 'fileChangeApproval',
+        summary: 'modify src/foo.ts',
+        files: [],
+      });
+    });
+
+    it('permission approval maps to permissionApproval request', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'approvalRequested', request: { id: 'req-perm', kind: 'permission', summary: 'access network' } },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const gate: RuntimeInteractionGate = {
+        decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
+      };
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const handle = spawner.spawn('tdd');
+
+      await handle.send('go');
+      await tick();
+
+      expect(gate.decide).toHaveBeenCalledWith({
+        kind: 'permissionApproval',
+        summary: 'access network',
+      });
     });
   });
 
