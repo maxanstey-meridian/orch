@@ -66,6 +66,10 @@ export class RunOrchestration {
     throw new IncompleteRunError(`Slice ${slice.number} did not complete: ${reason}`);
   }
 
+  private canSkipCurrentSlice(): boolean {
+    return "sliceNumber" in this.phase;
+  }
+
   private pipeToSink(agent: AgentHandle, role: AgentRole): void {
     const streamer = this.progressSink.createStreamer(role);
     agent.pipe(streamer, (summary) => this.progressSink.setActivity(summary));
@@ -126,6 +130,11 @@ export class RunOrchestration {
     interrupts.onInterrupt((text) => {
       this.hardInterruptPending = text;
       if (this.tddAgent) this.tddAgent.kill();
+    });
+    interrupts.onSkip(() => {
+      if (!this.canSkipCurrentSlice()) return false;
+      this.sliceSkipFlag = true;
+      return true;
     });
 
     const runBaseSha = await this.git.captureRef();
@@ -609,7 +618,6 @@ export class RunOrchestration {
         const decision = await this.gate.verifyFailed(slice.number, failSummary);
 
         if (decision.kind === "stop") {
-          this.progressSink.teardown();
           throw new IncompleteRunError(`Slice ${slice.number} verification failed and execution stopped`);
         }
         if (decision.kind === "skip") {
@@ -637,7 +645,6 @@ export class RunOrchestration {
         const decision = await this.gate.verifyFailed(slice.number, failSummary);
 
         if (decision.kind === "stop") {
-          this.progressSink.teardown();
           throw new IncompleteRunError(`Slice ${slice.number} verification failed and execution stopped`);
         }
         if (decision.kind === "skip") {

@@ -42,6 +42,7 @@ export class SilentProgressSink extends ProgressSink {
     return {
       onGuide: () => {},
       onInterrupt: () => {},
+      onSkip: () => {},
     };
   }
 
@@ -116,10 +117,15 @@ export class InkProgressSink extends ProgressSink {
   registerInterrupts(): InterruptHandler {
     let guideCallback: ((text: string) => void) | null = null;
     let interruptCallback: ((text: string) => void) | null = null;
+    let skipCallback: (() => boolean) | null = null;
 
     this.hud.onKey((key) => {
-      if (key === "g") this.hud.startPrompt("guide");
-      if (key === "i") this.hud.startPrompt("interrupt");
+      const normalized = key.toLowerCase();
+      if (normalized === "g") this.hud.startPrompt("guide");
+      if (normalized === "i") this.hud.startPrompt("interrupt");
+      if (normalized === "s" && skipCallback?.()) {
+        this.hud.setSkipping(true);
+      }
     });
 
     this.hud.onInterruptSubmit((text, mode) => {
@@ -133,6 +139,9 @@ export class InkProgressSink extends ProgressSink {
       },
       onInterrupt: (cb) => {
         interruptCallback = cb;
+      },
+      onSkip: (cb) => {
+        skipCallback = cb;
       },
     };
   }

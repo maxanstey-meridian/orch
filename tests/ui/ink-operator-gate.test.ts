@@ -65,9 +65,11 @@ describe("SilentProgressSink", () => {
     const handler = sink.registerInterrupts();
     expect(typeof handler.onGuide).toBe("function");
     expect(typeof handler.onInterrupt).toBe("function");
+    expect(typeof handler.onSkip).toBe("function");
     // Callbacks are no-ops — calling them doesn't throw
     handler.onGuide(() => {});
     handler.onInterrupt(() => {});
+    handler.onSkip(() => true);
   });
 
   it("updateProgress is a no-op", () => {
@@ -248,6 +250,7 @@ describe("InkProgressSink", () => {
 
       expect(handler).toHaveProperty("onGuide");
       expect(handler).toHaveProperty("onInterrupt");
+      expect(handler).toHaveProperty("onSkip");
       expect(hud.onKey).toHaveBeenCalled();
       expect(hud.onInterruptSubmit).toHaveBeenCalled();
     });
@@ -278,6 +281,36 @@ describe("InkProgressSink", () => {
       keyHandler("x");
       keyHandler("z");
       expect(hud.startPrompt).not.toHaveBeenCalled();
+    });
+
+    it("dispatches skip key to onSkip callback and updates HUD", () => {
+      const hud = createMockHud();
+      const sink = new InkProgressSink(hud);
+      const handler = sink.registerInterrupts();
+      const onSkip = vi.fn(() => true);
+
+      handler.onSkip(onSkip);
+
+      const keyHandler = vi.mocked(hud.onKey).mock.calls[0][0];
+      keyHandler("s");
+
+      expect(onSkip).toHaveBeenCalledOnce();
+      expect(hud.setSkipping).toHaveBeenCalledWith(true);
+    });
+
+    it("does not update HUD when skip key is ignored", () => {
+      const hud = createMockHud();
+      const sink = new InkProgressSink(hud);
+      const handler = sink.registerInterrupts();
+      const onSkip = vi.fn(() => false);
+
+      handler.onSkip(onSkip);
+
+      const keyHandler = vi.mocked(hud.onKey).mock.calls[0][0];
+      keyHandler("s");
+
+      expect(onSkip).toHaveBeenCalledOnce();
+      expect(hud.setSkipping).not.toHaveBeenCalled();
     });
 
     it("submit before onGuide/onInterrupt registered does not throw", () => {

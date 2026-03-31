@@ -87,6 +87,7 @@ const makePorts = () => {
     registerInterrupts: vi.fn().mockReturnValue({
       onGuide: vi.fn(),
       onInterrupt: vi.fn(),
+      onSkip: vi.fn(),
     }),
     updateProgress: vi.fn(),
     setActivity: vi.fn(),
@@ -675,7 +676,7 @@ describe("RunOrchestration", () => {
       gate.verifyFailed.mockResolvedValue({ kind: "stop" as const });
 
       await expect(uc.verify(makeSlice(), "sha0")).rejects.toThrow(IncompleteRunError);
-      expect(progressSink.teardown).toHaveBeenCalled();
+      expect(progressSink.teardown).not.toHaveBeenCalled();
     });
   });
 
@@ -1847,14 +1848,22 @@ describe("RunOrchestration", () => {
         reviewSkill: null,
       });
       const { uc, spawner } = makeUc(ports, config);
+      let capturedSkip: (() => boolean) | null = null;
+      ports.progressSink.registerInterrupts.mockReturnValue({
+        onGuide: vi.fn(),
+        onInterrupt: vi.fn(),
+        onSkip: vi.fn((cb: () => boolean) => {
+          capturedSkip = cb;
+        }),
+      });
 
       let sendCount = 0;
       const tddAgent = makeAgent();
       (tddAgent.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         sendCount++;
         if (sendCount === 1) {
-          // During first slice TDD, trigger skip
-          uc.sliceSkipFlag = true;
+          expect(capturedSkip).not.toBeNull();
+          expect(capturedSkip!()).toBe(true);
         }
         return makeResult();
       });
@@ -2257,6 +2266,7 @@ describe("RunOrchestration", () => {
       ports.progressSink.registerInterrupts.mockReturnValue({
         onGuide: vi.fn((cb: (text: string) => void) => { capturedGuide = cb; }),
         onInterrupt: vi.fn(),
+        onSkip: vi.fn(),
       });
 
       const { uc, spawner } = makeUc(ports, config);
@@ -2284,6 +2294,7 @@ describe("RunOrchestration", () => {
       ports.progressSink.registerInterrupts.mockReturnValue({
         onGuide: vi.fn(),
         onInterrupt: vi.fn((cb: (text: string) => void) => { capturedInterrupt = cb; }),
+        onSkip: vi.fn(),
       });
 
       const { uc, spawner } = makeUc(ports, config);
@@ -2298,6 +2309,32 @@ describe("RunOrchestration", () => {
       capturedInterrupt!("stop and rethink");
       expect(uc.hardInterruptPending).toBe("stop and rethink");
       expect(tddAgent.kill).toHaveBeenCalled();
+    });
+
+    it("registerInterrupts onSkip callback arms slice skipping only during an active slice", async () => {
+      const ports = makePorts();
+      const config = makeConfig({ planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true });
+
+      let capturedSkip: (() => boolean) | null = null;
+      ports.progressSink.registerInterrupts.mockReturnValue({
+        onGuide: vi.fn(),
+        onInterrupt: vi.fn(),
+        onSkip: vi.fn((cb: () => boolean) => { capturedSkip = cb; }),
+      });
+
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn.mockReturnValueOnce(tddAgent).mockReturnValueOnce(reviewAgent);
+
+      await uc.execute([{ name: "G", slices: [makeSlice()] }]);
+
+      expect(capturedSkip).not.toBeNull();
+      expect(capturedSkip!()).toBe(false);
+
+      uc.phase = { kind: "Executing", sliceNumber: 1, planText: null };
+      expect(capturedSkip!()).toBe(true);
+      expect(uc.sliceSkipFlag).toBe(true);
     });
 
     it("updateProgress is called with group metadata at group start", async () => {
