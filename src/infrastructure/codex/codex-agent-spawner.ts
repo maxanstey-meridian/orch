@@ -1,0 +1,106 @@
+import { randomUUID } from 'node:crypto';
+import type { ChildProcess } from 'node:child_process';
+import { AgentSpawner, type AgentHandle } from '../../application/ports/agent-spawner.port.js';
+import type { AgentRole } from '../../domain/agent-types.js';
+import { ROLE_STYLES } from '../claude-agent-spawner.js';
+import { createCodexAppServerClient } from './codex-app-server-client.js';
+import { detectQuestion } from '../agent/question-detector.js';
+
+type ProcessFactory = () => ChildProcess;
+
+export class CodexAgentSpawner extends AgentSpawner {
+  constructor(
+    private readonly defaultCwd: string,
+    private readonly processFactory: ProcessFactory,
+  ) {
+    super();
+  }
+
+  spawn(
+    role: AgentRole,
+    opts?: {
+      readonly resumeSessionId?: string;
+      readonly systemPrompt?: string;
+      readonly cwd?: string;
+      readonly planMode?: boolean;
+    },
+  ): AgentHandle {
+    const style = ROLE_STYLES[role];
+    const sessionId = opts?.resumeSessionId ?? randomUUID();
+    const proc = this.processFactory();
+    const client = createCodexAppServerClient(proc);
+
+    let persistentOnText: ((text: string) => void) | undefined;
+    let persistentOnToolUse: ((summary: string) => void) | undefined;
+
+    // Ready promise: initialize → start/resume thread
+    const ready = (async () => {
+      await client.initialize();
+      if (opts?.resumeSessionId) {
+        await client.resumeThread(opts.resumeSessionId, opts?.systemPrompt);
+      } else {
+        await client.startThread(opts?.systemPrompt);
+      }
+    })();
+
+    const handle: AgentHandle = {
+      get sessionId() { return sessionId; },
+      style,
+      get alive() { return client.alive; },
+      get stderr() { return ''; },
+
+      send: async (prompt, onText?, onToolUse?) => {
+        await ready;
+
+        let assistantText = '';
+        const effectiveOnText = onText ?? persistentOnText;
+        const effectiveOnToolUse = onToolUse ?? persistentOnToolUse;
+
+        const resultText = await client.startTurn(prompt, (event) => {
+          switch (event.kind) {
+            case 'textDelta':
+              assistantText += event.text;
+              effectiveOnText?.(event.text);
+              break;
+            case 'toolActivity':
+              effectiveOnToolUse?.(event.summary);
+              break;
+          }
+        });
+
+        return {
+          exitCode: 0,
+          assistantText,
+          resultText,
+          needsInput: detectQuestion(assistantText),
+          sessionId,
+        };
+      },
+
+      sendQuiet: async (prompt) => {
+        await ready;
+
+        const resultText = await client.startTurn(prompt, () => {
+          // Intentionally ignore all events
+        });
+
+        return resultText;
+      },
+
+      inject: (_message) => {
+        // Will be implemented in Slice 5
+      },
+
+      kill: () => {
+        client.close();
+      },
+
+      pipe: (onText, onToolUse) => {
+        persistentOnText = onText;
+        persistentOnToolUse = onToolUse;
+      },
+    };
+
+    return handle;
+  }
+}

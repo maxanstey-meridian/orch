@@ -1,0 +1,76 @@
+import type { ChildProcess } from 'node:child_process';
+import { createJsonRpcClient, type JsonRpcClient } from './codex-json-rpc.js';
+import { normalizeNotification, type CodexEvent } from './codex-notifications.js';
+
+export type CodexAppServerClient = {
+  readonly threadId: string | undefined;
+  readonly currentTurnId: string | undefined;
+  readonly alive: boolean;
+  initialize(): Promise<void>;
+  startThread(developerInstructions?: string): Promise<string>;
+  resumeThread(threadId: string, developerInstructions?: string): Promise<string>;
+  startTurn(prompt: string, onEvent: (e: CodexEvent) => void): Promise<string>;
+  close(): void;
+};
+
+export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerClient => {
+  const rpc: JsonRpcClient = createJsonRpcClient(proc);
+  let threadId: string | undefined;
+  let currentTurnId: string | undefined;
+  let alive = true;
+
+  return {
+    get threadId() { return threadId; },
+    get currentTurnId() { return currentTurnId; },
+    get alive() { return alive; },
+
+    initialize: async () => {
+      await rpc.request('initialize', {});
+      // Send initialized notification (no id)
+      proc.stdin!.write(JSON.stringify({ jsonrpc: '2.0', method: 'initialized' }) + '\n');
+    },
+
+    startThread: async (developerInstructions?) => {
+      const params: Record<string, unknown> = {};
+      if (developerInstructions) {
+        params.developerInstructions = developerInstructions;
+      }
+      const result = await rpc.request('thread/start', params) as { threadId: string };
+      threadId = result.threadId;
+      return threadId;
+    },
+
+    resumeThread: async (tid, developerInstructions?) => {
+      const params: Record<string, unknown> = { threadId: tid };
+      if (developerInstructions) {
+        params.developerInstructions = developerInstructions;
+      }
+      await rpc.request('thread/resume', params);
+      threadId = tid;
+      return tid;
+    },
+
+    startTurn: async (prompt, onEvent) => {
+      const turnHandler = (n: { method: string; params?: Record<string, unknown> }) => {
+        const event = normalizeNotification(n);
+        onEvent(event);
+      };
+      rpc.onNotification(turnHandler);
+
+      const params: Record<string, unknown> = { threadId, prompt };
+      const result = await rpc.request('turn/start', params) as { result?: string };
+      currentTurnId = undefined;
+
+      const resultText = typeof result?.result === 'string' ? result.result : String(result?.result ?? '');
+      // Emit turnCompleted via onEvent so consumers see it
+      onEvent({ kind: 'turnCompleted', resultText });
+
+      return resultText;
+    },
+
+    close: () => {
+      alive = false;
+      rpc.close();
+    },
+  };
+};
