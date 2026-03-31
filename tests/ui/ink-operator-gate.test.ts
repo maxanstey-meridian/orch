@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { AGENT_ROLES } from "../../src/domain/agent-types.js";
+import type { Slice } from "../../src/domain/plan.js";
 import { SilentOperatorGate, InkOperatorGate, InkProgressSink, SilentProgressSink, styleForRole } from "../../src/ui/ink-operator-gate.js";
 import type { Hud } from "../../src/ui/hud.js";
 import { BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL } from "../../src/ui/display.js";
@@ -15,6 +16,19 @@ const createMockHud = (overrides: Partial<Hud> = {}): Hud => ({
   setSkipping: vi.fn(),
   setActivity: vi.fn(),
   askUser: vi.fn().mockResolvedValue(""),
+  ...overrides,
+});
+
+const stripAnsi = (value: string) => value.replace(/\x1b\[[0-9;]*m/g, "");
+
+const makeSlice = (overrides: Partial<Slice> = {}): Slice => ({
+  number: 3,
+  title: "Test slice",
+  content: "",
+  why: "Test reason",
+  files: [],
+  details: "",
+  tests: "",
   ...overrides,
 });
 
@@ -72,6 +86,11 @@ describe("SilentProgressSink", () => {
 
     expect(typeof streamer).toBe("function");
     expect(() => streamer("streamed text")).not.toThrow();
+  });
+
+  it("logSliceIntro is a no-op", () => {
+    const sink = new SilentProgressSink();
+    expect(() => sink.logSliceIntro(makeSlice())).not.toThrow();
   });
 
   it("teardown is a no-op", () => {
@@ -305,6 +324,21 @@ describe("InkProgressSink", () => {
 
     expect(typeof streamer).toBe("function");
     expect(() => streamer("streamed text")).not.toThrow();
+  });
+
+  it("logSliceIntro emits the slice number and title", () => {
+    const lines: string[] = [];
+    const hud = createMockHud({
+      wrapLog: vi.fn(() => (...args: unknown[]) => {
+        lines.push(args.map((arg) => (typeof arg === "string" ? arg : String(arg))).join(" "));
+      }),
+    });
+    const sink = new InkProgressSink(hud);
+
+    sink.logSliceIntro(makeSlice({ number: 3, title: "Test slice" }));
+
+    const text = stripAnsi(lines.join("\n"));
+    expect(text).toContain("Slice 3: Test slice");
   });
 
   it("teardown delegates to hud.teardown", () => {
