@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { SilentOperatorGate, InkOperatorGate, InkProgressSink, SilentProgressSink } from "../../src/ui/ink-operator-gate.js";
+import { AGENT_ROLES } from "../../src/domain/agent-types.js";
+import type { Slice } from "../../src/domain/plan.js";
+import { SilentOperatorGate, InkOperatorGate, InkProgressSink, SilentProgressSink, styleForRole } from "../../src/ui/ink-operator-gate.js";
 import type { Hud } from "../../src/ui/hud.js";
+import { BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL } from "../../src/ui/display.js";
 
 const createMockHud = (overrides: Partial<Hud> = {}): Hud => ({
   update: vi.fn(),
@@ -16,6 +19,19 @@ const createMockHud = (overrides: Partial<Hud> = {}): Hud => ({
   ...overrides,
 });
 
+const stripAnsi = (value: string) => value.replace(/\x1b\[[0-9;]*m/g, "");
+
+const makeSlice = (overrides: Partial<Slice> = {}): Slice => ({
+  number: 3,
+  title: "Test slice",
+  content: "",
+  why: "Test reason",
+  files: [],
+  details: "",
+  tests: "",
+  ...overrides,
+});
+
 describe("SilentOperatorGate", () => {
   it("confirmPlan returns accept", async () => {
     const gate = new SilentOperatorGate();
@@ -23,10 +39,10 @@ describe("SilentOperatorGate", () => {
     expect(result).toEqual({ kind: "accept" });
   });
 
-  it("verifyFailed returns retry", async () => {
+  it("verifyFailed returns stop", async () => {
     const gate = new SilentOperatorGate();
     const result = await gate.verifyFailed(3, "tests failed");
-    expect(result).toEqual({ kind: "retry" });
+    expect(result).toEqual({ kind: "stop" });
   });
 
   it("askUser returns empty string", async () => {
@@ -41,6 +57,12 @@ describe("SilentOperatorGate", () => {
     expect(result).toBe(true);
   });
 
+  it("creditExhausted returns quit", async () => {
+    const gate = new SilentOperatorGate();
+    const result = await gate.creditExhausted("tdd", "credit-exhausted");
+    expect(result).toEqual({ kind: "quit" });
+  });
+
 });
 
 describe("SilentProgressSink", () => {
@@ -49,9 +71,11 @@ describe("SilentProgressSink", () => {
     const handler = sink.registerInterrupts();
     expect(typeof handler.onGuide).toBe("function");
     expect(typeof handler.onInterrupt).toBe("function");
+    expect(typeof handler.onSkip).toBe("function");
     // Callbacks are no-ops — calling them doesn't throw
     handler.onGuide(() => {});
     handler.onInterrupt(() => {});
+    handler.onSkip(() => true);
   });
 
   it("updateProgress is a no-op", () => {
@@ -62,6 +86,24 @@ describe("SilentProgressSink", () => {
   it("setActivity is a no-op", () => {
     const sink = new SilentProgressSink();
     expect(() => sink.setActivity("x")).not.toThrow();
+  });
+
+  it("createStreamer returns a no-op function", () => {
+    const sink = new SilentProgressSink();
+    const streamer = sink.createStreamer("tdd");
+
+    expect(typeof streamer).toBe("function");
+    expect(() => streamer("streamed text")).not.toThrow();
+  });
+
+  it("logSliceIntro is a no-op", () => {
+    const sink = new SilentProgressSink();
+    expect(() => sink.logSliceIntro(makeSlice())).not.toThrow();
+  });
+
+  it("logBadge is a no-op", () => {
+    const sink = new SilentProgressSink();
+    expect(() => sink.logBadge("tdd", "implementing...")).not.toThrow();
   });
 
   it("teardown is a no-op", () => {
@@ -187,9 +229,44 @@ describe("InkOperatorGate", () => {
     });
   });
 
+  describe("creditExhausted", () => {
+    it("'q' returns quit", async () => {
+      const hud = createMockHud({ askUser: vi.fn().mockResolvedValueOnce("q") });
+      const gate = new InkOperatorGate(hud);
+      const result = await gate.creditExhausted("tdd", "credit-exhausted");
+      expect(result).toEqual({ kind: "quit" });
+    });
+
+    it("'r' returns retry", async () => {
+      const hud = createMockHud({ askUser: vi.fn().mockResolvedValueOnce("r") });
+      const gate = new InkOperatorGate(hud);
+      const result = await gate.creditExhausted("tdd", "credit-exhausted");
+      expect(result).toEqual({ kind: "retry" });
+    });
+
+    it("'' defaults to retry", async () => {
+      const hud = createMockHud({ askUser: vi.fn().mockResolvedValueOnce("") });
+      const gate = new InkOperatorGate(hud);
+      const result = await gate.creditExhausted("tdd", "credit-exhausted");
+      expect(result).toEqual({ kind: "retry" });
+    });
+  });
+
 });
 
 describe("InkProgressSink", () => {
+  it("maps every runtime agent role to its exact style", () => {
+    expect(styleForRole("tdd")).toBe(BOT_TDD);
+    expect(styleForRole("review")).toBe(BOT_REVIEW);
+    expect(styleForRole("verify")).toBe(BOT_VERIFY);
+    expect(styleForRole("plan")).toBe(BOT_PLAN);
+    expect(styleForRole("gap")).toBe(BOT_GAP);
+    expect(styleForRole("final")).toBe(BOT_FINAL);
+    expect(styleForRole("completeness")).toBe(BOT_PLAN);
+    expect(styleForRole("triage")).toEqual({ label: "Triage", color: "#888", badge: "[TRG]" });
+    expect(AGENT_ROLES).toContain("triage");
+  });
+
   describe("registerInterrupts", () => {
     it("returns InterruptHandler and wires hud handlers", () => {
       const hud = createMockHud();
@@ -198,6 +275,7 @@ describe("InkProgressSink", () => {
 
       expect(handler).toHaveProperty("onGuide");
       expect(handler).toHaveProperty("onInterrupt");
+      expect(handler).toHaveProperty("onSkip");
       expect(hud.onKey).toHaveBeenCalled();
       expect(hud.onInterruptSubmit).toHaveBeenCalled();
     });
@@ -228,6 +306,36 @@ describe("InkProgressSink", () => {
       keyHandler("x");
       keyHandler("z");
       expect(hud.startPrompt).not.toHaveBeenCalled();
+    });
+
+    it("dispatches skip key to onSkip callback and updates HUD", () => {
+      const hud = createMockHud();
+      const sink = new InkProgressSink(hud);
+      const handler = sink.registerInterrupts();
+      const onSkip = vi.fn(() => true);
+
+      handler.onSkip(onSkip);
+
+      const keyHandler = vi.mocked(hud.onKey).mock.calls[0][0];
+      keyHandler("s");
+
+      expect(onSkip).toHaveBeenCalledOnce();
+      expect(hud.setSkipping).toHaveBeenCalledWith(true);
+    });
+
+    it("does not update HUD when skip key is ignored", () => {
+      const hud = createMockHud();
+      const sink = new InkProgressSink(hud);
+      const handler = sink.registerInterrupts();
+      const onSkip = vi.fn(() => false);
+
+      handler.onSkip(onSkip);
+
+      const keyHandler = vi.mocked(hud.onKey).mock.calls[0][0];
+      keyHandler("s");
+
+      expect(onSkip).toHaveBeenCalledOnce();
+      expect(hud.setSkipping).not.toHaveBeenCalled();
     });
 
     it("submit before onGuide/onInterrupt registered does not throw", () => {
@@ -270,6 +378,66 @@ describe("InkProgressSink", () => {
     const sink = new InkProgressSink(hud);
     sink.setActivity("building...");
     expect(hud.setActivity).toHaveBeenCalledWith("building...");
+  });
+
+  it("createStreamer returns a callable function", () => {
+    const hud = createMockHud();
+    const sink = new InkProgressSink(hud);
+    const streamer = sink.createStreamer("tdd");
+
+    expect(typeof streamer).toBe("function");
+    expect(() => streamer("streamed text")).not.toThrow();
+  });
+
+  it("logSliceIntro emits the bordered slice header", () => {
+    const lines: string[] = [];
+    const hud = createMockHud({
+      wrapLog: vi.fn(() => (...args: unknown[]) => {
+        lines.push(args.map((arg) => (typeof arg === "string" ? arg : String(arg))).join(" "));
+      }),
+    });
+    const sink = new InkProgressSink(hud);
+
+    sink.logSliceIntro(makeSlice({ number: 3, title: "Test slice" }));
+
+    const text = stripAnsi(lines.join("\n"));
+    expect(text).toContain("┌─ Slice 3: Test slice");
+    expect(text).toContain("│  Test reason");
+    expect(text).toContain("└──");
+  });
+
+  it("logBadge emits a timestamp, TDD badge, and phase text", () => {
+    const lines: string[] = [];
+    const hud = createMockHud({
+      wrapLog: vi.fn(() => (...args: unknown[]) => {
+        lines.push(args.map((arg) => (typeof arg === "string" ? arg : String(arg))).join(" "));
+      }),
+    });
+    const sink = new InkProgressSink(hud);
+
+    sink.logBadge("tdd", "implementing...");
+
+    const text = stripAnsi(lines.join("\n"));
+    expect(text).toMatch(/\b\d{2}:\d{2}:\d{2}\b/);
+    expect(text).toContain("TDD");
+    expect(text).toContain("implementing...");
+  });
+
+  it("logBadge uses the review badge for review phases", () => {
+    const lines: string[] = [];
+    const hud = createMockHud({
+      wrapLog: vi.fn(() => (...args: unknown[]) => {
+        lines.push(args.map((arg) => (typeof arg === "string" ? arg : String(arg))).join(" "));
+      }),
+    });
+    const sink = new InkProgressSink(hud);
+
+    sink.logBadge("review", "reviewing...");
+
+    const text = stripAnsi(lines.join("\n"));
+    expect(text).toContain("REV");
+    expect(text).toContain("reviewing...");
+    expect(text).not.toContain("TDD");
   });
 
   it("teardown delegates to hud.teardown", () => {

@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
 import { parsePlanJson } from "./plan-schema.js";
 import type { Group } from "./plan-parser.js";
-import type { AgentProcess } from "../agent/agent.js";
+import type { PromptAgent } from "../../application/ports/agent-spawner.port.js";
 import { a, type LogFn } from "../../ui/display.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -142,7 +142,7 @@ export type GeneratePlanResult = { planPath: string; planId: string; groups: rea
 export const generatePlan = async (
   inventoryPath: string,
   briefContent: string,
-  agent: AgentProcess,
+  agent: PromptAgent,
   outputDir: string,
 ): Promise<GeneratePlanResult> => {
   const inventory = readFileSync(inventoryPath, "utf-8");
@@ -198,7 +198,7 @@ export const doGeneratePlan = async (
   briefContent: string,
   outputDir: string,
   log: LogFn,
-  spawnPlanAgent: () => AgentProcess,
+  spawnPlanAgent: () => PromptAgent,
 ): Promise<string> => {
   log(`${a.bold}Generating plan from inventory...${a.reset}`);
   const planAgent = spawnPlanAgent();

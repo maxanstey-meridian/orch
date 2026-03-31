@@ -2,6 +2,7 @@ import {
   OperatorGate,
   type GateDecision,
   type VerifyDecision,
+  type CreditDecision,
 } from "../application/ports/operator-gate.port.js";
 import {
   ProgressSink,
@@ -10,16 +11,31 @@ import {
 } from "../application/ports/progress-sink.port.js";
 import type { AgentRole, AgentStyle } from "../domain/agent-types.js";
 import type { Slice } from "../domain/plan.js";
-import { BOT_TDD, BOT_REVIEW, BOT_GAP, BOT_FINAL, BOT_VERIFY, BOT_PLAN, printSliceIntro } from "./display.js";
+import { printSliceIntro } from "./display.js";
+import { ROLE_STYLES } from "./agent-role-styles.js";
 import { makeStreamer } from "../infrastructure/agent/streamer.js";
 import type { Hud } from "./hud.js";
 
 export class SilentOperatorGate extends OperatorGate {
+  constructor(private readonly hud?: Hud) {
+    super();
+  }
+
   async confirmPlan(_planPreview: string): Promise<GateDecision> {
     return { kind: "accept" };
   }
 
   async verifyFailed(_sliceNumber: number, _summary: string): Promise<VerifyDecision> {
+    return { kind: "stop" };
+  }
+
+  async creditExhausted(label: string, message: string): Promise<CreditDecision> {
+    if (!this.hud) return { kind: "quit" };
+    const answer = await this.hud.askUser(
+      `Credit exhaustion during ${label}:\n${message}\n\nWait for credits to reset, then (r)etry / (q)uit? `,
+    );
+    const choice = answer.trim().toLowerCase();
+    if (choice === "q") return { kind: "quit" };
     return { kind: "retry" };
   }
 
@@ -33,16 +49,7 @@ export class SilentOperatorGate extends OperatorGate {
 }
 
 export const styleForRole = (role: AgentRole): AgentStyle => {
-  const map: Record<AgentRole, AgentStyle> = {
-    tdd: BOT_TDD,
-    review: BOT_REVIEW,
-    gap: BOT_GAP,
-    final: BOT_FINAL,
-    verify: BOT_VERIFY,
-    plan: BOT_PLAN,
-    completeness: BOT_TDD,
-  };
-  return map[role];
+  return ROLE_STYLES[role];
 };
 
 export class SilentProgressSink extends ProgressSink {
@@ -50,6 +57,7 @@ export class SilentProgressSink extends ProgressSink {
     return {
       onGuide: () => {},
       onInterrupt: () => {},
+      onSkip: () => {},
     };
   }
 
@@ -101,6 +109,15 @@ export class InkOperatorGate extends OperatorGate {
     return { kind: "retry" };
   }
 
+  async creditExhausted(label: string, message: string): Promise<CreditDecision> {
+    const answer = await this.hud.askUser(
+      `Credit exhaustion during ${label}:\n${message}\n\n(r)etry / (q)uit? `,
+    );
+    const choice = answer.trim().toLowerCase();
+    if (choice === "q") return { kind: "quit" };
+    return { kind: "retry" };
+  }
+
   async askUser(prompt: string): Promise<string> {
     return this.hud.askUser(prompt);
   }
@@ -113,19 +130,26 @@ export class InkOperatorGate extends OperatorGate {
 
 export class InkProgressSink extends ProgressSink {
   private readonly writer: (text: string) => void;
+  private readonly logFn: (...args: unknown[]) => void;
 
   constructor(private readonly hud: Hud) {
     super();
     this.writer = hud.createWriter();
+    this.logFn = hud.wrapLog(() => {});
   }
 
   registerInterrupts(): InterruptHandler {
     let guideCallback: ((text: string) => void) | null = null;
     let interruptCallback: ((text: string) => void) | null = null;
+    let skipCallback: (() => boolean) | null = null;
 
     this.hud.onKey((key) => {
-      if (key === "g") this.hud.startPrompt("guide");
-      if (key === "i") this.hud.startPrompt("interrupt");
+      const normalized = key.toLowerCase();
+      if (normalized === "g") this.hud.startPrompt("guide");
+      if (normalized === "i") this.hud.startPrompt("interrupt");
+      if (normalized === "s" && skipCallback?.()) {
+        this.hud.setSkipping(true);
+      }
     });
 
     this.hud.onInterruptSubmit((text, mode) => {
@@ -134,8 +158,15 @@ export class InkProgressSink extends ProgressSink {
     });
 
     return {
-      onGuide: (cb) => { guideCallback = cb; },
-      onInterrupt: (cb) => { interruptCallback = cb; },
+      onGuide: (cb) => {
+        guideCallback = cb;
+      },
+      onInterrupt: (cb) => {
+        interruptCallback = cb;
+      },
+      onSkip: (cb) => {
+        skipCallback = cb;
+      },
     };
   }
 
@@ -156,13 +187,13 @@ export class InkProgressSink extends ProgressSink {
   }
 
   logSliceIntro(slice: Slice): void {
-    printSliceIntro((...args: unknown[]) => this.writer(String(args[0])), slice);
+    printSliceIntro(this.logFn, slice);
   }
 
   logBadge(role: AgentRole, phase: string): void {
     const style = styleForRole(role);
     const ts = new Date().toLocaleTimeString("en-GB", { hour12: false });
-    this.writer(`\n${ts}  ${style.badge}  ${phase}`);
+    this.logFn(`\n${ts}  ${style.badge}  ${phase}`);
   }
 
   teardown(): void {

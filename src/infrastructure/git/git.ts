@@ -24,6 +24,10 @@ export const getStatus = async (cwd: string): Promise<string> => {
   return git(["status", "--short"], cwd);
 };
 
+export const getDiff = async (cwd: string, since: string): Promise<string> => {
+  return git(["diff", `${since}..HEAD`], cwd);
+};
+
 export const hasDirtyTree = async (cwd: string): Promise<boolean> => {
   const status = await git(["status", "--porcelain"], cwd);
   return status.length > 0;

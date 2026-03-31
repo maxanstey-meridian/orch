@@ -1,9 +1,8 @@
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { Readable } from "stream";
-import { detectQuestion } from "./question-detector.js";
+import { detectQuestion } from "../agent/question-detector.js";
 
-export type { AgentStyle, AgentResult } from "../../domain/agent-types.js";
 import type { AgentStyle, AgentResult } from "../../domain/agent-types.js";
 import type { AgentHandle } from "../../application/ports/agent-spawner.port.js";
 
@@ -107,7 +106,7 @@ const summarizeToolUse = (block: ToolUseBlock): string => {
   }
 };
 
-export type AgentProcess = {
+export type ClaudeAgentProcess = {
   readonly send: (
     prompt: string,
     onText?: (text: string) => void,
@@ -131,7 +130,7 @@ export type CreateAgentOptions = {
   readonly cwd?: string;
 };
 
-export const createAgent = (opts: CreateAgentOptions): AgentProcess => {
+export const createClaudeAgent = (opts: CreateAgentOptions): ClaudeAgentProcess => {
   const sessionId = opts.sessionId ?? randomUUID();
   let isAlive = true;
   let lastCloseCode = 1;

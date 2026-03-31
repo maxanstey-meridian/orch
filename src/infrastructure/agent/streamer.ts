@@ -1,4 +1,4 @@
-import { type AgentStyle } from "./agent.js";
+import { type AgentStyle } from "../../domain/agent-types.js";
 import { type WriteFn } from "../../ui/hud.js";
 import { a } from "../../ui/display.js";
 

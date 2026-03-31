@@ -18,12 +18,22 @@ export type StartFinalPasses = { readonly kind: "StartFinalPasses" };
 export type AllPassesDone = { readonly kind: "AllPassesDone" };
 
 export type PhaseEvent =
-  | StartPlanning | PlanReady | PlanAccepted | PlanRejected
-  | ExecutionDone | VerifyPassed | VerifyFailed
-  | CompletenessOk | CompletenessIssues
-  | ReviewClean | ReviewIssues | SliceComplete
-  | StartGap | GapDone
-  | StartFinalPasses | AllPassesDone;
+  | StartPlanning
+  | PlanReady
+  | PlanAccepted
+  | PlanRejected
+  | ExecutionDone
+  | VerifyPassed
+  | VerifyFailed
+  | CompletenessOk
+  | CompletenessIssues
+  | ReviewClean
+  | ReviewIssues
+  | SliceComplete
+  | StartGap
+  | GapDone
+  | StartFinalPasses
+  | AllPassesDone;
 
 export const transition = (current: Phase, event: PhaseEvent): Phase => {
   switch (current.kind) {
@@ -40,15 +50,28 @@ export const transition = (current: Phase, event: PhaseEvent): Phase => {
     case "Planning":
       switch (event.kind) {
         case "PlanReady":
-          return { kind: "Gated", sliceNumber: current.sliceNumber, planText: event.planText, attempt: current.attempt };
+          return {
+            kind: "Gated",
+            sliceNumber: current.sliceNumber,
+            planText: event.planText,
+            attempt: current.attempt,
+          };
       }
       break;
     case "Gated":
       switch (event.kind) {
         case "PlanAccepted":
-          return { kind: "Executing", sliceNumber: current.sliceNumber, planText: current.planText };
+          return {
+            kind: "Executing",
+            sliceNumber: current.sliceNumber,
+            planText: current.planText,
+          };
         case "PlanRejected":
-          return { kind: "Planning", sliceNumber: current.sliceNumber, attempt: current.attempt + 1 };
+          return {
+            kind: "Planning",
+            sliceNumber: current.sliceNumber,
+            attempt: current.attempt + 1,
+          };
       }
       break;
     case "Executing":
@@ -106,10 +129,14 @@ export const canSkip = (
   config: { gapDisabled: boolean; planDisabled: boolean; verifySkill: string | null },
 ): boolean => {
   switch (phase.kind) {
-    case "Planning": return config.planDisabled;
-    case "Verifying": return config.verifySkill === null;
-    case "GapAnalysis": return config.gapDisabled;
-    default: return false;
+    case "Planning":
+      return config.planDisabled;
+    case "Verifying":
+      return config.verifySkill === null;
+    case "GapAnalysis":
+      return config.gapDisabled;
+    default:
+      return false;
   }
 };
 

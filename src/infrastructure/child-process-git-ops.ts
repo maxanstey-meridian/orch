@@ -1,5 +1,5 @@
 import { GitOps } from "../application/ports/git-ops.port.js";
-import { captureRef, hasChanges, hasDirtyTree, getStatus, stashBackup } from "./git/git.js";
+import { captureRef, hasChanges, hasDirtyTree, getStatus, getDiff, stashBackup } from "./git/git.js";
 import { measureDiff } from "./cli/review-threshold.js";
 
 export class ChildProcessGitOps extends GitOps {
@@ -21,6 +21,10 @@ export class ChildProcessGitOps extends GitOps {
 
   getStatus() {
     return getStatus(this.cwd);
+  }
+
+  getDiff(since: string) {
+    return getDiff(this.cwd, since);
   }
 
   stashBackup() {

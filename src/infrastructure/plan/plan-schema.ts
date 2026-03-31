@@ -9,6 +9,11 @@ export const FileActionSchema = z.object({
   action: z.enum(["new", "edit", "delete"]),
 });
 
+const DependencySchema = z.object({
+  slice: z.number().int().nonnegative(),
+  what: z.string().min(1),
+});
+
 export const PlanSliceSchema = z.object({
   number: z.number().int().positive(),
   title: z.string().min(1),
@@ -16,6 +21,19 @@ export const PlanSliceSchema = z.object({
   files: z.array(FileActionSchema).min(1),
   details: z.string().min(1),
   tests: z.string().min(1),
+  relatedFiles: z.array(z.string()).optional(),
+  keyContext: z.string().optional(),
+  dependsOn: z.array(DependencySchema).optional(),
+  testPatterns: z.string().optional(),
+  signatures: z.record(z.string()).optional(),
+  gotchas: z.array(z.string()).optional(),
+});
+
+const PlanContextSchema = z.object({
+  architecture: z.string().optional(),
+  keyFiles: z.record(z.string()).optional(),
+  concepts: z.record(z.string()).optional(),
+  conventions: z.record(z.string()).optional(),
 });
 
 export const PlanGroupSchema = z.object({
@@ -26,6 +44,7 @@ export const PlanGroupSchema = z.object({
 
 export const PlanSchema = z
   .object({
+    context: PlanContextSchema.optional(),
     groups: z.array(PlanGroupSchema).min(1),
   })
   .refine(
@@ -71,6 +90,12 @@ export const parsePlanJson = (json: string, source = "<json>"): readonly Group[]
         files: s.files,
         details: s.details,
         tests: s.tests,
+        relatedFiles: s.relatedFiles,
+        keyContext: s.keyContext,
+        dependsOn: s.dependsOn,
+        testPatterns: s.testPatterns,
+        signatures: s.signatures,
+        gotchas: s.gotchas,
       }),
     ),
   }));

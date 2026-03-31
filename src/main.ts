@@ -1,5 +1,5 @@
 #!/usr/bin/env npx ts-node
-// smoke test
+
 /**
  * main.ts — TDD orchestrator CLI
  *
@@ -10,8 +10,7 @@
  *   npx ts-node src/main.ts --plan inventory.md              # generate plan and exit
  *   npx ts-node src/main.ts --work plan.md                    # execute a plan
  *   npx ts-node src/main.ts --work plan.md --group Auth       # start from group
- *   npx ts-node src/main.ts --work plan.md --auto             # no inter-group prompts
- *   npx ts-node src/main.ts --work plan.md --no-interaction   # suppress all prompts
+ *   npx ts-node src/main.ts --work plan.md --auto             # auto-accept all prompts (--no-interaction is an alias)
  *   npx ts-node src/main.ts --work plan.json --show-plan       # inspect plan structure
  *   npx ts-node src/main.ts --work plan.md --reset            # clear state and re-run
  *   npx ts-node src/main.ts --init --plan inventory.md        # interactive project init
@@ -21,15 +20,24 @@ import { resolve } from "path";
 import { readFileSync, mkdirSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { parsePlan } from "./infrastructure/plan/plan-parser.js";
-import { isPlanFormat, ensureCanonicalPlan, doGeneratePlan } from "./infrastructure/plan/plan-generator.js";
-import { loadState, clearState, statePathForPlan, type OrchestratorState } from "./infrastructure/state/state.js";
+import {
+  isPlanFormat,
+  ensureCanonicalPlan,
+  doGeneratePlan,
+} from "./infrastructure/plan/plan-generator.js";
+import {
+  loadState,
+  clearState,
+  statePathForPlan,
+  type OrchestratorState,
+} from "./infrastructure/state/state.js";
 import { runFingerprint } from "./infrastructure/fingerprint.js";
 import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "./ui/display.js";
-import { CreditExhaustedError } from "./domain/errors.js";
+import { CreditExhaustedError, IncompleteRunError } from "./domain/errors.js";
 import type { OrchestratorConfig } from "./domain/config.js";
 import { createContainer } from "./composition-root.js";
 import { runInit, profileToMarkdown } from "./ui/init.js";
-import { spawnGeneratePlanAgent } from "./infrastructure/agent/agent-factory.js";
+import { planGeneratorSpawnerFactory } from "./infrastructure/factories.js";
 import { getStatus, stashBackup } from "./infrastructure/git/git.js";
 import {
   loadAndResolveOrchrConfig,
@@ -37,7 +45,7 @@ import {
   buildOrchrSummary,
 } from "./infrastructure/config/orchrc.js";
 import { assertGitRepo } from "./infrastructure/git/repo-check.js";
-import { parseBranchFlag } from "./infrastructure/cli/cli-args.js";
+import { parseBranchFlag, parseProviderFlag } from "./infrastructure/cli/cli-args.js";
 import { resolveWorktree } from "./infrastructure/git/worktree-setup.js";
 import { checkWorktreeResume, runCleanup } from "./infrastructure/git/worktree.js";
 import { createHud } from "./ui/hud.js";
@@ -69,9 +77,8 @@ const main = async () => {
   const workMode = args.includes("--work");
   const workRaw = getArg("--work");
   const workPath = workRaw && !workRaw.startsWith("-") ? workRaw : undefined;
-  const auto = args.includes("--auto");
+  const auto = args.includes("--auto") || args.includes("--no-interaction");
   const skipFingerprint = args.includes("--skip-fingerprint");
-  const noInteraction = args.includes("--no-interaction");
   const resetState = args.includes("--reset");
   const cleanupMode = args.includes("--cleanup");
   const groupFilter = getArg("--group");
@@ -152,6 +159,7 @@ const main = async () => {
   });
 
   // 3. Resolve plan path — generate from inventory or use existing
+  const provider = parseProviderFlag(args);
   let planPath: string;
 
   if (workMode) {
@@ -164,7 +172,8 @@ const main = async () => {
       log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
       planPath = inputPath;
     } else {
-      planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnGeneratePlanAgent);
+      const spawnPlanGenerator = planGeneratorSpawnerFactory({ provider, cwd });
+      planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnPlanGenerator);
     }
   }
 
@@ -232,7 +241,7 @@ const main = async () => {
     stateFile,
     log,
   });
-  const interactive = !noInteraction && isTTY;
+  const interactive = !auto && isTTY;
 
   // 7. Signal handlers + cleanup
   // cleanup is set to hud.teardown initially, then upgraded to orch.dispose()
@@ -271,7 +280,6 @@ const main = async () => {
     planPath,
     planContent,
     brief,
-    noInteraction,
     auto,
     reviewThreshold:
       rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),
@@ -284,6 +292,7 @@ const main = async () => {
     gapDisabled,
     planDisabled,
     tddRules: orchrc.rules.tdd,
+    provider,
     reviewRules: orchrc.rules.review,
   } satisfies OrchestratorConfig;
 
@@ -315,6 +324,11 @@ const main = async () => {
       log(`\n${ts()} ${a.red}Credit exhaustion detected: ${err.message}${a.reset}`);
       cleanup();
       process.exit(2);
+    }
+    if (err instanceof IncompleteRunError) {
+      log(`\n${ts()} ${a.red}${err.message}${a.reset}`);
+      cleanup();
+      process.exit(1);
     }
     throw err;
   }

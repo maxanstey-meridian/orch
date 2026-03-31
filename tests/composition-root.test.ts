@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { createInjector } from "typed-inject";
 
-vi.mock("../src/infrastructure/agent/agent-factory.js", () => ({
-  spawnAgent: vi.fn(),
-  spawnPlanAgent: vi.fn(),
+vi.mock("../src/infrastructure/claude/claude-agent-factory.js", () => ({
+  spawnClaudeAgent: vi.fn(),
+  spawnClaudePlanAgent: vi.fn(),
   TDD_RULES_REMINDER: "tdd rules",
   REVIEW_RULES_REMINDER: "review rules",
   buildRulesReminder: vi.fn((base: string, custom?: string) =>
@@ -19,8 +19,7 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   planPath: "/tmp/plan.json",
   planContent: "plan content",
   brief: "brief text",
-  noInteraction: true,
-  auto: false,
+  auto: true,
   reviewThreshold: 30,
   maxReviewCycles: 3,
   stateFile: "/tmp/state.json",
@@ -30,6 +29,7 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   gapDisabled: false,
   planDisabled: false,
   maxReplans: 2,
+  provider: "claude",
   tddRules: "custom tdd",
   reviewRules: "custom review",
 });
@@ -78,7 +78,7 @@ describe("composition-root", () => {
 
     const container = createContainer(config, dummyHud);
     const sink = container.resolve("progressSink");
-    // noInteraction = true → SilentProgressSink → teardown is a no-op, shouldn't throw
+    // auto = true → SilentProgressSink → teardown is a no-op, shouldn't throw
     expect(() => sink.teardown()).not.toThrow();
   });
 });

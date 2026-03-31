@@ -656,9 +656,10 @@ describeIntegration("fingerprint force wiring (integration)", () => {
 
 // ─── Composition root integration ───────────────────────────────────────────
 
-vi.mock("../src/infrastructure/agent/agent-factory.js", () => ({
-  spawnAgent: vi.fn(),
-  spawnPlanAgent: vi.fn(),
+vi.mock("../src/infrastructure/claude/claude-agent-factory.js", () => ({
+  spawnClaudeAgent: vi.fn(),
+  spawnClaudePlanAgent: vi.fn(),
+  spawnClaudeGeneratePlanAgent: vi.fn(),
   TDD_RULES_REMINDER: "tdd rules",
   REVIEW_RULES_REMINDER: "review rules",
   buildRulesReminder: vi.fn((base: string, custom?: string) =>
@@ -670,13 +671,13 @@ import type { OrchestratorConfig } from "../src/domain/config.js";
 import type { AgentResult } from "../src/domain/agent-types.js";
 import type { AgentHandle } from "../src/application/ports/agent-spawner.port.js";
 import { RunOrchestration } from "../src/application/run-orchestration.js";
+import { IncompleteRunError } from "../src/domain/errors.js";
 
 const makeTestConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig => ({
   cwd: "/tmp/test",
   planPath: "/tmp/plan.json",
   planContent: "plan content",
   brief: "brief text",
-  noInteraction: true,
   auto: false,
   reviewThreshold: 0,
   maxReviewCycles: 3,
@@ -687,6 +688,7 @@ const makeTestConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorCo
   gapDisabled: true,
   planDisabled: true,
   maxReplans: 2,
+  provider: "claude",
   ...overrides,
 });
 
@@ -723,7 +725,7 @@ describe("composition root integration", () => {
       onKey: vi.fn(),
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
-      wrapLog: vi.fn(),
+      wrapLog: vi.fn().mockReturnValue(vi.fn()),
       createWriter: vi.fn(),
       setSkipping: vi.fn(),
     } as any;
@@ -735,12 +737,19 @@ describe("composition root integration", () => {
     // Replace ports with in-memory test doubles AFTER construction
     const tddAgent = makeTestAgent();
     const reviewAgent = makeTestAgent();
+    const verifyAgent = {
+      ...makeTestAgent(),
+      send: vi.fn().mockResolvedValue(makeTestResult({
+        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+      })),
+    };
     (orch as any).agents = {
       spawn: vi.fn().mockReturnValue(makeTestAgent()),
     };
     (orch as any).agents.spawn
       .mockReturnValueOnce(tddAgent)
-      .mockReturnValueOnce(reviewAgent);
+      .mockReturnValueOnce(reviewAgent)
+      .mockReturnValueOnce(verifyAgent);
     (orch as any).persistence = {
       load: vi.fn().mockResolvedValue({}),
       save: vi.fn().mockResolvedValue(undefined),
@@ -752,6 +761,7 @@ describe("composition root integration", () => {
       hasDirtyTree: vi.fn().mockResolvedValue(false),
       getStatus: vi.fn().mockResolvedValue(""),
       stashBackup: vi.fn().mockResolvedValue(false),
+      getDiff: vi.fn().mockResolvedValue(""),
       measureDiff: vi.fn().mockResolvedValue({ added: 0, removed: 0, total: 0 }),
     };
 
@@ -788,7 +798,7 @@ describe("composition root integration", () => {
       onKey: vi.fn(),
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
-      wrapLog: vi.fn(),
+      wrapLog: vi.fn().mockReturnValue(vi.fn()),
       createWriter: vi.fn(),
       setSkipping: vi.fn(),
     } as any;
@@ -816,7 +826,7 @@ describe("composition root integration", () => {
       onKey: vi.fn(),
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
-      wrapLog: vi.fn(),
+      wrapLog: vi.fn().mockReturnValue(vi.fn()),
       createWriter: vi.fn(),
       setSkipping: vi.fn(),
     } as any;
@@ -835,7 +845,7 @@ describe("composition root integration", () => {
 
     expect(tddAgent.kill).toHaveBeenCalled();
     expect(reviewAgent.kill).toHaveBeenCalled();
-    // SilentOperatorGate teardown is a no-op (noInteraction: true),
+    // SilentOperatorGate teardown is a no-op (auto: true),
     // but it's still called — proves the cascade works
   });
 
@@ -845,7 +855,7 @@ describe("composition root integration", () => {
     // ... container creation ...
     // cleanup = () => orch.dispose();      // upgraded
     const { createContainer } = await import("../src/composition-root.js");
-    const config = makeTestConfig();
+    const config = makeTestConfig({ auto: true });
     const hudTeardown = vi.fn();
     const dummyHud = {
       askUser: vi.fn().mockResolvedValue(""),
@@ -855,7 +865,7 @@ describe("composition root integration", () => {
       onKey: vi.fn(),
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
-      wrapLog: vi.fn(),
+      wrapLog: vi.fn().mockReturnValue(vi.fn()),
       createWriter: vi.fn(),
       setSkipping: vi.fn(),
     } as any;
@@ -876,9 +886,8 @@ describe("composition root integration", () => {
 
     // orch.dispose kills agents — proves the reassignment worked
     expect(tddAgent.kill).toHaveBeenCalled();
-    // hud.teardown is NOT called directly — it's called via gate.teardown inside dispose
-    // (SilentOperatorGate teardown is a no-op, so hudTeardown won't be called)
-    expect(hudTeardown).not.toHaveBeenCalled();
+    // hud.teardown IS called indirectly via progressSink.teardown inside dispose
+    expect(hudTeardown).toHaveBeenCalled();
   });
 
   it("early cleanup (before container) calls hud.teardown directly", () => {
@@ -906,7 +915,7 @@ describe("composition root integration", () => {
       onKey: vi.fn(),
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
-      wrapLog: vi.fn(),
+      wrapLog: vi.fn().mockReturnValue(vi.fn()),
       createWriter: vi.fn(),
       setSkipping: vi.fn(),
     } as any;
@@ -934,5 +943,32 @@ describe("composition root integration", () => {
 
     expect(exitCode).toBe(2);
   });
-});
 
+  it("IncompleteRunError from execute bypasses success cleanup", async () => {
+    const cleanup = vi.fn();
+    const logSection = vi.fn();
+    const clearState = vi.fn().mockResolvedValue(undefined);
+    let exitCode: number | undefined;
+
+    try {
+      throw new IncompleteRunError("Slice 1 did not complete: verification or review did not complete");
+    } catch (err) {
+      if (err instanceof IncompleteRunError) {
+        cleanup();
+        exitCode = 1;
+      } else {
+        throw err;
+      }
+    }
+
+    if (exitCode === undefined) {
+      logSection();
+      await clearState("/tmp/state.json");
+    }
+
+    expect(exitCode).toBe(1);
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(logSection).not.toHaveBeenCalled();
+    expect(clearState).not.toHaveBeenCalled();
+  });
+});

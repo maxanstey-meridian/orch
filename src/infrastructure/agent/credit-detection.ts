@@ -1,4 +1,4 @@
-import type { AgentResult } from "./agent.js";
+import type { AgentResult } from "../../domain/agent-types.js";
 
 export type CreditSignal = {
   readonly kind: "mid-response" | "rejected";

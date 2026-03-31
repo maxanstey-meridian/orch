@@ -1,9 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import type { OrchestratorConfig } from "../../src/domain/config.js";
+import type { Hud } from "../../src/ui/hud.js";
 
-vi.mock("../../src/infrastructure/agent/agent-factory.js", () => ({
-  spawnAgent: vi.fn(),
-  spawnPlanAgent: vi.fn(),
+vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
+  spawnClaudeAgent: vi.fn(),
+  spawnClaudePlanAgent: vi.fn(),
+  spawnClaudeGeneratePlanAgent: vi.fn(() => ({ send: vi.fn(), kill: vi.fn() })),
   TDD_RULES_REMINDER: "tdd rules",
   REVIEW_RULES_REMINDER: "review rules",
   buildRulesReminder: vi.fn((base: string, custom?: string) =>
@@ -11,12 +13,28 @@ vi.mock("../../src/infrastructure/agent/agent-factory.js", () => ({
   ),
 }));
 
+import { SilentRuntimeInteractionGate } from "../../src/ui/ink-runtime-interaction-gate.js";
+
+const dummyGate = new SilentRuntimeInteractionGate();
+
+const fakeHud = (): Hud => ({
+  update: vi.fn(),
+  teardown: vi.fn(),
+  wrapLog: vi.fn((fn) => fn),
+  createWriter: vi.fn(() => vi.fn()),
+  onKey: vi.fn(),
+  onInterruptSubmit: vi.fn(),
+  startPrompt: vi.fn(),
+  setSkipping: vi.fn(),
+  setActivity: vi.fn(),
+  askUser: vi.fn().mockResolvedValue(''),
+});
+
 const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig => ({
   cwd: "/tmp/test",
   planPath: "/tmp/plan.json",
   planContent: "plan content",
   brief: "brief text",
-  noInteraction: false,
   auto: false,
   reviewThreshold: 30,
   maxReviewCycles: 3,
@@ -27,6 +45,7 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   gapDisabled: false,
   planDisabled: false,
   maxReplans: 2,
+  provider: "claude",
   tddRules: "custom tdd",
   reviewRules: "custom review",
   ...overrides,
@@ -39,9 +58,40 @@ describe("agentSpawnerFactory", () => {
       "../../src/infrastructure/claude-agent-spawner.js"
     );
     const config = makeConfig();
-    const result = agentSpawnerFactory(config);
+    const result = agentSpawnerFactory(config, dummyGate);
     expect(result).toBeInstanceOf(ClaudeAgentSpawner);
-    expect(agentSpawnerFactory.inject).toEqual(["config"]);
+    expect(agentSpawnerFactory.inject).toEqual(["config", "runtimeInteractionGate"]);
+  });
+
+  it("passes config skills and cwd through to the spawner", async () => {
+    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
+    const spawnClaudeAgent = vi.mocked(mockModule.spawnClaudeAgent);
+    spawnClaudeAgent.mockClear();
+
+    const { agentSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const config = makeConfig({
+      tddSkill: "my-tdd-skill",
+      cwd: "/custom/cwd",
+    });
+    const spawner = agentSpawnerFactory(config, dummyGate);
+    spawner.spawn("tdd");
+
+    expect(spawnClaudeAgent).toHaveBeenCalledWith(
+      expect.anything(),      // style
+      "my-tdd-skill",         // systemPrompt from skills.tdd
+      undefined,              // resumeSessionId
+      "/custom/cwd",          // cwd from config
+    );
+  });
+
+  it("creates CodexAgentSpawner for codex provider", async () => {
+    const { agentSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const { CodexAgentSpawner } = await import(
+      "../../src/infrastructure/codex/codex-agent-spawner.js"
+    );
+    const config = makeConfig({ provider: "codex" });
+    const result = agentSpawnerFactory(config, dummyGate);
+    expect(result).toBeInstanceOf(CodexAgentSpawner);
   });
 });
 
@@ -72,59 +122,69 @@ describe("gitOpsFactory", () => {
 });
 
 describe("operatorGateFactory", () => {
-  it("returns SilentOperatorGate when config.noInteraction is true", async () => {
+  it("returns SilentOperatorGate when config.auto is true", async () => {
     const { operatorGateFactory } = await import("../../src/infrastructure/factories.js");
     const { SilentOperatorGate } = await import("../../src/ui/ink-operator-gate.js");
-    const config = makeConfig({ noInteraction: true });
-    const dummyHud = {} as any;
-    const result = operatorGateFactory(config, dummyHud);
+    const config = makeConfig({ auto: true });
+    const result = operatorGateFactory(config, fakeHud());
     expect(result).toBeInstanceOf(SilentOperatorGate);
     expect(operatorGateFactory.inject).toEqual(["config", "hud"]);
   });
 
-  it("returns InkOperatorGate when config.noInteraction is false", async () => {
+  it("returns InkOperatorGate when config.auto is false", async () => {
     const { operatorGateFactory } = await import("../../src/infrastructure/factories.js");
     const { InkOperatorGate } = await import("../../src/ui/ink-operator-gate.js");
-    const config = makeConfig({ noInteraction: false });
-    const dummyHud = {
-      askUser: vi.fn(),
-      update: vi.fn(),
-      setActivity: vi.fn(),
-      teardown: vi.fn(),
-      onKey: vi.fn(),
-      onInterruptSubmit: vi.fn(),
-      startPrompt: vi.fn(),
-    } as any;
-    const result = operatorGateFactory(config, dummyHud);
+    const config = makeConfig({ auto: false });
+    const result = operatorGateFactory(config, fakeHud());
     expect(result).toBeInstanceOf(InkOperatorGate);
   });
 });
 
 describe("progressSinkFactory", () => {
-  it("returns SilentProgressSink when noInteraction", async () => {
-    const { progressSinkFactory } = await import("../../src/infrastructure/factories.js");
-    const { SilentProgressSink } = await import("../../src/ui/ink-operator-gate.js");
-    const config = makeConfig({ noInteraction: true });
-    const dummyHud = {} as any;
-    const result = progressSinkFactory(config, dummyHud);
-    expect(result).toBeInstanceOf(SilentProgressSink);
-    expect(progressSinkFactory.inject).toEqual(["config", "hud"]);
-  });
-
-  it("returns InkProgressSink when interactive", async () => {
+  it("always returns InkProgressSink regardless of auto flag", async () => {
     const { progressSinkFactory } = await import("../../src/infrastructure/factories.js");
     const { InkProgressSink } = await import("../../src/ui/ink-operator-gate.js");
-    const config = makeConfig({ noInteraction: false });
-    const dummyHud = {
-      update: vi.fn(),
-      teardown: vi.fn(),
-      onKey: vi.fn(),
-      onInterruptSubmit: vi.fn(),
-      startPrompt: vi.fn(),
-      setActivity: vi.fn(),
-    } as any;
-    const result = progressSinkFactory(config, dummyHud);
-    expect(result).toBeInstanceOf(InkProgressSink);
+    expect(progressSinkFactory(makeConfig({ auto: true }), fakeHud())).toBeInstanceOf(InkProgressSink);
+    expect(progressSinkFactory(makeConfig({ auto: false }), fakeHud())).toBeInstanceOf(InkProgressSink);
+    expect(progressSinkFactory.inject).toEqual(["config", "hud"]);
+  });
+});
+
+describe("planGeneratorSpawnerFactory", () => {
+  it("returns a spawner function for claude provider", async () => {
+    const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = planGeneratorSpawnerFactory({ provider: "claude", cwd: "/tmp/test" });
+    expect(typeof spawner).toBe("function");
+  });
+
+  it("throws for codex provider", async () => {
+    const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    expect(() => planGeneratorSpawnerFactory({ provider: "codex", cwd: "/tmp" })).toThrow(
+      "not yet implemented",
+    );
+  });
+
+  it("returned spawner produces an object with send and kill", async () => {
+    const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = planGeneratorSpawnerFactory({ provider: "claude", cwd: "/tmp" });
+    const agent = spawner();
+
+    expect(agent).toHaveProperty("send");
+    expect(agent).toHaveProperty("kill");
+    expect(typeof agent.send).toBe("function");
+    expect(typeof agent.kill).toBe("function");
+  });
+
+  it("passes cwd to spawnClaudeGeneratePlanAgent", async () => {
+    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
+    const spawnSpy = vi.mocked(mockModule.spawnClaudeGeneratePlanAgent);
+    spawnSpy.mockClear();
+
+    const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = planGeneratorSpawnerFactory({ provider: "claude", cwd: "/my/project" });
+    spawner();
+
+    expect(spawnSpy).toHaveBeenCalledWith("/my/project");
   });
 });
 

@@ -4,7 +4,18 @@ export type AgentStyle = {
   readonly badge: string;
 };
 
-export type AgentRole = 'tdd' | 'review' | 'verify' | 'plan' | 'gap' | 'final' | 'completeness';
+export const AGENT_ROLES = [
+  "tdd",
+  "review",
+  "verify",
+  "plan",
+  "gap",
+  "final",
+  "completeness",
+  "triage",
+] as const;
+
+export type AgentRole = (typeof AGENT_ROLES)[number];
 
 export type AgentResult = {
   readonly exitCode: number;

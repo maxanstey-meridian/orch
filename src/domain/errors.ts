@@ -5,3 +5,9 @@ export class CreditExhaustedError extends Error {
     this.kind = kind;
   }
 }
+
+export class IncompleteRunError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}

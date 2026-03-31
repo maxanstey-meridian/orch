@@ -30,7 +30,16 @@ ${sliceContent}
 1. Read the relevant files to understand current state.
 2. Output numbered RED→GREEN cycles. Each cycle: one failing test, then minimal code to pass.
 3. Do NOT write any code — plan only.
-4. The plan describes the INTENT. If existing code does something different from what the plan describes, the plan is the authority — plan to change the existing code, not to preserve it.`;
+4. The plan describes the INTENT. If existing code does something different from what the plan describes, the plan is the authority — plan to change the existing code, not to preserve it.
+
+## Enrichment
+As you explore, capture the context you discover so the implementing agent doesn't have to re-explore. Include in your output:
+- **relatedFiles**: paths the implementing agent should read beyond the primary files
+- **keyContext**: what the agent needs to know about the current state of the code (how things are wired, what patterns exist)
+- **dependsOn**: if this slice depends on output from a prior slice, note which slice and what specifically
+- **testPatterns**: how the existing tests work (helpers, mocking patterns, assertion style)
+- **signatures**: key type signatures the agent will need to know (current method signatures, port contracts)
+- **gotchas**: non-obvious constraints or traps (phase machine rules, abstract methods that need implementing, sandbox restrictions)`;
 
 export const buildTddPrompt = (
   sliceContent: string,

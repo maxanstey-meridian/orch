@@ -8,6 +8,7 @@ import {
   promptBuilderFactory,
   operatorGateFactory,
   progressSinkFactory,
+  runtimeInteractionGateFactory,
 } from "./infrastructure/factories.js";
 import { RunOrchestration } from "./application/run-orchestration.js";
 
@@ -15,6 +16,7 @@ export const createContainer = (config: OrchestratorConfig, hud: Hud) =>
   createInjector()
     .provideValue("config", config)
     .provideValue("hud", hud)
+    .provideFactory("runtimeInteractionGate", runtimeInteractionGateFactory)
     .provideFactory("agentSpawner", agentSpawnerFactory)
     .provideFactory("statePersistence", statePersistenceFactory)
     .provideFactory("gitOps", gitOpsFactory)

@@ -7,7 +7,7 @@ import { styleForRole } from "../../../src/ui/ink-operator-gate.js";
 
 class TestProgressSink extends ProgressSink {
   registerInterrupts(): InterruptHandler {
-    return { onGuide: () => {}, onInterrupt: () => {} };
+    return { onGuide: () => {}, onInterrupt: () => {}, onSkip: () => {} };
   }
   updateProgress(_update: ProgressUpdate): void {}
   setActivity(_summary: string): void {}
@@ -44,6 +44,7 @@ describe("InterruptHandler", () => {
     const handler = sink.registerInterrupts();
     expect(typeof handler.onGuide).toBe("function");
     expect(typeof handler.onInterrupt).toBe("function");
+    expect(typeof handler.onSkip).toBe("function");
   });
 });
 
@@ -80,7 +81,7 @@ describe("styleForRole", () => {
     ["final", "FINAL"],
     ["verify", "VERIFY"],
     ["plan", "PLAN"],
-    ["completeness", "TDD"],
+    ["completeness", "PLAN"],
   ] as const)("maps %s → label %s", (role, expectedLabel) => {
     expect(styleForRole(role).label).toBe(expectedLabel);
   });

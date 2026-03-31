@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AgentRole, AgentStyle } from "../../src/domain/agent-types.js";
-import type { AgentProcess } from "../../src/infrastructure/agent/agent.js";
+import type { ClaudeAgentProcess } from "../../src/infrastructure/claude/claude-agent-process.js";
 import type { AgentHandle } from "../../src/application/ports/agent-spawner.port.js";
 
-vi.mock("../../src/infrastructure/agent/agent-factory.js", () => ({
-  spawnAgent: vi.fn(() => ({
+vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
+  spawnClaudeAgent: vi.fn(() => ({
     send: vi.fn().mockResolvedValue({
       exitCode: 0,
       assistantText: "",
@@ -15,12 +15,13 @@ vi.mock("../../src/infrastructure/agent/agent-factory.js", () => ({
     sendQuiet: vi.fn().mockResolvedValue(""),
     inject: vi.fn(),
     kill: vi.fn(),
+    pipe: vi.fn(),
     alive: true,
     stderr: "hidden",
     sessionId: "mock-sess",
     style: { label: "TEST", color: "", badge: "" },
   })),
-  spawnPlanAgent: vi.fn(() => ({
+  spawnClaudePlanAgent: vi.fn(() => ({
     send: vi.fn().mockResolvedValue({
       exitCode: 0,
       assistantText: "",
@@ -31,6 +32,7 @@ vi.mock("../../src/infrastructure/agent/agent-factory.js", () => ({
     sendQuiet: vi.fn().mockResolvedValue(""),
     inject: vi.fn(),
     kill: vi.fn(),
+    pipe: vi.fn(),
     alive: true,
     stderr: "hidden",
     sessionId: "mock-plan-sess",
@@ -38,18 +40,19 @@ vi.mock("../../src/infrastructure/agent/agent-factory.js", () => ({
   })),
 }));
 
-import { spawnAgent, spawnPlanAgent } from "../../src/infrastructure/agent/agent-factory.js";
+import { spawnClaudeAgent, spawnClaudePlanAgent } from "../../src/infrastructure/claude/claude-agent-factory.js";
 import type { Mock } from "vitest";
 
-const mockedSpawnAgent = spawnAgent as Mock;
-const mockedSpawnPlanAgent = spawnPlanAgent as Mock;
+const mockedSpawnAgent = spawnClaudeAgent as Mock;
+const mockedSpawnPlanAgent = spawnClaudePlanAgent as Mock;
 
-import { ROLE_STYLES, ClaudeAgentSpawner } from "../../src/infrastructure/claude-agent-spawner.js";
+import { ClaudeAgentSpawner } from "../../src/infrastructure/claude-agent-spawner.js";
+import { ROLE_STYLES } from "../../src/ui/agent-role-styles.js";
 import { BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL } from "../../src/ui/display.js";
 
-describe("AgentProcess / AgentHandle structural compatibility", () => {
-  it("AgentProcess structurally satisfies AgentHandle", () => {
-    const process = {} as AgentProcess;
+describe("ClaudeAgentProcess / AgentHandle structural compatibility", () => {
+  it("ClaudeAgentProcess structurally satisfies AgentHandle", () => {
+    const process = {} as ClaudeAgentProcess;
     const _handle: AgentHandle = process; // compile-time check
     expect(true).toBe(true);
   });
@@ -57,7 +60,16 @@ describe("AgentProcess / AgentHandle structural compatibility", () => {
 
 describe("ROLE_STYLES", () => {
   it("maps every AgentRole to an AgentStyle", () => {
-    const allRoles: AgentRole[] = ["tdd", "review", "verify", "plan", "gap", "final", "completeness"];
+    const allRoles: AgentRole[] = [
+      "tdd",
+      "review",
+      "verify",
+      "plan",
+      "gap",
+      "final",
+      "completeness",
+      "triage",
+    ];
     const keys = Object.keys(ROLE_STYLES);
 
     expect(keys).toHaveLength(allRoles.length);
@@ -74,6 +86,14 @@ describe("ROLE_STYLES", () => {
     expect(ROLE_STYLES.gap).toBe(BOT_GAP);
     expect(ROLE_STYLES.final).toBe(BOT_FINAL);
     expect(ROLE_STYLES.completeness).toBe(BOT_PLAN);
+  });
+
+  it("defines the triage style inline", () => {
+    expect(ROLE_STYLES.triage).toEqual({
+      label: "Triage",
+      color: "#888",
+      badge: "[TRG]",
+    });
   });
 
   it("each value has label, color, and badge strings", () => {
@@ -97,7 +117,7 @@ describe("ClaudeAgentSpawner", () => {
   ) => new ClaudeAgentSpawner(skills, cwd);
 
   describe("plan-mode roles use spawnPlanAgent", () => {
-    it.each(["plan", "gap", "completeness"] as AgentRole[])(
+    it.each(["plan", "gap", "completeness", "triage"] as AgentRole[])(
       "spawn('%s') calls spawnPlanAgent",
       (role) => {
         const spawner = makeSpawner();
@@ -125,6 +145,18 @@ describe("ClaudeAgentSpawner", () => {
       const spawner = makeSpawner({ plan: "plan skill" }, "/work");
       spawner.spawn("plan", { cwd: "/custom" });
       expect(mockedSpawnPlanAgent).toHaveBeenCalledWith(ROLE_STYLES.plan, "plan skill", "/custom");
+    });
+
+    it("passes the Haiku model override for triage", () => {
+      const spawner = makeSpawner({ triage: "triage skill" }, "/work");
+      spawner.spawn("triage", { cwd: "/custom" });
+      expect(mockedSpawnPlanAgent).toHaveBeenCalledWith(
+        ROLE_STYLES.triage,
+        "triage skill",
+        "/custom",
+        "claude-haiku-4-5-20251001",
+      );
+      expect(mockedSpawnAgent).not.toHaveBeenCalled();
     });
 
     it("resumeSessionId is not forwarded to spawnPlanAgent", () => {
@@ -300,6 +332,7 @@ describe("ClaudeAgentSpawner", () => {
         sendQuiet: vi.fn(),
         inject: vi.fn(),
         kill: vi.fn(),
+        pipe: vi.fn(),
         alive: true,
         stderr: "error output",
         sessionId: "sess-123",
@@ -309,6 +342,28 @@ describe("ClaudeAgentSpawner", () => {
       const spawner = makeSpawner();
       const handle = spawner.spawn("tdd");
       expect(handle.stderr).toBe("error output");
+    });
+
+    it("delegates pipe to underlying AgentProcess", () => {
+      const mockPipe = vi.fn();
+      mockedSpawnAgent.mockReturnValueOnce({
+        send: vi.fn(),
+        sendQuiet: vi.fn(),
+        inject: vi.fn(),
+        kill: vi.fn(),
+        pipe: mockPipe,
+        alive: true,
+        stderr: "",
+        sessionId: "sess-123",
+        style: { label: "TDD", color: "", badge: "" },
+      });
+
+      const spawner = makeSpawner();
+      const handle = spawner.spawn("tdd");
+      const onText = vi.fn();
+      const onToolUse = vi.fn();
+      handle.pipe(onText, onToolUse);
+      expect(mockPipe).toHaveBeenCalledWith(onText, onToolUse);
     });
   });
 });

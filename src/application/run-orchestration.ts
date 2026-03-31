@@ -9,12 +9,15 @@ import type { OrchestratorState } from "../domain/state.js";
 import type { AgentResult, AgentRole } from "../domain/agent-types.js";
 import type { Group } from "../domain/plan.js";
 import type { Slice } from "../domain/plan.js";
+import type { TriageResult } from "../domain/triage.js";
+import { FULL_TRIAGE } from "../domain/triage.js";
+import { buildTriagePrompt, parseTriageResult } from "../infrastructure/diff-triage.js";
 import { detectApiError } from "../domain/api-errors.js";
 import { parseVerifyResult } from "../domain/verify.js";
 import { isCleanReview } from "../domain/review-check.js";
 import { isAlreadyImplemented } from "../domain/transition.js";
 import { shouldReview } from "../domain/review.js";
-import { CreditExhaustedError } from "../domain/errors.js";
+import { CreditExhaustedError, IncompleteRunError } from "../domain/errors.js";
 import { advanceState } from "../domain/state.js";
 import type { Phase } from "../domain/phase.js";
 import { transition } from "../domain/transition.js";
@@ -60,12 +63,19 @@ export class RunOrchestration {
     private readonly progressSink: ProgressSink,
   ) {}
 
+  private failIncompleteSlice(slice: Slice, reason: string): never {
+    this.phase = { kind: "Idle" };
+    this.sliceSkipFlag = false;
+    throw new IncompleteRunError(`Slice ${slice.number} did not complete: ${reason}`);
+  }
+
+  private canSkipCurrentSlice(): boolean {
+    return "sliceNumber" in this.phase;
+  }
+
   private pipeToSink(agent: AgentHandle, role: AgentRole): void {
     const streamer = this.progressSink.createStreamer(role);
-    agent.pipe(
-      (text) => streamer(text),
-      (summary) => this.progressSink.setActivity(summary),
-    );
+    agent.pipe(streamer, (summary) => this.progressSink.setActivity(summary));
   }
 
   dispose(): void {
@@ -124,6 +134,11 @@ export class RunOrchestration {
       this.hardInterruptPending = text;
       if (this.tddAgent) this.tddAgent.kill();
     });
+    interrupts.onSkip(() => {
+      if (!this.canSkipCurrentSlice()) return false;
+      this.sliceSkipFlag = true;
+      return true;
+    });
 
     const runBaseSha = await this.git.captureRef();
 
@@ -146,12 +161,21 @@ export class RunOrchestration {
         groupSliceCount: group.slices.length,
         groupCompleted: 0,
       });
-      this.state = advanceState(this.state, { kind: "agentSpawned", role: "tdd", sessionId: this.tddAgent.sessionId });
-      this.state = advanceState(this.state, { kind: "agentSpawned", role: "review", sessionId: this.reviewAgent!.sessionId });
+      this.state = advanceState(this.state, {
+        kind: "agentSpawned",
+        role: "tdd",
+        sessionId: this.tddAgent.sessionId,
+      });
+      this.state = advanceState(this.state, {
+        kind: "agentSpawned",
+        role: "review",
+        sessionId: this.reviewAgent!.sessionId,
+      });
       await this.persistence.save(this.state);
       const groupBaseSha = await this.git.captureRef();
       let reviewBase = groupBaseSha;
       let groupCompleted = 0;
+      const groupTriageResults: TriageResult[] = [];
 
       for (const slice of group.slices) {
         if (
@@ -191,18 +215,7 @@ export class RunOrchestration {
         }
 
         if (pteResult.skipped) {
-          this.phase = { kind: "Idle" };
-          this.sliceSkipFlag = false;
-          this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
-          await this.persistence.save(this.state);
-          await this.respawnTdd();
-          this.slicesCompleted++;
-          groupCompleted++;
-          this.progressSink.updateProgress({
-            completedSlices: this.slicesCompleted,
-            groupCompleted,
-          });
-          continue;
+          this.failIncompleteSlice(slice, "execution was skipped before delivery");
         }
 
         let tddResult = pteResult.tddResult;
@@ -214,10 +227,7 @@ export class RunOrchestration {
           await this.respawnTdd();
           this.progressSink.logBadge("tdd", "implementing...");
           tddResult = await this.withRetry(
-            () =>
-              this.tddAgent!.send(
-                this.prompts.withBrief(guidance),
-              ),
+            () => this.tddAgent!.send(this.prompts.withBrief(guidance)),
             this.tddAgent!,
             "tdd-interrupt",
           );
@@ -233,13 +243,23 @@ export class RunOrchestration {
         // Commit sweep
         await this.commitSweep(`Slice ${slice.number}`);
 
+        // Triage: classify the diff to decide which pipeline phases to run
+        const triage = await this.triageDiff(verifyBaseSha);
+        groupTriageResults.push(triage);
+
         // Completeness check
-        await this.completenessCheck(slice, verifyBaseSha);
+        if (triage.runCompleteness) {
+          await this.completenessCheck(slice, verifyBaseSha);
+        }
 
         // Post-TDD pipeline: verify → review → summary
-        const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
+        const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha, triage);
         reviewBase = sliceResult.reviewBase;
         this.phase = { kind: "Idle" };
+
+        if (sliceResult.skipped) {
+          this.failIncompleteSlice(slice, "verification or review did not complete");
+        }
 
         if (!sliceResult.skipped) {
           groupCompleted++;
@@ -251,7 +271,7 @@ export class RunOrchestration {
       }
 
       // Gap analysis
-      await this.gapAnalysis(group, groupBaseSha);
+      await this.gapAnalysis(group, groupBaseSha, groupTriageResults);
 
       // Commit sweep
       await this.commitSweep(group.name);
@@ -264,7 +284,7 @@ export class RunOrchestration {
       if (i < groups.length - 1) {
         await this.respawnBoth();
 
-        if (!this.config.auto && !this.config.noInteraction) {
+        if (!this.config.auto) {
           const next = groups[i + 1];
           const nextLabel = `${next.name} (${next.slices.map((s) => `Slice ${s.number}`).join(", ")})`;
           const proceed = await this.gate.confirmNextGroup(nextLabel);
@@ -304,11 +324,7 @@ export class RunOrchestration {
     const planAgent = this.agents.spawn("plan", { cwd: this.config.cwd });
     this.pipeToSink(planAgent, "plan");
     this.progressSink.logBadge("plan", "planning...");
-    const planResult = await this.withRetry(
-      () => planAgent.send(planPrompt),
-      planAgent,
-      "plan",
-    );
+    const planResult = await this.withRetry(() => planAgent.send(planPrompt), planAgent, "plan");
 
     const plan = planResult.planText ?? planResult.assistantText ?? "";
 
@@ -335,9 +351,9 @@ export class RunOrchestration {
     this.phase = transition(this.phase, { kind: "PlanReady", planText: plan });
 
     // ── Confirmation gate ──
-    const noInteraction = forceAccept || this.config.noInteraction || this.config.auto;
+    const skipConfirm = forceAccept || this.config.auto;
     let operatorGuidance: string | undefined;
-    if (!noInteraction) {
+    if (!skipConfirm) {
       const decision = await this.gate.confirmPlan(plan);
       if (decision.kind === "reject") {
         this.phase = transition(this.phase, { kind: "PlanRejected" });
@@ -397,6 +413,7 @@ export class RunOrchestration {
     reviewBase: string,
     tddResult: AgentResult,
     verifyBaseSha: string,
+    triage: TriageResult = FULL_TRIAGE,
   ): Promise<{ reviewBase: string; skipped: boolean }> {
     const tddText = tddResult.assistantText ?? "";
     const headAfterTdd = await this.git.captureRef();
@@ -410,8 +427,8 @@ export class RunOrchestration {
     }
 
     // Verify gate
-    if (this.config.verifySkill === null) {
-      // verify disabled
+    if (this.config.verifySkill === null || !triage.runVerify) {
+      // verify disabled or triage skipped it
     } else {
       const verified = await this.verify(slice, verifyBaseSha);
       if (!verified) {
@@ -426,7 +443,11 @@ export class RunOrchestration {
     this.phase = transition(this.phase, { kind: "VerifyPassed" });
     this.phase = transition(this.phase, { kind: "CompletenessOk" });
 
-    this.state = advanceState(this.state, { kind: "sliceImplemented", sliceNumber: slice.number, reviewBaseSha: verifyBaseSha });
+    this.state = advanceState(this.state, {
+      kind: "sliceImplemented",
+      sliceNumber: slice.number,
+      reviewBaseSha: verifyBaseSha,
+    });
     await this.persistence.save(this.state);
 
     // Review-fix loop — gated on minimum diff threshold
@@ -443,7 +464,7 @@ export class RunOrchestration {
       return { reviewBase, skipped: true };
     }
 
-    if (this.config.reviewSkill !== null) {
+    if (this.config.reviewSkill !== null && triage.runReview) {
       await this.reviewFix(slice.content, reviewBase);
     }
     const newReviewBase = await this.git.captureRef();
@@ -498,12 +519,9 @@ export class RunOrchestration {
       priorFindings = reviewText;
       const preFixSha = await this.git.captureRef();
       const fixPrompt = this.prompts.tdd(content, reviewText);
-      this.progressSink.logBadge("tdd", "fixing...");
+      this.progressSink.logBadge("tdd", "implementing...");
       const fixResult = await this.withRetry(
-        () =>
-          this.tddAgent!.send(
-            this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt,
-          ),
+        () => this.tddAgent!.send(this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt),
         this.tddAgent!,
         "review-fix",
       );
@@ -526,7 +544,6 @@ export class RunOrchestration {
     const prompt = this.prompts.completeness(slice.content, baseSha, slice.number);
     const checkAgent = this.agents.spawn("completeness", { cwd: this.config.cwd });
     this.pipeToSink(checkAgent, "completeness");
-    this.progressSink.logBadge("completeness", "checking completeness...");
     const result = await this.withRetry(
       () => checkAgent.send(prompt),
       checkAgent,
@@ -547,7 +564,7 @@ export class RunOrchestration {
       `A completeness check found that your implementation does not fully match the plan. Fix the issues below.\n\n## Completeness Findings\n${text}`,
       slice.number,
     );
-    this.progressSink.logBadge("tdd", "fixing...");
+    this.progressSink.logBadge("tdd", "implementing...");
     const fixResult = await this.withRetry(
       () => this.tddAgent!.send(this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt),
       this.tddAgent!,
@@ -584,15 +601,18 @@ export class RunOrchestration {
     );
     let parsed = parseVerifyResult(verifyResult.assistantText ?? "");
 
-    if (!parsed.passed) {
+    while (!parsed.passed) {
       this.phase = transition(this.phase, { kind: "VerifyFailed" });
-      // Send failures to TDD for fixing
+
       const failureContext =
         parsed.newFailures.length > 0
           ? parsed.newFailures.join("\n")
           : "Verification checks failed. Run the test/lint/typecheck pipeline and fix any failures.";
-      const retryPrompt = `Verification found new failures after your implementation. Fix them:\n\n${failureContext}`;
-      this.progressSink.logBadge("tdd", "fixing...");
+
+      // Send findings to TDD for fixing
+      const retryPrompt = `Verification found issues after your implementation. Fix them:\n\n${failureContext}`;
+      const preFixSha = await this.git.captureRef();
+      this.progressSink.logBadge("tdd", "implementing...");
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(retryPrompt),
         this.tddAgent!,
@@ -601,30 +621,47 @@ export class RunOrchestration {
       await this.checkCredit(fixResult, this.tddAgent!);
 
       this.phase = transition(this.phase, { kind: "ExecutionDone" });
-      // Re-verify
-      this.progressSink.logBadge("verify", "re-verifying...");
+
+      // If TDD made no changes, surface to operator — don't re-verify endlessly
+      if (!(await this.git.hasChanges(preFixSha))) {
+        const failSummary =
+          parsed.newFailures.join("\n") || "Verification issues remain but TDD made no changes.";
+        const decision = await this.gate.verifyFailed(slice.number, failSummary);
+
+        if (decision.kind === "stop") {
+          throw new IncompleteRunError(`Slice ${slice.number} verification failed and execution stopped`);
+        }
+        if (decision.kind === "skip") {
+          return false;
+        }
+        continue;
+      }
+
+      // Re-verify — tell the verifier what TDD fixed
+      const fixSummary = fixResult.assistantText?.slice(0, 500) ?? "TDD attempted fixes.";
+      this.progressSink.logBadge("verify", "verifying...");
       const reVerifyResult = await this.withRetry(
-        () => this.verifyAgent!.send(
-          `Re-verify changes since ${verifyBaseSha}. The TDD bot attempted fixes.`,
-        ),
+        () =>
+          this.verifyAgent!.send(
+            `Re-verify changes since ${verifyBaseSha}. The TDD bot made the following fixes:\n\n${fixSummary}\n\nCheck if the original issues are resolved.`,
+          ),
         this.verifyAgent!,
         "re-verify",
       );
       parsed = parseVerifyResult(reVerifyResult.assistantText ?? "");
 
       if (!parsed.passed) {
-        const failSummary = parsed.newFailures.join("\n") || "Checks still failing after retry.";
+        const failSummary =
+          parsed.newFailures.join("\n") || "Checks still failing after fix attempt.";
         const decision = await this.gate.verifyFailed(slice.number, failSummary);
 
         if (decision.kind === "stop") {
-          this.progressSink.teardown();
-          throw new Error("Operator stopped");
+          throw new IncompleteRunError(`Slice ${slice.number} verification failed and execution stopped`);
         }
         if (decision.kind === "skip") {
           return false;
         }
-        // retry — continue to review
-        return true;
+        continue;
       }
     }
 
@@ -642,7 +679,7 @@ export class RunOrchestration {
       const finalAgent = this.agents.spawn("final", { cwd: this.config.cwd });
       this.pipeToSink(finalAgent, "final");
       const finalPrompt = this.prompts.withBrief(pass.prompt);
-      this.progressSink.logBadge("final", "final pass...");
+      this.progressSink.logBadge("final", "finalising...");
       const finalResult = await this.withRetry(
         () => finalAgent.send(finalPrompt),
         finalAgent,
@@ -655,13 +692,12 @@ export class RunOrchestration {
       if (!findings || findings.includes("NO_ISSUES_FOUND")) continue;
 
       // Fix cycle
-      const preFixSha = await this.git.captureRef();
       const fixPrompt = this.prompts.tdd(
         this.config.planContent,
         `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
       );
       const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
-      this.progressSink.logBadge("tdd", "fixing...");
+      this.progressSink.logBadge("tdd", "implementing...");
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(actualFixPrompt),
         this.tddAgent!,
@@ -674,19 +710,20 @@ export class RunOrchestration {
         await this.followUp(fixResult, this.tddAgent!);
       }
 
-      if (await this.git.hasChanges(preFixSha)) {
-        if (this.config.reviewSkill !== null) {
-          await this.reviewFix(this.config.planContent, preFixSha);
-        }
-      }
+      await this.commitSweep(`${pass.name} final fix`);
     }
 
     this.phase = transition(this.phase, { kind: "AllPassesDone" });
   }
 
-  async gapAnalysis(group: Group, groupBaseSha: string): Promise<void> {
+  async gapAnalysis(
+    group: Group,
+    groupBaseSha: string,
+    triageResults: readonly TriageResult[] = [],
+  ): Promise<void> {
     if (!(await this.git.hasChanges(groupBaseSha))) return;
     if (this.config.gapDisabled) return;
+    if (triageResults.length > 0 && !triageResults.some((t) => t.runGap)) return;
 
     this.phase = transition(this.phase, { kind: "StartGap", groupName: group.name });
 
@@ -694,12 +731,8 @@ export class RunOrchestration {
     const gapAgent = this.agents.spawn("gap", { cwd: this.config.cwd });
     this.pipeToSink(gapAgent, "gap");
     const gapPrompt = this.prompts.withBrief(this.prompts.gap(groupContent, groupBaseSha));
-    this.progressSink.logBadge("gap", "gap analysis...");
-    const gapResult = await this.withRetry(
-      () => gapAgent.send(gapPrompt),
-      gapAgent,
-      "gap",
-    );
+    this.progressSink.logBadge("gap", "filling gaps...");
+    const gapResult = await this.withRetry(() => gapAgent.send(gapPrompt), gapAgent, "gap");
 
     const gapText = gapResult.assistantText ?? "";
 
@@ -710,13 +743,12 @@ export class RunOrchestration {
     }
 
     // Fix cycle
-    const gapBaseSha = await this.git.captureRef();
     const fixPrompt = this.prompts.tdd(
       groupContent,
       `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
     );
     const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
-    this.progressSink.logBadge("tdd", "fixing...");
+    this.progressSink.logBadge("tdd", "implementing...");
     const fixResult = await this.withRetry(
       () => this.tddAgent!.send(actualFixPrompt),
       this.tddAgent!,
@@ -729,14 +761,28 @@ export class RunOrchestration {
       await this.followUp(fixResult, this.tddAgent!);
     }
 
-    if (await this.git.hasChanges(gapBaseSha)) {
-      if (this.config.reviewSkill !== null) {
-        await this.reviewFix(groupContent, gapBaseSha);
-      }
-    }
+    await this.commitSweep(`${group.name} gap fixes`);
 
     gapAgent.kill();
     this.phase = transition(this.phase, { kind: "GapDone" });
+  }
+
+  async triageDiff(baseSha: string): Promise<TriageResult> {
+    const diff = await this.git.getDiff(baseSha);
+    if (!diff) return FULL_TRIAGE;
+    if (this.config.provider === "codex") return FULL_TRIAGE;
+
+    try {
+      const agent = this.agents.spawn("triage", { cwd: this.config.cwd });
+      const prompt = buildTriagePrompt(diff);
+      const result = await agent.send(prompt);
+      agent.kill();
+      const triage = parseTriageResult(result.assistantText ?? "");
+      this.progressSink.logBadge("triage", triage.reason);
+      return triage;
+    } catch {
+      return FULL_TRIAGE;
+    }
   }
 
   async commitSweep(label: string): Promise<void> {
@@ -760,7 +806,7 @@ export class RunOrchestration {
     let current = result;
     let followUps = 0;
 
-    while (current.needsInput && !this.config.noInteraction && followUps < maxFollowUps) {
+    while (current.needsInput && !this.config.auto && followUps < maxFollowUps) {
       const answer = await this.gate.askUser("Your response (or Enter to skip): ");
 
       if (!answer.trim()) {
@@ -793,10 +839,15 @@ export class RunOrchestration {
 
       if (!apiError.retryable) {
         await this.persistence.save(this.state);
-        throw new CreditExhaustedError(
-          `Terminal API error during ${label}: ${apiError.kind}`,
-          result.assistantText.length > 0 ? "mid-response" : "rejected",
-        );
+        const decision = await this.gate.creditExhausted(label, `${apiError.kind}: ${result.resultText.slice(0, 200)}`);
+        if (decision.kind === "quit") {
+          throw new CreditExhaustedError(
+            `Terminal API error during ${label}: ${apiError.kind}`,
+            result.assistantText.length > 0 ? "mid-response" : "rejected",
+          );
+        }
+        // retry — operator chose to wait and retry
+        continue;
       }
 
       attempt++;
@@ -809,14 +860,18 @@ export class RunOrchestration {
     }
   }
 
-  async checkCredit(result: AgentResult, agent: AgentHandle): Promise<void> {
+  async checkCredit(result: AgentResult, agent: AgentHandle, label = "post-send"): Promise<void> {
     const apiError = detectApiError(result, agent.stderr);
     if (!apiError || apiError.retryable) return;
     await this.persistence.save(this.state);
-    throw new CreditExhaustedError(
-      `Terminal API error: ${apiError.kind}`,
-      result.assistantText.length > 0 ? "mid-response" : "rejected",
-    );
+    const decision = await this.gate.creditExhausted(label, `${apiError.kind}: ${result.resultText.slice(0, 200)}`);
+    if (decision.kind === "quit") {
+      throw new CreditExhaustedError(
+        `Terminal API error: ${apiError.kind}`,
+        result.assistantText.length > 0 ? "mid-response" : "rejected",
+      );
+    }
+    // operator chose retry — caller will re-send
   }
 
   async respawnTdd(): Promise<void> {
@@ -825,7 +880,11 @@ export class RunOrchestration {
     this.pipeToSink(this.tddAgent, "tdd");
     await this.tddAgent.sendQuiet(this.prompts.rulesReminder("tdd"));
     this.tddIsFirst = true;
-    this.state = advanceState(this.state, { kind: "agentSpawned", role: "tdd", sessionId: this.tddAgent.sessionId });
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "tdd",
+      sessionId: this.tddAgent.sessionId,
+    });
     await this.persistence.save(this.state);
   }
 
@@ -846,8 +905,16 @@ export class RunOrchestration {
     ]);
     this.tddIsFirst = true;
     this.reviewIsFirst = true;
-    this.state = advanceState(this.state, { kind: "agentSpawned", role: "tdd", sessionId: this.tddAgent.sessionId });
-    this.state = advanceState(this.state, { kind: "agentSpawned", role: "review", sessionId: this.reviewAgent.sessionId });
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "tdd",
+      sessionId: this.tddAgent.sessionId,
+    });
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "review",
+      sessionId: this.reviewAgent.sessionId,
+    });
     await this.persistence.save(this.state);
   }
 }

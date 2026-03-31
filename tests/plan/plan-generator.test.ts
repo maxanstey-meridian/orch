@@ -5,7 +5,8 @@ import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { extractJson, planSummaryLines, generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../../src/infrastructure/plan/plan-generator.js";
 import { PlanSchema, parsePlanJson } from "../../src/infrastructure/plan/plan-schema.js";
-import type { AgentProcess, AgentResult } from "../../src/infrastructure/agent/agent.js";
+import type { PromptAgent } from "../../src/application/ports/agent-spawner.port.js";
+import type { AgentResult } from "../../src/domain/agent-types.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ const VALID_PLAN = JSON.stringify({
 
 const PLAN_WITH_PREAMBLE = `Here's the plan I generated:\n${VALID_PLAN}\nLet me know if you'd like changes.`;
 
-const mockAgent = (responseText: string): AgentProcess => ({
+const mockAgent = (responseText: string): PromptAgent => ({
   send: async (_prompt: string) =>
     ({
       exitCode: 0,
@@ -38,13 +39,7 @@ const mockAgent = (responseText: string): AgentProcess => ({
       needsInput: false,
       sessionId: "mock",
     }) as AgentResult,
-  sendQuiet: async (_prompt: string) => responseText,
-  inject: () => {},
   kill: () => {},
-  get alive() { return true; },
-  sessionId: "mock",
-  style: { label: "TEST", color: "", badge: "" },
-  get stderr() { return ""; },
 });
 
 // ─── planFileName ───────────────────────────────────────────────────────────
@@ -249,6 +244,28 @@ describe("generatePlan", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("accepts a minimal PromptAgent (compile-time narrowing proof)", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+    const outputDir = join(tmpDir, ".orch");
+
+    // Minimal object — only send and kill, no sessionId/style/alive/inject/etc.
+    const minimal: PromptAgent = {
+      send: async () =>
+        ({
+          exitCode: 0,
+          assistantText: VALID_PLAN,
+          resultText: "",
+          needsInput: false,
+          sessionId: "mock",
+        }) as AgentResult,
+      kill: () => {},
+    };
+
+    const result = await generatePlan(inventoryPath, "", minimal, outputDir);
+    expect(result.groups).toHaveLength(2);
+  });
+
   it("writes plan to plan-<id>.json and returns planPath and planId", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Login\nUsers can log in.\n\n## Dashboard\nWidgets.");
@@ -301,6 +318,32 @@ describe("generatePlan", () => {
     expect(parsed.groups[1].slices).toHaveLength(1);
   });
 
+  it("prefers planText from ExitPlanMode over assistantText", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const agent: PromptAgent = {
+      send: async () =>
+        ({
+          exitCode: 0,
+          assistantText: "preamble junk that is not valid JSON",
+          resultText: "",
+          needsInput: false,
+          sessionId: "mock",
+          planText: VALID_PLAN,
+        }) as AgentResult,
+      kill: () => {},
+    };
+
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
+
+    const written = readFileSync(planPath, "utf-8");
+    const parsed = JSON.parse(written);
+    expect(parsed.groups).toHaveLength(2);
+    expect(parsed.groups[0].name).toBe("Auth");
+  });
+
   it("throws when agent produces invalid JSON", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Login\nLogin.");
@@ -346,7 +389,7 @@ describe("generatePlan", () => {
 
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
-    const agent: AgentProcess = {
+    const agent: PromptAgent = {
       ...mockAgent(VALID_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
@@ -453,7 +496,7 @@ describe("generatePlan", () => {
 
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
-    const agent: AgentProcess = {
+    const agent: PromptAgent = {
       ...mockAgent(VALID_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
@@ -480,7 +523,7 @@ describe("generatePlan", () => {
 
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
-    const agent: AgentProcess = {
+    const agent: PromptAgent = {
       ...mockAgent(VALID_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
@@ -601,18 +644,33 @@ describe("doGeneratePlan", () => {
     expect(all).toContain("3 slices");
   });
 
+  it("kills the agent on the success path", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+    const outputDir = join(tmpDir, ".orch");
+    const killed: boolean[] = [];
+    const agent: PromptAgent = {
+      ...mockAgent(VALID_PLAN),
+      kill: () => { killed.push(true); },
+    };
+    const log = () => {};
+
+    await doGeneratePlan(inventoryPath, "", outputDir, log, () => agent);
+    expect(killed).toHaveLength(1);
+  });
+
   it("kills the agent even if generatePlan throws", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
     const outputDir = join(tmpDir, ".orch");
     const killed: boolean[] = [];
-    const badAgent: AgentProcess = {
+    const badAgent: PromptAgent = {
       ...mockAgent("not a plan"),
       kill: () => { killed.push(true); },
     };
     const log = () => {};
 
-    await expect(doGeneratePlan(inventoryPath, "", outputDir, log, () => badAgent)).rejects.toThrow();
+    await expect(doGeneratePlan(inventoryPath, "", outputDir, log, () => badAgent)).rejects.toThrow("Invalid JSON");
     expect(killed).toHaveLength(1);
   });
 });

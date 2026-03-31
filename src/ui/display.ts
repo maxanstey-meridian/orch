@@ -1,4 +1,4 @@
-import { type AgentStyle } from "../infrastructure/agent/agent.js";
+import { type AgentStyle } from "../domain/agent-types.js";
 import { type Slice, type Group } from "../infrastructure/plan/plan-parser.js";
 
 export type LogFn = (...args: unknown[]) => void;

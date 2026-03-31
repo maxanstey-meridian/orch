@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { AGENT_ROLES } from "../../src/domain/agent-types.js";
 import type { AgentStyle, AgentResult, AgentRole } from "../../src/domain/agent-types.js";
 
 describe("AgentStyle", () => {
@@ -37,7 +38,20 @@ describe("AgentResult", () => {
 });
 
 describe("AgentRole", () => {
-  it("covers all 7 roles (exhaustiveness guard)", () => {
+  it("exports the full runtime AGENT_ROLES array including triage", () => {
+    expect(AGENT_ROLES).toEqual([
+      "tdd",
+      "review",
+      "verify",
+      "plan",
+      "gap",
+      "final",
+      "completeness",
+      "triage",
+    ]);
+  });
+
+  it("covers all 8 roles (exhaustiveness guard)", () => {
     const allRoles: Record<AgentRole, true> = {
       tdd: true,
       review: true,
@@ -46,7 +60,8 @@ describe("AgentRole", () => {
       gap: true,
       final: true,
       completeness: true,
+      triage: true,
     };
-    expect(Object.keys(allRoles)).toHaveLength(7);
+    expect(Object.keys(allRoles)).toHaveLength(8);
   });
 });
