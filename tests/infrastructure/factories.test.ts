@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { OrchestratorConfig } from "../../src/domain/config.js";
+import type { Hud } from "../../src/ui/hud.js";
 
 vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
   spawnClaudeAgent: vi.fn(),
@@ -15,6 +16,19 @@ vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
 import { SilentRuntimeInteractionGate } from "../../src/ui/ink-runtime-interaction-gate.js";
 
 const dummyGate = new SilentRuntimeInteractionGate();
+
+const fakeHud = (): Hud => ({
+  update: vi.fn(),
+  teardown: vi.fn(),
+  wrapLog: vi.fn((fn) => fn),
+  createWriter: vi.fn(() => vi.fn()),
+  onKey: vi.fn(),
+  onInterruptSubmit: vi.fn(),
+  startPrompt: vi.fn(),
+  setSkipping: vi.fn(),
+  setActivity: vi.fn(),
+  askUser: vi.fn().mockResolvedValue(''),
+});
 
 const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig => ({
   cwd: "/tmp/test",
@@ -113,8 +127,7 @@ describe("operatorGateFactory", () => {
     const { operatorGateFactory } = await import("../../src/infrastructure/factories.js");
     const { SilentOperatorGate } = await import("../../src/ui/ink-operator-gate.js");
     const config = makeConfig({ noInteraction: true });
-    const dummyHud = {} as any;
-    const result = operatorGateFactory(config, dummyHud);
+    const result = operatorGateFactory(config, fakeHud());
     expect(result).toBeInstanceOf(SilentOperatorGate);
     expect(operatorGateFactory.inject).toEqual(["config", "hud"]);
   });
@@ -123,16 +136,7 @@ describe("operatorGateFactory", () => {
     const { operatorGateFactory } = await import("../../src/infrastructure/factories.js");
     const { InkOperatorGate } = await import("../../src/ui/ink-operator-gate.js");
     const config = makeConfig({ noInteraction: false });
-    const dummyHud = {
-      askUser: vi.fn(),
-      update: vi.fn(),
-      setActivity: vi.fn(),
-      teardown: vi.fn(),
-      onKey: vi.fn(),
-      onInterruptSubmit: vi.fn(),
-      startPrompt: vi.fn(),
-    } as any;
-    const result = operatorGateFactory(config, dummyHud);
+    const result = operatorGateFactory(config, fakeHud());
     expect(result).toBeInstanceOf(InkOperatorGate);
   });
 });
@@ -142,8 +146,7 @@ describe("progressSinkFactory", () => {
     const { progressSinkFactory } = await import("../../src/infrastructure/factories.js");
     const { SilentProgressSink } = await import("../../src/ui/ink-operator-gate.js");
     const config = makeConfig({ noInteraction: true });
-    const dummyHud = {} as any;
-    const result = progressSinkFactory(config, dummyHud);
+    const result = progressSinkFactory(config, fakeHud());
     expect(result).toBeInstanceOf(SilentProgressSink);
     expect(progressSinkFactory.inject).toEqual(["config", "hud"]);
   });
@@ -152,16 +155,7 @@ describe("progressSinkFactory", () => {
     const { progressSinkFactory } = await import("../../src/infrastructure/factories.js");
     const { InkProgressSink } = await import("../../src/ui/ink-operator-gate.js");
     const config = makeConfig({ noInteraction: false });
-    const dummyHud = {
-      update: vi.fn(),
-      teardown: vi.fn(),
-      onKey: vi.fn(),
-      onInterruptSubmit: vi.fn(),
-      startPrompt: vi.fn(),
-      setActivity: vi.fn(),
-      createWriter: vi.fn(() => vi.fn()),
-    } as any;
-    const result = progressSinkFactory(config, dummyHud);
+    const result = progressSinkFactory(config, fakeHud());
     expect(result).toBeInstanceOf(InkProgressSink);
   });
 });

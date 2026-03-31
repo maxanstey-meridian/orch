@@ -55,12 +55,18 @@ export const normalizeNotification = (n: JsonRpcNotification): CodexEvent => {
       return { kind: 'turnCompleted', resultText: String(result) };
     }
     case 'item/completed': {
-      const cmd = params?.commandExecution as Record<string, unknown> | undefined;
-      if (cmd) return { kind: 'toolActivity', summary: `command: ${String(cmd.command ?? 'unknown')}` };
-      const fc = params?.fileChange as Record<string, unknown> | undefined;
-      if (fc) return { kind: 'toolActivity', summary: `file change: ${String(fc.path ?? 'unknown')}` };
-      const mcp = params?.mcpToolCall as Record<string, unknown> | undefined;
-      if (mcp) return { kind: 'toolActivity', summary: `mcp tool: ${String(mcp.name ?? 'unknown')}` };
+      const cmd = params?.commandExecution;
+      if (typeof cmd === 'object' && cmd !== null) {
+        return { kind: 'toolActivity', summary: `command: ${String((cmd as Record<string, unknown>).command ?? 'unknown')}` };
+      }
+      const fc = params?.fileChange;
+      if (typeof fc === 'object' && fc !== null) {
+        return { kind: 'toolActivity', summary: `file change: ${String((fc as Record<string, unknown>).path ?? 'unknown')}` };
+      }
+      const mcp = params?.mcpToolCall;
+      if (typeof mcp === 'object' && mcp !== null) {
+        return { kind: 'toolActivity', summary: `mcp tool: ${String((mcp as Record<string, unknown>).name ?? 'unknown')}` };
+      }
       return { kind: 'ignored' };
     }
     default:

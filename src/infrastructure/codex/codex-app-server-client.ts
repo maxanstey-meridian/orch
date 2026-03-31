@@ -22,6 +22,10 @@ export type CodexAppServerClient = {
 };
 
 export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerClient => {
+  if (!proc.stdin) {
+    throw new Error('ChildProcess must have stdin (use stdio: ["pipe", ...])');
+  }
+  const stdin = proc.stdin;
   const rpc: JsonRpcClient = createJsonRpcClient(proc);
   let threadId: string | undefined;
   let currentTurnId: string | undefined;
@@ -46,7 +50,7 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
     initialize: async () => {
       await rpc.request('initialize', { clientInfo: { name: 'orch', version: '0.1.0' } });
       // Send initialized notification (no id)
-      proc.stdin!.write(JSON.stringify({ jsonrpc: '2.0', method: 'initialized' }) + '\n');
+      stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'initialized' }) + '\n');
     },
 
     startThread: async (opts?) => {
@@ -57,8 +61,16 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
       if (opts?.sandbox) {
         params.sandbox = opts.sandbox;
       }
-      const result = await rpc.request('thread/start', params) as { threadId?: string; thread?: { id: string } };
-      threadId = result.thread?.id ?? result.threadId ?? '';
+      const raw = await rpc.request('thread/start', params);
+      const result = raw as Record<string, unknown> | undefined;
+      const thread = result?.thread;
+      if (typeof thread === 'object' && thread !== null && 'id' in thread) {
+        threadId = String((thread as Record<string, unknown>).id);
+      } else if (typeof result?.threadId === 'string') {
+        threadId = result.threadId;
+      } else {
+        threadId = '';
+      }
       return threadId;
     },
 
@@ -89,10 +101,11 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
         threadId,
         input: [{ type: 'text', text: prompt }],
       };
-      const result = await rpc.request('turn/start', params) as { result?: string };
+      const raw = await rpc.request('turn/start', params);
       currentTurnId = undefined;
       rpc.onNotification(() => {}); // clear stale handler
 
+      const result = raw as Record<string, unknown> | undefined;
       const resultText = typeof result?.result === 'string' ? result.result : String(result?.result ?? '');
       onEvent({ kind: 'turnCompleted', resultText });
 
@@ -110,7 +123,7 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
     },
 
     respondToApproval: (requestId, approved) => {
-      proc.stdin!.write(JSON.stringify({
+      stdin.write(JSON.stringify({
         jsonrpc: '2.0',
         method: 'codex/approvalResponse',
         params: { id: requestId, approved },

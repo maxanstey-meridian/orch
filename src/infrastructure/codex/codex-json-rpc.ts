@@ -18,11 +18,16 @@ type Pending = {
 };
 
 export const createJsonRpcClient = (proc: ChildProcess): JsonRpcClient => {
+  if (!proc.stdin || !proc.stdout) {
+    throw new Error('ChildProcess must have stdin and stdout (use stdio: ["pipe", "pipe", ...])');
+  }
+  const stdin = proc.stdin;
+
   let nextId = 1;
   const pending = new Map<number, Pending>();
   let notificationHandler: ((n: JsonRpcNotification) => void) | undefined;
 
-  const rl = createInterface({ input: proc.stdout! });
+  const rl = createInterface({ input: proc.stdout });
 
   rl.on('close', () => {
     for (const entry of pending.values()) {
@@ -70,7 +75,7 @@ export const createJsonRpcClient = (proc: ChildProcess): JsonRpcClient => {
         pending.set(id, { resolve, reject });
       });
       const message = JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n';
-      proc.stdin!.write(message);
+      stdin.write(message);
       return promise;
     },
 
