@@ -49,41 +49,54 @@ export class CodexAgentSpawner extends AgentSpawner {
       get stderr() { return ''; },
 
       send: async (prompt, onText?, onToolUse?) => {
-        await ready;
+        try {
+          await ready;
 
-        let assistantText = '';
-        const effectiveOnText = onText ?? persistentOnText;
-        const effectiveOnToolUse = onToolUse ?? persistentOnToolUse;
+          let assistantText = '';
+          let failed = false;
+          const effectiveOnText = onText ?? persistentOnText;
+          const effectiveOnToolUse = onToolUse ?? persistentOnToolUse;
 
-        const resultText = await client.startTurn(prompt, (event) => {
-          switch (event.kind) {
-            case 'textDelta':
-              assistantText += event.text;
-              effectiveOnText?.(event.text);
-              break;
-            case 'toolActivity':
-              effectiveOnToolUse?.(event.summary);
-              break;
-          }
-        });
+          const resultText = await client.startTurn(prompt, (event) => {
+            switch (event.kind) {
+              case 'textDelta':
+                assistantText += event.text;
+                effectiveOnText?.(event.text);
+                break;
+              case 'toolActivity':
+                effectiveOnToolUse?.(event.summary);
+                break;
+              case 'turnFailed':
+                failed = true;
+                assistantText += `\n[Error: ${event.error.code} — ${event.error.message}]`;
+                break;
+            }
+          });
 
-        return {
-          exitCode: 0,
-          assistantText,
-          resultText,
-          needsInput: detectQuestion(assistantText),
-          sessionId,
-        };
+          return {
+            exitCode: failed ? 1 : 0,
+            assistantText,
+            resultText,
+            needsInput: detectQuestion(assistantText),
+            sessionId,
+          };
+        } catch {
+          return { exitCode: 1, assistantText: '', resultText: '', needsInput: false, sessionId };
+        }
       },
 
       sendQuiet: async (prompt) => {
-        await ready;
+        try {
+          await ready;
 
-        const resultText = await client.startTurn(prompt, () => {
-          // Intentionally ignore all events
-        });
+          const resultText = await client.startTurn(prompt, () => {
+            // Intentionally ignore all events
+          });
 
-        return resultText;
+          return resultText;
+        } catch {
+          return '';
+        }
       },
 
       inject: (_message) => {

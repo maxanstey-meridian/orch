@@ -20,6 +20,16 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
   let nextTurnSeq = 1;
   let alive = true;
 
+  const markDead = () => { alive = false; };
+  // Hook process events when available (real ChildProcess)
+  if (typeof proc.on === 'function') {
+    proc.on('close', markDead);
+    proc.on('error', markDead);
+  }
+  // Also catch stdout ending (covers both real processes and PassThrough mocks)
+  proc.stdout?.on('end', markDead);
+  proc.stdout?.on('close', markDead);
+
   return {
     get threadId() { return threadId; },
     get currentTurnId() { return currentTurnId; },
@@ -54,6 +64,8 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
     startTurn: async (prompt, onEvent) => {
       const turnHandler = (n: { method: string; params?: Record<string, unknown> }) => {
         const event = normalizeNotification(n);
+        // Skip turnCompleted from notifications — the canonical source is the RPC response
+        if (event.kind === 'turnCompleted') return;
         onEvent(event);
       };
       rpc.onNotification(turnHandler);
@@ -62,9 +74,9 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
       const params: Record<string, unknown> = { threadId, prompt };
       const result = await rpc.request('turn/start', params) as { result?: string };
       currentTurnId = undefined;
+      rpc.onNotification(() => {}); // clear stale handler
 
       const resultText = typeof result?.result === 'string' ? result.result : String(result?.result ?? '');
-      // Emit turnCompleted via onEvent so consumers see it
       onEvent({ kind: 'turnCompleted', resultText });
 
       return resultText;

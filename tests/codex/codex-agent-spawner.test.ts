@@ -127,19 +127,6 @@ describe('CodexAgentSpawner', () => {
   });
 
   it('currentTurnId is defined during an active turn', async () => {
-    fake = createFakeAppServer();
-    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
-    const handle = spawner.spawn('tdd');
-
-    let turnIdDuringTurn: string | undefined;
-    fake.setTurnScript([
-      { kind: 'textDelta', text: 'mid-turn' },
-      { kind: 'turnCompleted', resultText: 'done' },
-    ]);
-
-    // Access the client's currentTurnId via the handle's internal client
-    // We test this by checking that inject() during send would hit the steer path (Slice 5 prep)
-    // For now, test via the app-server-client directly
     const { createCodexAppServerClient } = await import('../../src/infrastructure/codex/codex-app-server-client.js');
     const fake2 = createFakeAppServer();
     const client = createCodexAppServerClient(fake2.proc);
@@ -168,6 +155,114 @@ describe('CodexAgentSpawner', () => {
     expect(client.currentTurnId).toBeUndefined();
 
     fake2.close();
+  });
+
+  it('alive becomes false when process dies unexpectedly', async () => {
+    fake = createFakeAppServer();
+    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const handle = spawner.spawn('tdd');
+
+    fake.setTurnScript([{ kind: 'turnCompleted', resultText: '' }]);
+    await handle.send('init');
+
+    expect(handle.alive).toBe(true);
+
+    // Simulate process death by ending stdout
+    fake.stdout.push(null);
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(handle.alive).toBe(false);
+  });
+
+  it('send() resolves with exitCode 1 when process dies mid-turn', async () => {
+    fake = createFakeAppServer();
+    fake.hangOnTurn();
+    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const handle = spawner.spawn('tdd');
+
+    // Wait for ready (initialize + thread/start)
+    await new Promise((r) => setTimeout(r, 10));
+
+    const sendPromise = handle.send('will die');
+
+    // Simulate process death
+    await new Promise((r) => setTimeout(r, 5));
+    fake.stdout.push(null);
+
+    const result = await sendPromise;
+    expect(result.exitCode).toBe(1);
+    expect(result.resultText).toBe('');
+    expect(result.sessionId).toBe(handle.sessionId);
+  });
+
+  it('sendQuiet() returns empty string when process dies mid-turn', async () => {
+    fake = createFakeAppServer();
+    fake.hangOnTurn();
+    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const handle = spawner.spawn('tdd');
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    const sendPromise = handle.sendQuiet('will die');
+    await new Promise((r) => setTimeout(r, 5));
+    fake.stdout.push(null);
+
+    const result = await sendPromise;
+    expect(result).toBe('');
+  });
+
+  it('startTurn emits exactly one turnCompleted even if server sends turn/completed as notification', async () => {
+    const { createCodexAppServerClient } = await import('../../src/infrastructure/codex/codex-app-server-client.js');
+    const fake2 = createFakeAppServer();
+    const client = createCodexAppServerClient(fake2.proc);
+    await client.initialize();
+    await client.startThread();
+
+    // Manually script: server sends turn/completed as notification AND as RPC response
+    // This simulates the worst case where both paths fire
+    fake2.setTurnScript([
+      { kind: 'textDelta', text: 'hello' },
+    ]);
+    // Override: after normal script runs, also send a turn/completed notification manually
+    // We need to do this at a lower level — push a notification directly to stdout
+    const turnPromise = (async () => {
+      // Wait for turn/start request to arrive
+      await new Promise((r) => setTimeout(r, 5));
+      // Send a turn/completed notification (no id — it's a notification)
+      fake2.stdout.push(JSON.stringify({ jsonrpc: '2.0', method: 'turn/completed', params: { result: 'from notification' } }) + '\n');
+      // Then the fake already sends the RPC response with result from the script
+    })();
+
+    const events: Array<{ kind: string; resultText?: string }> = [];
+    await client.startTurn('go', (event) => {
+      if (event.kind === 'turnCompleted') {
+        events.push({ kind: event.kind, resultText: (event as { resultText: string }).resultText });
+      } else {
+        events.push({ kind: event.kind });
+      }
+    });
+    await turnPromise;
+
+    const turnCompletedCount = events.filter((e) => e.kind === 'turnCompleted').length;
+    expect(turnCompletedCount).toBe(1);
+
+    fake2.close();
+  });
+
+  it('send() returns exitCode 1 and error text when turnFailed arrives', async () => {
+    fake = createFakeAppServer();
+    fake.setTurnScript([
+      { kind: 'textDelta', text: 'partial' },
+      { kind: 'turnFailed', error: { code: 'serverOverloaded', message: 'Server is overloaded' } },
+      { kind: 'turnCompleted', resultText: '' },
+    ]);
+    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const handle = spawner.spawn('tdd');
+
+    const result = await handle.send('go');
+
+    expect(result.exitCode).toBe(1);
+    expect(result.assistantText).toContain('serverOverloaded');
   });
 
   it('spawn with resumeSessionId calls thread/resume with that id', async () => {

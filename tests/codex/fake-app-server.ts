@@ -17,6 +17,7 @@ export type FakeAppServer = {
   readonly receivedRequests: ReceivedRequest[];
   readonly stdout: PassThrough;
   setTurnScript(events: TurnScript): void;
+  hangOnTurn(): void;
   close(): void;
 };
 
@@ -29,6 +30,7 @@ export const createFakeAppServer = (): FakeAppServer => {
 
   const receivedRequests: ReceivedRequest[] = [];
   let turnScript: TurnScript = [];
+  let shouldHangOnTurn = false;
 
   const rl = createInterface({ input: clientStdin });
 
@@ -95,6 +97,8 @@ export const createFakeAppServer = (): FakeAppServer => {
         sendResponse(id, { threadId: params?.threadId ?? 'resumed-thread' });
         break;
       case 'turn/start': {
+        // If hanging, don't respond at all (simulates process death mid-turn)
+        if (shouldHangOnTurn) break;
         // Emit scripted events, then respond
         for (const event of turnScript) {
           const notif = eventToNotification(event);
@@ -125,6 +129,7 @@ export const createFakeAppServer = (): FakeAppServer => {
     receivedRequests,
     stdout: clientStdout,
     setTurnScript: (events) => { turnScript = events; },
+    hangOnTurn: () => { shouldHangOnTurn = true; },
     close: () => {
       rl.close();
       clientStdin.end();
