@@ -113,10 +113,12 @@ export class InkOperatorGate extends OperatorGate {
 
 export class InkProgressSink extends ProgressSink {
   private readonly writer: (text: string) => void;
+  private readonly logFn: (...args: unknown[]) => void;
 
   constructor(private readonly hud: Hud) {
     super();
     this.writer = hud.createWriter();
+    this.logFn = hud.wrapLog(() => {});
   }
 
   registerInterrupts(): InterruptHandler {
@@ -156,13 +158,13 @@ export class InkProgressSink extends ProgressSink {
   }
 
   logSliceIntro(slice: Slice): void {
-    printSliceIntro((...args: unknown[]) => this.writer(String(args[0])), slice);
+    printSliceIntro(this.logFn, slice);
   }
 
   logBadge(role: AgentRole, phase: string): void {
     const style = styleForRole(role);
     const ts = new Date().toLocaleTimeString("en-GB", { hour12: false });
-    this.writer(`\n${ts}  ${style.badge}  ${phase}`);
+    this.logFn(`\n${ts}  ${style.badge}  ${phase}`);
   }
 
   teardown(): void {

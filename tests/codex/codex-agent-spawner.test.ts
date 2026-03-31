@@ -37,26 +37,27 @@ describe('CodexAgentSpawner', () => {
   it('send() resolves with AgentResult on turnCompleted', async () => {
     fake = createFakeAppServer();
     fake.setTurnScript([
-      { kind: 'textDelta', text: 'hello' },
-      { kind: 'turnCompleted', resultText: 'final result' },
+      { kind: 'textDelta', text: 'hello ' },
+      { kind: 'textDelta', text: 'world' },
+      { kind: 'turnCompleted', resultText: '' },
     ]);
     const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
 
     const result = await handle.send('do something');
 
-    expect(result.resultText).toBe('final result');
+    expect(result.resultText).toBe('hello world');
     expect(result.exitCode).toBe(0);
     expect(result.sessionId).toBe(handle.sessionId);
     expect(result.assistantText).toContain('hello');
   });
 
-  it('send() calls onText for each text delta in order', async () => {
+  it('send() calls onText with buffered text deltas', async () => {
     fake = createFakeAppServer();
     fake.setTurnScript([
-      { kind: 'textDelta', text: 'one' },
-      { kind: 'textDelta', text: 'two' },
-      { kind: 'turnCompleted', resultText: 'done' },
+      { kind: 'textDelta', text: 'line one\n' },
+      { kind: 'textDelta', text: 'line two\n' },
+      { kind: 'turnCompleted', resultText: '' },
     ]);
     const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
@@ -64,16 +65,16 @@ describe('CodexAgentSpawner', () => {
 
     await handle.send('go', onText);
 
-    expect(onText).toHaveBeenCalledTimes(2);
-    expect(onText.mock.calls[0][0]).toBe('one');
-    expect(onText.mock.calls[1][0]).toBe('two');
+    const allText = onText.mock.calls.map((c: [string]) => c[0]).join('');
+    expect(allText).toContain('line one');
+    expect(allText).toContain('line two');
   });
 
   it('send() calls onToolUse for tool activity events', async () => {
     fake = createFakeAppServer();
     fake.setTurnScript([
       { kind: 'toolActivity', summary: 'command: npm test' },
-      { kind: 'turnCompleted', resultText: 'done' },
+      { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
     ]);
     const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
@@ -87,8 +88,8 @@ describe('CodexAgentSpawner', () => {
   it('sendQuiet() returns resultText without streaming callbacks', async () => {
     fake = createFakeAppServer();
     fake.setTurnScript([
-      { kind: 'textDelta', text: 'ignored' },
-      { kind: 'turnCompleted', resultText: 'the answer' },
+      { kind: 'textDelta', text: 'the answer' },
+      { kind: 'turnCompleted', resultText: '' },
     ]);
     const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
@@ -106,9 +107,9 @@ describe('CodexAgentSpawner', () => {
   it('pipe() callbacks invoked when send() has no per-call callbacks', async () => {
     fake = createFakeAppServer();
     fake.setTurnScript([
-      { kind: 'textDelta', text: 'streamed' },
+      { kind: 'textDelta', text: 'streamed\n' },
       { kind: 'toolActivity', summary: 'command: test' },
-      { kind: 'turnCompleted', resultText: 'done' },
+      { kind: 'turnCompleted', resultText: '' },
     ]);
     const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
     const handle = spawner.spawn('tdd');
@@ -118,7 +119,8 @@ describe('CodexAgentSpawner', () => {
 
     await handle.send('go');
 
-    expect(onText).toHaveBeenCalledWith('streamed');
+    const allText = onText.mock.calls.map((c: [string]) => c[0]).join('');
+    expect(allText).toContain('streamed');
     expect(onToolUse).toHaveBeenCalledWith('command: test');
   });
 
@@ -143,7 +145,7 @@ describe('CodexAgentSpawner', () => {
 
     fake2.setTurnScript([
       { kind: 'textDelta', text: 'hello' },
-      { kind: 'turnCompleted', resultText: 'done' },
+      { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
     ]);
 
     // Before turn: no turnId
@@ -393,7 +395,7 @@ describe('CodexAgentSpawner', () => {
       handle.inject('guidance A');
       handle.inject('guidance B');
 
-      fake.setTurnScript([{ kind: 'turnCompleted', resultText: 'done' }]);
+      fake.setTurnScript([{ kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' }]);
       await handle.send('do the thing');
 
       const turnStart = fake.receivedRequests.filter((r) => r.method === 'turn/start');
@@ -415,7 +417,7 @@ describe('CodexAgentSpawner', () => {
       handle.inject('first');
       handle.inject('second');
 
-      fake.setTurnScript([{ kind: 'turnCompleted', resultText: 'done' }]);
+      fake.setTurnScript([{ kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' }]);
       await handle.send('go');
 
       const turnStart = fake.receivedRequests.filter((r) => r.method === 'turn/start');
@@ -431,11 +433,11 @@ describe('CodexAgentSpawner', () => {
       await tick();
 
       handle.inject('one-time guidance');
-      fake.setTurnScript([{ kind: 'turnCompleted', resultText: 'done' }]);
+      fake.setTurnScript([{ kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' }]);
       await handle.send('first send');
 
       // Second send should have no guidance
-      fake.setTurnScript([{ kind: 'turnCompleted', resultText: 'done2' }]);
+      fake.setTurnScript([{ kind: 'textDelta', text: 'done2' }, { kind: 'turnCompleted', resultText: '' }]);
       await handle.send('second send');
 
       const turnStarts = fake.receivedRequests.filter((r) => r.method === 'turn/start');
@@ -532,7 +534,7 @@ describe('CodexAgentSpawner', () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
         { kind: 'approvalRequested', request: { id: 'req-1', kind: 'command', summary: 'run npm test' } },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const spawner = new CodexAgentSpawner('/tmp/test', { auto: true, noInteraction: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
@@ -553,7 +555,7 @@ describe('CodexAgentSpawner', () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
         { kind: 'approvalRequested', request: { id: 'req-q1', kind: 'command', summary: 'run npm test' } },
-        { kind: 'turnCompleted', resultText: 'quiet result' },
+        { kind: 'textDelta', text: 'quiet result' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const spawner = new CodexAgentSpawner('/tmp/test', { auto: true, noInteraction: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
@@ -584,7 +586,7 @@ describe('CodexAgentSpawner', () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
         { kind: 'approvalRequested', request: { id: 'req-1', kind: 'command', summary: 'run npm test' } },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
@@ -610,7 +612,7 @@ describe('CodexAgentSpawner', () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
         { kind: 'approvalRequested', request: { id: 'req-1', kind: 'command', summary: 'run npm test' } },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
@@ -632,7 +634,7 @@ describe('CodexAgentSpawner', () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
         { kind: 'approvalRequested', request: { id: 'req-1', kind: 'command', summary: 'run npm test' } },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
@@ -655,7 +657,7 @@ describe('CodexAgentSpawner', () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
         { kind: 'approvalRequested', request: { id: 'req-2', kind: 'command', summary: 'rm -rf /' } },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'reject' }),
@@ -709,7 +711,7 @@ describe('CodexAgentSpawner', () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
         { kind: 'approvalRequested', request: { id: 'req-auto', kind: 'command', summary: 'npm test' } },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
@@ -733,7 +735,7 @@ describe('CodexAgentSpawner', () => {
       fake.setTurnScript([
         { kind: 'approvalRequested', request: { id: 'req-a', kind: 'command', summary: 'first' } },
         { kind: 'approvalRequested', request: { id: 'req-b', kind: 'command', summary: 'second' } },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const callOrder: string[] = [];
       const gate: RuntimeInteractionGate = {
@@ -769,7 +771,7 @@ describe('CodexAgentSpawner', () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
         { kind: 'approvalRequested', request: { id: 'req-quiet', kind: 'command', summary: 'npm test' } },
-        { kind: 'turnCompleted', resultText: 'quiet done' },
+        { kind: 'textDelta', text: 'quiet done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
@@ -793,7 +795,7 @@ describe('CodexAgentSpawner', () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
         { kind: 'approvalRequested', request: { id: 'req-fc', kind: 'fileChange', summary: 'modify src/foo.ts' } },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
@@ -815,7 +817,7 @@ describe('CodexAgentSpawner', () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
         { kind: 'approvalRequested', request: { id: 'req-perm', kind: 'permission', summary: 'access network' } },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
@@ -836,7 +838,7 @@ describe('CodexAgentSpawner', () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
         { kind: 'approvalRequested', request: { id: 'req-err', kind: 'command', summary: 'bad op' } },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockRejectedValue(new Error('hud crashed')),
@@ -864,9 +866,9 @@ describe('CodexAgentSpawner', () => {
     it('sendQuiet() with piped callbacks suppresses text streaming but routes approvals', async () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
-        { kind: 'textDelta', text: 'streamed text' },
+        { kind: 'textDelta', text: 'quiet result' },
         { kind: 'approvalRequested', request: { id: 'req-sq', kind: 'command', summary: 'npm test' } },
-        { kind: 'turnCompleted', resultText: 'quiet result' },
+        { kind: 'turnCompleted', resultText: '' },
       ]);
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
@@ -900,7 +902,7 @@ describe('CodexAgentSpawner', () => {
 
       handle.inject('quiet guidance');
 
-      fake.setTurnScript([{ kind: 'turnCompleted', resultText: 'quiet done' }]);
+      fake.setTurnScript([{ kind: 'textDelta', text: 'quiet done' }, { kind: 'turnCompleted', resultText: '' }]);
       const text = await handle.sendQuiet('quiet prompt');
 
       expect(text).toBe('quiet done');
@@ -913,8 +915,8 @@ describe('CodexAgentSpawner', () => {
     it('per-call onText overrides piped onText', async () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
-        { kind: 'textDelta', text: 'hello' },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'textDelta', text: 'hello\n' },
+        { kind: 'turnCompleted', resultText: '' },
       ]);
       const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
@@ -926,7 +928,8 @@ describe('CodexAgentSpawner', () => {
       const perCallOnText = vi.fn();
       await handle.send('go', perCallOnText);
 
-      expect(perCallOnText).toHaveBeenCalledWith('hello');
+      const allText = perCallOnText.mock.calls.map((c: [string]) => c[0]).join('');
+      expect(allText).toContain('hello');
       expect(pipedOnText).not.toHaveBeenCalled();
     });
 
@@ -934,7 +937,7 @@ describe('CodexAgentSpawner', () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
         { kind: 'textDelta', text: 'Should I proceed?' },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
@@ -948,7 +951,7 @@ describe('CodexAgentSpawner', () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
         { kind: 'textDelta', text: 'All done.' },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
       ]);
       const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
@@ -1047,7 +1050,7 @@ describe('CodexAgentSpawner', () => {
       fake.setTurnScript([
         { kind: 'textDelta', text: 'hello' },
         { kind: 'toolActivity', summary: 'command: npm test' },
-        { kind: 'turnCompleted', resultText: 'done' },
+        { kind: 'turnCompleted', resultText: '' },
       ]);
       const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');

@@ -52,7 +52,7 @@ export const createFakeAppServer = (): FakeAppServer => {
   const eventToNotification = (event: CodexEvent): { method: string; params?: Record<string, unknown> } => {
     switch (event.kind) {
       case 'textDelta':
-        return { method: 'item/agentMessage/delta', params: { text: event.text } };
+        return { method: 'item/agentMessage/delta', params: { delta: event.text } };
       case 'toolActivity':
         // Strip the prefix that normalizeNotification adds (e.g. "command: ") so it round-trips cleanly
         if (event.summary.startsWith('command: ')) {
@@ -100,7 +100,7 @@ export const createFakeAppServer = (): FakeAppServer => {
         sendResponse(id, { capabilities: {} });
         break;
       case 'thread/start':
-        sendResponse(id, { threadId: `thread-${Date.now()}` });
+        sendResponse(id, { thread: { id: `thread-${Date.now()}` } });
         break;
       case 'thread/resume':
         sendResponse(id, { threadId: params?.threadId ?? 'resumed-thread' });
@@ -108,19 +108,16 @@ export const createFakeAppServer = (): FakeAppServer => {
       case 'turn/start': {
         // If hanging, don't respond at all (simulates process death mid-turn)
         if (shouldHangOnTurn) break;
-        // Emit scripted events, then respond
+        // Immediate ack with inProgress status (matches real Codex)
+        sendResponse(id, { turn: { id: `turn-${Date.now()}`, status: 'inProgress' } });
+        // Emit scripted events as notifications (including turnCompleted)
         for (const event of turnScript) {
           const notif = eventToNotification(event);
-          if (event.kind === 'turnCompleted') {
-            // turnCompleted is the RPC response, not a notification
-            sendResponse(id, { result: event.resultText });
-          } else {
-            sendNotification(notif.method, notif.params);
-          }
+          sendNotification(notif.method, notif.params);
         }
-        // If no turnCompleted in the script, still respond
+        // If no turnCompleted in the script, send one
         if (!turnScript.some((e) => e.kind === 'turnCompleted')) {
-          sendResponse(id, { result: '' });
+          sendNotification('turn/completed', { turn: { status: 'completed' } });
         }
         break;
       }

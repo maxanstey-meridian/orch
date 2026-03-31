@@ -9,6 +9,33 @@ import { createCodexAppServerClient } from './codex-app-server-client.js';
 import { detectQuestion } from '../agent/question-detector.js';
 import { resolveCodexModeConfig } from './codex-mode-config.js';
 
+const SENTENCE_END = /[.!?]\s*$/;
+
+const createTextBuffer = (flush: (text: string) => void) => {
+  let buf = '';
+
+  return {
+    push: (text: string) => {
+      buf += text;
+      // Flush on newline
+      if (buf.includes('\n')) {
+        const lastNewline = buf.lastIndexOf('\n');
+        flush(buf.slice(0, lastNewline + 1));
+        buf = buf.slice(lastNewline + 1);
+        return;
+      }
+      // Flush on sentence boundary
+      if (SENTENCE_END.test(buf)) {
+        flush(buf);
+        buf = '';
+      }
+    },
+    flush: () => {
+      if (buf) { flush(buf); buf = ''; }
+    },
+  };
+};
+
 const errorToResultText = (error: CodexTurnError): string => {
   const category = categorizeCodexError(error);
   switch (category) {
@@ -130,12 +157,13 @@ export class CodexAgentSpawner extends AgentSpawner {
           let failureResultText = '';
           const effectiveOnText = onText ?? persistentOnText;
           const effectiveOnToolUse = onToolUse ?? persistentOnToolUse;
+          const textBuf = effectiveOnText ? createTextBuffer(effectiveOnText) : null;
 
           const resultText = await client.startTurn(effectivePrompt, (event) => {
             switch (event.kind) {
               case 'textDelta':
                 assistantText += event.text;
-                effectiveOnText?.(event.text);
+                textBuf?.push(event.text);
                 break;
               case 'toolActivity':
                 effectiveOnToolUse?.(event.summary);
@@ -150,6 +178,8 @@ export class CodexAgentSpawner extends AgentSpawner {
                 break;
             }
           });
+
+          textBuf?.flush();
 
           return {
             exitCode: failed ? 1 : 0,

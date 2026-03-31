@@ -6,15 +6,21 @@ describe('normalizeNotification', () => {
     expect(normalizeNotification({ method: 'some/unknown' })).toEqual({ kind: 'ignored' });
   });
 
-  it('maps text delta with text', () => {
+  it('maps text delta from params.delta', () => {
     expect(
-      normalizeNotification({ method: 'item/agentMessage/delta', params: { text: 'hello' } }),
+      normalizeNotification({ method: 'item/agentMessage/delta', params: { delta: 'hello' } }),
     ).toEqual({ kind: 'textDelta', text: 'hello' });
   });
 
-  it('returns ignored for text delta with missing text field', () => {
+  it('returns ignored for text delta with missing delta field', () => {
     expect(
       normalizeNotification({ method: 'item/agentMessage/delta', params: {} }),
+    ).toEqual({ kind: 'ignored' });
+  });
+
+  it('returns ignored for text delta with wrong field name (text instead of delta)', () => {
+    expect(
+      normalizeNotification({ method: 'item/agentMessage/delta', params: { text: 'hello' } }),
     ).toEqual({ kind: 'ignored' });
   });
 
@@ -45,16 +51,16 @@ describe('normalizeNotification', () => {
     ).toEqual({ kind: 'toolActivity', summary: 'mcp tool: read_file' });
   });
 
-  it('maps turn/completed with result text', () => {
+  it('maps turn/completed as signal (result text comes from accumulated deltas)', () => {
     expect(
       normalizeNotification({
         method: 'turn/completed',
-        params: { result: 'Done. All tests pass.' },
+        params: { turn: { status: 'completed' } },
       }),
-    ).toEqual({ kind: 'turnCompleted', resultText: 'Done. All tests pass.' });
+    ).toEqual({ kind: 'turnCompleted', resultText: '' });
   });
 
-  it('maps turn/completed with empty result to empty string', () => {
+  it('maps turn/completed with empty params', () => {
     expect(
       normalizeNotification({ method: 'turn/completed', params: {} }),
     ).toEqual({ kind: 'turnCompleted', resultText: '' });
@@ -78,10 +84,10 @@ describe('normalizeNotification', () => {
     ).toEqual({ kind: 'ignored' });
   });
 
-  it('falls back to params.text when params.result is absent in turn/completed', () => {
+  it('turn/completed ignores unexpected fields', () => {
     expect(
-      normalizeNotification({ method: 'turn/completed', params: { text: 'fallback text' } }),
-    ).toEqual({ kind: 'turnCompleted', resultText: 'fallback text' });
+      normalizeNotification({ method: 'turn/completed', params: { text: 'ignored', turn: { status: 'completed' } } }),
+    ).toEqual({ kind: 'turnCompleted', resultText: '' });
   });
 
   it('defaults code and message to unknown when error params are empty', () => {

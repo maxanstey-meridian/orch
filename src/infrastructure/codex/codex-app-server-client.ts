@@ -88,10 +88,24 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
     },
 
     startTurn: async (prompt, onEvent) => {
+      let accumulatedText = '';
+      let resolveCompletion: ((text: string) => void) | null = null;
+
+      const completionPromise = new Promise<string>((resolve) => {
+        resolveCompletion = resolve;
+      });
+
       const turnHandler = (n: { method: string; params?: Record<string, unknown> }) => {
         const event = normalizeNotification(n);
-        // Skip turnCompleted from notifications — the canonical source is the RPC response
-        if (event.kind === 'turnCompleted') return;
+        if (event.kind === 'textDelta') {
+          accumulatedText += event.text;
+        }
+        if (event.kind === 'turnCompleted') {
+          // Use accumulated text from deltas — the notification itself has no result text
+          resolveCompletion?.(accumulatedText);
+          return;
+        }
+        // turnFailed is passed through to onEvent — send() handles it via the failed flag
         onEvent(event);
       };
       rpc.onNotification(turnHandler);
@@ -101,14 +115,15 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
         threadId,
         input: [{ type: 'text', text: prompt }],
       };
-      const raw = await rpc.request('turn/start', params);
+
+      // turn/start returns immediately with an ack — the real result comes via turn/completed notification
+      await rpc.request('turn/start', params);
+
+      const resultText = await completionPromise;
       currentTurnId = undefined;
-      rpc.onNotification(() => {}); // clear stale handler
+      rpc.onNotification(() => {}); // clear handler
 
-      const result = raw as Record<string, unknown> | undefined;
-      const resultText = typeof result?.result === 'string' ? result.result : String(result?.result ?? '');
       onEvent({ kind: 'turnCompleted', resultText });
-
       return resultText;
     },
 

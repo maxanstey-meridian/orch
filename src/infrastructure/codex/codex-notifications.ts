@@ -24,8 +24,8 @@ export const normalizeNotification = (n: JsonRpcNotification): CodexEvent => {
 
   switch (n.method) {
     case 'item/agentMessage/delta': {
-      const text = params?.text;
-      if (typeof text === 'string') return { kind: 'textDelta', text };
+      const delta = params?.delta;
+      if (typeof delta === 'string') return { kind: 'textDelta', text: delta };
       return { kind: 'ignored' };
     }
     case 'codex/approvalRequest': {
@@ -51,8 +51,8 @@ export const normalizeNotification = (n: JsonRpcNotification): CodexEvent => {
       };
     }
     case 'turn/completed': {
-      const result = params?.result ?? params?.text ?? '';
-      return { kind: 'turnCompleted', resultText: String(result) };
+      // Result text is accumulated from item/agentMessage/delta by the adapter — this is just a signal
+      return { kind: 'turnCompleted', resultText: '' };
     }
     case 'item/completed': {
       const cmd = params?.commandExecution;
