@@ -93,6 +93,11 @@ describe("SilentProgressSink", () => {
     expect(() => sink.logSliceIntro(makeSlice())).not.toThrow();
   });
 
+  it("logBadge is a no-op", () => {
+    const sink = new SilentProgressSink();
+    expect(() => sink.logBadge("tdd", "implementing...")).not.toThrow();
+  });
+
   it("teardown is a no-op", () => {
     const sink = new SilentProgressSink();
     expect(() => sink.teardown()).not.toThrow();
@@ -339,6 +344,40 @@ describe("InkProgressSink", () => {
 
     const text = stripAnsi(lines.join("\n"));
     expect(text).toContain("Slice 3: Test slice");
+  });
+
+  it("logBadge emits a timestamp, TDD badge, and phase text", () => {
+    const lines: string[] = [];
+    const hud = createMockHud({
+      wrapLog: vi.fn(() => (...args: unknown[]) => {
+        lines.push(args.map((arg) => (typeof arg === "string" ? arg : String(arg))).join(" "));
+      }),
+    });
+    const sink = new InkProgressSink(hud);
+
+    sink.logBadge("tdd", "implementing...");
+
+    const text = stripAnsi(lines.join("\n"));
+    expect(text).toMatch(/\b\d{2}:\d{2}:\d{2}\b/);
+    expect(text).toContain("TDD");
+    expect(text).toContain("implementing...");
+  });
+
+  it("logBadge uses the review badge for review phases", () => {
+    const lines: string[] = [];
+    const hud = createMockHud({
+      wrapLog: vi.fn(() => (...args: unknown[]) => {
+        lines.push(args.map((arg) => (typeof arg === "string" ? arg : String(arg))).join(" "));
+      }),
+    });
+    const sink = new InkProgressSink(hud);
+
+    sink.logBadge("review", "reviewing...");
+
+    const text = stripAnsi(lines.join("\n"));
+    expect(text).toContain("REV");
+    expect(text).toContain("reviewing...");
+    expect(text).not.toContain("TDD");
   });
 
   it("teardown delegates to hud.teardown", () => {

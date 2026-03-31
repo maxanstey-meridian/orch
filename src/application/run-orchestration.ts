@@ -500,7 +500,7 @@ export class RunOrchestration {
       priorFindings = reviewText;
       const preFixSha = await this.git.captureRef();
       const fixPrompt = this.prompts.tdd(content, reviewText);
-      this.progressSink.logBadge("tdd", "fixing...");
+      this.progressSink.logBadge("tdd", "implementing...");
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt),
         this.tddAgent!,
@@ -525,7 +525,6 @@ export class RunOrchestration {
     const prompt = this.prompts.completeness(slice.content, baseSha, slice.number);
     const checkAgent = this.agents.spawn("completeness", { cwd: this.config.cwd });
     this.pipeToSink(checkAgent, "completeness");
-    this.progressSink.logBadge("completeness", "checking completeness...");
     const result = await this.withRetry(
       () => checkAgent.send(prompt),
       checkAgent,
@@ -546,7 +545,7 @@ export class RunOrchestration {
       `A completeness check found that your implementation does not fully match the plan. Fix the issues below.\n\n## Completeness Findings\n${text}`,
       slice.number,
     );
-    this.progressSink.logBadge("tdd", "fixing...");
+    this.progressSink.logBadge("tdd", "implementing...");
     const fixResult = await this.withRetry(
       () => this.tddAgent!.send(this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt),
       this.tddAgent!,
@@ -593,7 +592,7 @@ export class RunOrchestration {
 
       // Send findings to TDD for fixing
       const retryPrompt = `Verification found issues after your implementation. Fix them:\n\n${failureContext}`;
-      this.progressSink.logBadge("tdd", "fixing...");
+      this.progressSink.logBadge("tdd", "implementing...");
       const preFixSha = await this.git.captureRef();
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(retryPrompt),
@@ -623,7 +622,7 @@ export class RunOrchestration {
 
       // Re-verify — tell the verifier what TDD fixed
       const fixSummary = fixResult.assistantText?.slice(0, 500) ?? "TDD attempted fixes.";
-      this.progressSink.logBadge("verify", "re-verifying...");
+      this.progressSink.logBadge("verify", "verifying...");
       const reVerifyResult = await this.withRetry(
         () =>
           this.verifyAgent!.send(
@@ -665,7 +664,7 @@ export class RunOrchestration {
       const finalAgent = this.agents.spawn("final", { cwd: this.config.cwd });
       this.pipeToSink(finalAgent, "final");
       const finalPrompt = this.prompts.withBrief(pass.prompt);
-      this.progressSink.logBadge("final", "final pass...");
+      this.progressSink.logBadge("final", "finalising...");
       const finalResult = await this.withRetry(
         () => finalAgent.send(finalPrompt),
         finalAgent,
@@ -683,7 +682,7 @@ export class RunOrchestration {
         `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
       );
       const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
-      this.progressSink.logBadge("tdd", "fixing...");
+      this.progressSink.logBadge("tdd", "implementing...");
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(actualFixPrompt),
         this.tddAgent!,
@@ -712,7 +711,7 @@ export class RunOrchestration {
     const gapAgent = this.agents.spawn("gap", { cwd: this.config.cwd });
     this.pipeToSink(gapAgent, "gap");
     const gapPrompt = this.prompts.withBrief(this.prompts.gap(groupContent, groupBaseSha));
-    this.progressSink.logBadge("gap", "gap analysis...");
+    this.progressSink.logBadge("gap", "filling gaps...");
     const gapResult = await this.withRetry(() => gapAgent.send(gapPrompt), gapAgent, "gap");
 
     const gapText = gapResult.assistantText ?? "";
@@ -729,7 +728,7 @@ export class RunOrchestration {
       `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
     );
     const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
-    this.progressSink.logBadge("tdd", "fixing...");
+    this.progressSink.logBadge("tdd", "implementing...");
     const fixResult = await this.withRetry(
       () => this.tddAgent!.send(actualFixPrompt),
       this.tddAgent!,

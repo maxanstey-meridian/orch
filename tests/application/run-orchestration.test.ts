@@ -2789,6 +2789,16 @@ describe("RunOrchestration", () => {
       const tddAgent = makeAgent();
       const reviewAgent = makeAgent();
       const planAgent = makeAgent({ planText: "the plan" });
+      const callOrder: string[] = [];
+      progressSink.logBadge.mockImplementation((role: string, phase: string) => {
+        if (role === "plan" && phase === "planning...") {
+          callOrder.push("plan-badge");
+        }
+      });
+      planAgent.send = vi.fn(async (...args) => {
+        callOrder.push("plan-send");
+        return makeResult({ planText: "the plan" });
+      });
       spawner.spawn.mockImplementation((role: string) => {
         if (role === "tdd") return tddAgent;
         if (role === "review") return reviewAgent;
@@ -2798,7 +2808,7 @@ describe("RunOrchestration", () => {
       const groups: Group[] = [{ name: "G1", slices: [makeSlice()] }];
       await uc.execute(groups);
 
-      expect(progressSink.logBadge).toHaveBeenCalledWith("plan", expect.any(String));
+      expect(callOrder).toEqual(["plan-badge", "plan-send"]);
     });
 
     it("calls logBadge with 'tdd' before TDD execution", async () => {
@@ -2812,6 +2822,16 @@ describe("RunOrchestration", () => {
       const { uc, spawner, progressSink } = makeUc(ports, config);
       const tddAgent = makeAgent();
       const reviewAgent = makeAgent();
+      const callOrder: string[] = [];
+      progressSink.logBadge.mockImplementation((role: string, phase: string) => {
+        if (role === "tdd" && phase === "implementing...") {
+          callOrder.push("tdd-badge");
+        }
+      });
+      tddAgent.send = vi.fn(async (...args) => {
+        callOrder.push("tdd-send");
+        return makeResult();
+      });
       spawner.spawn
         .mockReturnValueOnce(tddAgent)
         .mockReturnValueOnce(reviewAgent);
@@ -2819,7 +2839,9 @@ describe("RunOrchestration", () => {
       const groups: Group[] = [{ name: "G1", slices: [makeSlice()] }];
       await uc.execute(groups);
 
-      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", expect.any(String));
+      expect(callOrder[0]).toBe("tdd-badge");
+      expect(callOrder).toContain("tdd-send");
+      expect(callOrder.indexOf("tdd-badge")).toBeLessThan(callOrder.indexOf("tdd-send"));
     });
 
     it("logBadge phase arg is a non-empty string for all calls", async () => {
@@ -2834,7 +2856,7 @@ describe("RunOrchestration", () => {
       const tddAgent = makeAgent();
       const reviewAgent = makeAgent();
       const planAgent = makeAgent({ planText: "the plan" });
-      const verifyAgent = makeAgent({ assistantText: "PASSED" });
+      const verifyAgent = makeAgent({ assistantText: "### VERIFY_RESULT\n**Status:** PASS\n" });
 
       ports.spawner.spawn.mockImplementation((role: string) => {
         if (role === "tdd") return tddAgent;
@@ -2871,37 +2893,73 @@ describe("RunOrchestration", () => {
     it("calls logBadge with 'verify' when verify runs", async () => {
       const ports = makePorts();
       const { uc, spawner, progressSink } = makeUc(ports);
-      const verifyAgent = makeAgent({
-        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
-      });
+      const callOrder: string[] = [];
+      const verifyAgent = {
+        ...makeAgent(),
+        send: vi.fn(async (...args) => {
+          callOrder.push("verify-send");
+          return makeResult({ assistantText: "### VERIFY_RESULT\n**Status:** PASS\n" });
+        }),
+      } as unknown as AgentHandle;
       spawner.spawn.mockReturnValue(verifyAgent);
       uc.tddAgent = makeAgent();
+      progressSink.logBadge.mockImplementation((role: string, phase: string) => {
+        if (role === "verify" && phase === "verifying...") {
+          callOrder.push("verify-badge");
+        }
+      });
 
       await uc.verify(makeSlice(), "sha0");
 
-      expect(progressSink.logBadge).toHaveBeenCalledWith("verify", "verifying...");
+      expect(callOrder).toEqual(["verify-badge", "verify-send"]);
     });
 
     it("calls logBadge with 'verify' for re-verify after fix", async () => {
       const ports = makePorts();
       const { uc, spawner, gate, git, progressSink } = makeUc(ports);
       git.hasChanges.mockResolvedValue(true);
-      const verifyAgent = makeAgent({
-        assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- test broke\n",
-      });
+      const callOrder: string[] = [];
+      const verifyAgent = {
+        ...makeAgent(),
+        send: vi.fn()
+          .mockImplementationOnce(async () => {
+            callOrder.push("verify-send-1");
+            return makeResult({
+              assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- test broke\n",
+            });
+          })
+          .mockImplementationOnce(async () => {
+            callOrder.push("verify-send-2");
+            return makeResult({
+              assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+            });
+          }),
+      } as unknown as AgentHandle;
       spawner.spawn.mockReturnValue(verifyAgent);
       uc.tddAgent = makeAgent();
+      (uc.tddAgent.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        callOrder.push("tdd-send");
+        return makeResult({ assistantText: "fixed it" });
+      });
       uc.phase = { kind: "Verifying", sliceNumber: 1 };
-      gate.verifyFailed.mockResolvedValue({ kind: "skip" as const });
+      progressSink.logBadge.mockImplementation((role: string, phase: string) => {
+        if (role === "verify" && phase === "verifying...") {
+          callOrder.push(`verify-badge-${callOrder.filter((entry) => entry.startsWith("verify-badge")).length + 1}`);
+        }
+        if (role === "tdd" && phase === "implementing...") {
+          callOrder.push("tdd-badge");
+        }
+      });
+      gate.verifyFailed.mockResolvedValue({ kind: "retry" as const });
 
       await uc.verify(makeSlice(), "sha0");
 
-      expect(progressSink.logBadge).toHaveBeenCalledWith("verify", "verifying...");
-      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", "fixing...");
-      expect(progressSink.logBadge).toHaveBeenCalledWith("verify", "re-verifying...");
+      expect(callOrder.indexOf("verify-badge-1")).toBeLessThan(callOrder.indexOf("verify-send-1"));
+      expect(callOrder.indexOf("tdd-badge")).toBeLessThan(callOrder.indexOf("tdd-send"));
+      expect(callOrder.indexOf("verify-badge-2")).toBeLessThan(callOrder.indexOf("verify-send-2"));
     });
 
-    it("calls logBadge with 'completeness' when completeness check runs", async () => {
+    it("does not use a completeness badge when completeness check runs", async () => {
       const ports = makePorts();
       const { uc, git, spawner, progressSink } = makeUc(ports);
       git.hasChanges.mockResolvedValue(true);
@@ -2914,8 +2972,8 @@ describe("RunOrchestration", () => {
 
       await uc.completenessCheck(makeSlice(), "sha0");
 
-      expect(progressSink.logBadge).toHaveBeenCalledWith("completeness", "checking completeness...");
-      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", "fixing...");
+      expect(progressSink.logBadge).not.toHaveBeenCalledWith("completeness", expect.any(String));
+      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", "implementing...");
     });
 
     it("calls logBadge with 'gap' when gap analysis runs", async () => {
@@ -2924,6 +2982,16 @@ describe("RunOrchestration", () => {
       const { uc, git, spawner, progressSink } = makeUc(ports, config);
       git.hasChanges.mockResolvedValue(true);
       const gapAgent = makeAgent({ assistantText: "Analysis complete. NO_GAPS_FOUND" });
+      const callOrder: string[] = [];
+      progressSink.logBadge.mockImplementation((role: string, phase: string) => {
+        if (role === "gap" && phase === "filling gaps...") {
+          callOrder.push("gap-badge");
+        }
+      });
+      gapAgent.send = vi.fn(async (...args) => {
+        callOrder.push("gap-send");
+        return makeResult({ assistantText: "Analysis complete. NO_GAPS_FOUND" });
+      });
       spawner.spawn.mockReturnValue(gapAgent);
       uc.tddAgent = makeAgent();
       uc.phase = { kind: "Idle" };
@@ -2931,10 +2999,10 @@ describe("RunOrchestration", () => {
       const group: Group = { name: "G", slices: [makeSlice()] };
       await uc.gapAnalysis(group, "sha0");
 
-      expect(progressSink.logBadge).toHaveBeenCalledWith("gap", "gap analysis...");
+      expect(callOrder).toEqual(["gap-badge", "gap-send"]);
     });
 
-    it("calls logBadge with 'tdd' fixing during gap fix cycle", async () => {
+    it("calls logBadge with 'tdd' implementing during gap fix cycle", async () => {
       const ports = makePorts();
       const config = makeConfig({ gapDisabled: false, reviewSkill: null });
       const { uc, git, spawner, progressSink } = makeUc(ports, config);
@@ -2947,7 +3015,7 @@ describe("RunOrchestration", () => {
       const group: Group = { name: "G", slices: [makeSlice()] };
       await uc.gapAnalysis(group, "sha0");
 
-      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", "fixing...");
+      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", "implementing...");
     });
 
     it("calls logBadge with 'final' when final passes execute", async () => {
@@ -2958,15 +3026,25 @@ describe("RunOrchestration", () => {
         { name: "Type fidelity", prompt: "check types" },
       ]);
       const finalAgent = makeAgent({ assistantText: "NO_ISSUES_FOUND" });
+      const callOrder: string[] = [];
+      progressSink.logBadge.mockImplementation((role: string, phase: string) => {
+        if (role === "final" && phase === "finalising...") {
+          callOrder.push("final-badge");
+        }
+      });
+      finalAgent.send = vi.fn(async (...args) => {
+        callOrder.push("final-send");
+        return makeResult({ assistantText: "NO_ISSUES_FOUND" });
+      });
       spawner.spawn.mockReturnValue(finalAgent);
       uc.tddAgent = makeAgent();
 
       await uc.finalPasses("sha0");
 
-      expect(progressSink.logBadge).toHaveBeenCalledWith("final", "final pass...");
+      expect(callOrder).toEqual(["final-badge", "final-send"]);
     });
 
-    it("calls logBadge with 'tdd' fixing during final fix cycle", async () => {
+    it("calls logBadge with 'tdd' implementing during final fix cycle", async () => {
       const ports = makePorts();
       const config = makeConfig({ reviewSkill: null });
       const { uc, git, spawner, prompts, progressSink } = makeUc(ports, config);
@@ -2981,11 +3059,11 @@ describe("RunOrchestration", () => {
 
       await uc.finalPasses("sha0");
 
-      expect(progressSink.logBadge).toHaveBeenCalledWith("final", "final pass...");
-      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", "fixing...");
+      expect(progressSink.logBadge).toHaveBeenCalledWith("final", "finalising...");
+      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", "implementing...");
     });
 
-    it("calls logBadge with 'tdd' fixing in review-fix loop", async () => {
+    it("calls logBadge with 'review' before review send and 'tdd' implementing in review-fix loop", async () => {
       const ports = makePorts();
       const config = makeConfig({
         planDisabled: false,
@@ -2996,7 +3074,9 @@ describe("RunOrchestration", () => {
       const tddAgent = makeAgent();
       const reviewAgent = makeAgent();
       const planAgent = makeAgent({ planText: "the plan" });
-      const verifyAgent = makeAgent({ assistantText: "PASSED" });
+      const verifyAgent = makeAgent({ assistantText: "### VERIFY_RESULT\n**Status:** PASS\n" });
+      const callOrder: string[] = [];
+      const { uc, progressSink } = makeUc(ports, config);
 
       ports.spawner.spawn.mockImplementation((role: string) => {
         if (role === "tdd") return tddAgent;
@@ -3005,17 +3085,32 @@ describe("RunOrchestration", () => {
         if (role === "verify") return verifyAgent;
         return makeAgent();
       });
+      progressSink.logBadge.mockImplementation((role: string, phase: string) => {
+        if (role === "review" && phase === "reviewing...") {
+          callOrder.push("review-badge");
+        }
+        if (role === "tdd" && phase === "implementing...") {
+          callOrder.push("tdd-badge");
+        }
+      });
       reviewAgent.send = vi.fn()
-        .mockResolvedValueOnce(makeResult({ assistantText: "Found issues: fix X" }))
-        .mockResolvedValueOnce(makeResult({ assistantText: "LGTM - no issues" }));
+        .mockImplementationOnce(async () => {
+          callOrder.push("review-send");
+          return makeResult({ assistantText: "Found issues: fix X" });
+        })
+        .mockImplementationOnce(async () => makeResult({ assistantText: "LGTM - no issues" }));
+      tddAgent.send = vi.fn(async (...args) => {
+        callOrder.push("tdd-send");
+        return makeResult();
+      });
       ports.git.hasChanges.mockResolvedValue(true);
       ports.git.measureDiff.mockResolvedValue({ added: 50, removed: 10, total: 60 });
 
-      const { uc, progressSink } = makeUc(ports, config);
       const groups: Group[] = [{ name: "G1", slices: [makeSlice()] }];
       await uc.execute(groups);
 
-      expect(progressSink.logBadge).toHaveBeenCalledWith("tdd", "fixing...");
+      expect(callOrder.indexOf("review-badge")).toBeLessThan(callOrder.indexOf("review-send"));
+      expect(callOrder.indexOf("tdd-badge")).toBeLessThan(callOrder.indexOf("tdd-send"));
     });
 
     it("calls logBadge with 'tdd' implementing during hard interrupt recovery", async () => {
@@ -3137,7 +3232,7 @@ describe("RunOrchestration", () => {
       const tddAgent = makeAgent();
       const reviewAgent = makeAgent({ assistantText: "LGTM - no issues" });
       const planAgent = makeAgent({ planText: "the plan" });
-      const verifyAgent = makeAgent({ assistantText: "PASSED" });
+      const verifyAgent = makeAgent({ assistantText: "### VERIFY_RESULT\n**Status:** PASS\n" });
 
       ports.spawner.spawn.mockImplementation((role: string) => {
         if (role === "tdd") return tddAgent;
@@ -3158,8 +3253,8 @@ describe("RunOrchestration", () => {
       expect(roles).toContain("plan");
       expect(roles).toContain("tdd");
       expect(roles).toContain("verify");
-      expect(roles).toContain("completeness");
       expect(roles).toContain("review");
+      expect(roles).not.toContain("completeness");
     });
   });
 });
