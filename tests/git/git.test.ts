@@ -3,7 +3,13 @@ import { mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync } from "child_process";
-import { captureRef, hasChanges, getStatus, hasDirtyTree } from "../../src/infrastructure/git/git.js";
+import {
+  captureRef,
+  hasChanges,
+  getDiff,
+  getStatus,
+  hasDirtyTree,
+} from "../../src/infrastructure/git/git.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
@@ -85,6 +91,26 @@ describe("git", () => {
     expect(status).toContain("file.txt");
     expect(status).toContain("untracked.txt");
     expect(status.length).toBeGreaterThan(0);
+  });
+
+  describe("getDiff", () => {
+    it("returns diff text between two commits", async () => {
+      const refBefore = await captureRef(repoDir);
+      await writeFile(join(repoDir, "file.txt"), "modified");
+      exec("git add file.txt", repoDir);
+      exec('git commit -m "second"', repoDir);
+
+      const diff = await getDiff(repoDir, refBefore);
+      const expected = exec(`git diff ${refBefore}..HEAD`, repoDir);
+
+      expect(diff).toBe(expected);
+      expect(diff).toContain("file.txt");
+    });
+
+    it("returns empty string when since equals HEAD", async () => {
+      const ref = await captureRef(repoDir);
+      expect(await getDiff(repoDir, ref)).toBe("");
+    });
   });
 
   describe("hasDirtyTree", () => {

@@ -91,6 +91,7 @@ const makePorts = () => {
     hasChanges: vi.fn().mockResolvedValue(false),
     hasDirtyTree: vi.fn().mockResolvedValue(false),
     getStatus: vi.fn().mockResolvedValue(""),
+    getDiff: vi.fn().mockResolvedValue(""),
     stashBackup: vi.fn().mockResolvedValue(false),
     measureDiff: vi.fn().mockResolvedValue({ added: 0, removed: 0, total: 0 }),
   };

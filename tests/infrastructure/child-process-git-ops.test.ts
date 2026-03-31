@@ -5,6 +5,7 @@ vi.mock("../../src/infrastructure/git/git.js", () => ({
   hasChanges: vi.fn().mockResolvedValue(true),
   hasDirtyTree: vi.fn().mockResolvedValue(false),
   getStatus: vi.fn().mockResolvedValue("M file.ts"),
+  getDiff: vi.fn().mockResolvedValue("diff --git a/file.ts b/file.ts"),
   stashBackup: vi.fn().mockResolvedValue(true),
 }));
 
@@ -12,7 +13,14 @@ vi.mock("../../src/infrastructure/cli/review-threshold.js", () => ({
   measureDiff: vi.fn().mockResolvedValue({ linesAdded: 10, linesRemoved: 3, total: 13 }),
 }));
 
-import { captureRef, hasChanges, hasDirtyTree, getStatus, stashBackup } from "../../src/infrastructure/git/git.js";
+import {
+  captureRef,
+  hasChanges,
+  hasDirtyTree,
+  getStatus,
+  getDiff,
+  stashBackup,
+} from "../../src/infrastructure/git/git.js";
 import { measureDiff } from "../../src/infrastructure/cli/review-threshold.js";
 import { shouldReview } from "../../src/domain/review.js";
 import type { Mock } from "vitest";
@@ -48,6 +56,12 @@ describe("ChildProcessGitOps", () => {
       const result = await adapter.getStatus();
       expect(result).toBe("M file.ts");
       expect(getStatus).toHaveBeenCalledWith("/test/repo");
+    });
+
+    it("getDiff delegates with cwd and since", async () => {
+      const result = await adapter.getDiff("def456");
+      expect(result).toBe("diff --git a/file.ts b/file.ts");
+      expect(getDiff).toHaveBeenCalledWith("/test/repo", "def456");
     });
 
     it("stashBackup delegates with cwd", async () => {
