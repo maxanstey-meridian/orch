@@ -53,7 +53,7 @@ export const promptBuilderFactory = (config: OrchestratorConfig) =>
 promptBuilderFactory.inject = ["config"] as const;
 
 export const operatorGateFactory = (config: OrchestratorConfig, hud: Hud): OperatorGate =>
-  config.auto ? new SilentOperatorGate() : new InkOperatorGate(hud);
+  config.auto ? new SilentOperatorGate(hud) : new InkOperatorGate(hud);
 operatorGateFactory.inject = ["config", "hud"] as const;
 
 export const progressSinkFactory = (_config: OrchestratorConfig, hud: Hud): ProgressSink =>
