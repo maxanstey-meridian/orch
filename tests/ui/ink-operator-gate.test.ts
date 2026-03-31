@@ -331,7 +331,7 @@ describe("InkProgressSink", () => {
     expect(() => streamer("streamed text")).not.toThrow();
   });
 
-  it("logSliceIntro emits the slice number and title", () => {
+  it("logSliceIntro emits the bordered slice header", () => {
     const lines: string[] = [];
     const hud = createMockHud({
       wrapLog: vi.fn(() => (...args: unknown[]) => {
@@ -343,7 +343,9 @@ describe("InkProgressSink", () => {
     sink.logSliceIntro(makeSlice({ number: 3, title: "Test slice" }));
 
     const text = stripAnsi(lines.join("\n"));
-    expect(text).toContain("Slice 3: Test slice");
+    expect(text).toContain("┌─ Slice 3: Test slice");
+    expect(text).toContain("│  Test reason");
+    expect(text).toContain("└──");
   });
 
   it("logBadge emits a timestamp, TDD badge, and phase text", () => {

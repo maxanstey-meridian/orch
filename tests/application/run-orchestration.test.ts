@@ -2782,6 +2782,38 @@ describe("RunOrchestration", () => {
       );
     });
 
+    it("calls logSliceIntro once per non-skipped slice in slice order", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, progressSink } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent);
+
+      const groups: Group[] = [
+        {
+          name: "G1",
+          slices: [
+            makeSlice({ number: 1, title: "First slice" }),
+            makeSlice({ number: 2, title: "Second slice" }),
+          ],
+        },
+      ];
+      await uc.execute(groups);
+
+      expect(progressSink.logSliceIntro).toHaveBeenCalledTimes(2);
+      expect(
+        progressSink.logSliceIntro.mock.calls.map(([slice]: [Slice]) => slice.number),
+      ).toEqual([1, 2]);
+    });
+
     it("does NOT call logSliceIntro for already-completed slices", async () => {
       const ports = makePorts();
       const config = makeConfig({
@@ -3156,6 +3188,48 @@ describe("RunOrchestration", () => {
 
       expect(callOrder.indexOf("review-badge")).toBeLessThan(callOrder.indexOf("review-send"));
       expect(callOrder.indexOf("tdd-badge")).toBeLessThan(callOrder.indexOf("tdd-send"));
+    });
+
+    it("calls the review-fix tdd badge after review findings and before the fix send", async () => {
+      const ports = makePorts();
+      const { uc, git, progressSink } = makeUc(ports);
+      const callOrder: string[] = [];
+      git.hasChanges
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+
+      const reviewAgent = makeAgent();
+      reviewAgent.send = vi.fn(async () => {
+        callOrder.push("review-send");
+        return makeResult({ assistantText: "Found issues: fix X" });
+      });
+
+      const tddAgent = makeAgent();
+      tddAgent.send = vi.fn(async () => {
+        callOrder.push("tdd-fix-send");
+        return makeResult();
+      });
+
+      uc.reviewAgent = reviewAgent;
+      uc.tddAgent = tddAgent;
+      uc.phase = { kind: "Reviewing", sliceNumber: 1 };
+      progressSink.logBadge.mockImplementation((role: string, phase: string) => {
+        if (role === "review" && phase === "reviewing...") {
+          callOrder.push("review-badge");
+        }
+        if (role === "tdd" && phase === "implementing...") {
+          callOrder.push("tdd-badge");
+        }
+      });
+
+      await uc.reviewFix("slice content", "sha0");
+
+      expect(callOrder).toEqual([
+        "review-badge",
+        "review-send",
+        "tdd-badge",
+        "tdd-fix-send",
+      ]);
     });
 
     it("calls logBadge with 'tdd' implementing during hard interrupt recovery", async () => {
