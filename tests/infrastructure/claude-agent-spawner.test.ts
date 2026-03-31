@@ -60,7 +60,16 @@ describe("ClaudeAgentProcess / AgentHandle structural compatibility", () => {
 
 describe("ROLE_STYLES", () => {
   it("maps every AgentRole to an AgentStyle", () => {
-    const allRoles: AgentRole[] = ["tdd", "review", "verify", "plan", "gap", "final", "completeness"];
+    const allRoles: AgentRole[] = [
+      "tdd",
+      "review",
+      "verify",
+      "plan",
+      "gap",
+      "final",
+      "completeness",
+      "triage",
+    ];
     const keys = Object.keys(ROLE_STYLES);
 
     expect(keys).toHaveLength(allRoles.length);
@@ -77,6 +86,14 @@ describe("ROLE_STYLES", () => {
     expect(ROLE_STYLES.gap).toBe(BOT_GAP);
     expect(ROLE_STYLES.final).toBe(BOT_FINAL);
     expect(ROLE_STYLES.completeness).toBe(BOT_PLAN);
+  });
+
+  it("defines the triage style inline", () => {
+    expect(ROLE_STYLES.triage).toEqual({
+      label: "Triage",
+      color: "#888",
+      badge: "[TRG]",
+    });
   });
 
   it("each value has label, color, and badge strings", () => {
@@ -100,7 +117,7 @@ describe("ClaudeAgentSpawner", () => {
   ) => new ClaudeAgentSpawner(skills, cwd);
 
   describe("plan-mode roles use spawnPlanAgent", () => {
-    it.each(["plan", "gap", "completeness"] as AgentRole[])(
+    it.each(["plan", "gap", "completeness", "triage"] as AgentRole[])(
       "spawn('%s') calls spawnPlanAgent",
       (role) => {
         const spawner = makeSpawner();
@@ -128,6 +145,18 @@ describe("ClaudeAgentSpawner", () => {
       const spawner = makeSpawner({ plan: "plan skill" }, "/work");
       spawner.spawn("plan", { cwd: "/custom" });
       expect(mockedSpawnPlanAgent).toHaveBeenCalledWith(ROLE_STYLES.plan, "plan skill", "/custom");
+    });
+
+    it("passes the Haiku model override for triage", () => {
+      const spawner = makeSpawner({ triage: "triage skill" }, "/work");
+      spawner.spawn("triage", { cwd: "/custom" });
+      expect(mockedSpawnPlanAgent).toHaveBeenCalledWith(
+        ROLE_STYLES.triage,
+        "triage skill",
+        "/custom",
+        "claude-haiku-4-5-20251001",
+      );
+      expect(mockedSpawnAgent).not.toHaveBeenCalled();
     });
 
     it("resumeSessionId is not forwarded to spawnPlanAgent", () => {

@@ -6,6 +6,7 @@ class InMemoryGitOps extends GitOps {
     public head: string = "aaa111",
     public dirty: boolean = false,
     public status: string = "",
+    public diffText: string = "",
     public diffStats: { added: number; removed: number; total: number } = {
       added: 0,
       removed: 0,
@@ -26,6 +27,9 @@ class InMemoryGitOps extends GitOps {
   }
   async getStatus(): Promise<string> {
     return this.status;
+  }
+  async getDiff(_since: string): Promise<string> {
+    return this.diffText;
   }
   async stashBackup(): Promise<boolean> {
     return this.dirty;
@@ -64,7 +68,7 @@ describe("GitOps", () => {
 
   it("measureDiff returns stored diff stats", async () => {
     const stats = { added: 10, removed: 3, total: 13 };
-    const gitOps = new InMemoryGitOps("aaa", false, "", stats);
+    const gitOps = new InMemoryGitOps("aaa", false, "", "", stats);
     expect(await gitOps.measureDiff("some-sha")).toEqual(stats);
   });
 
@@ -79,5 +83,10 @@ describe("GitOps", () => {
   it("getStatus returns stored status string", async () => {
     const gitOps = new InMemoryGitOps("aaa", false, " M src/foo.ts");
     expect(await gitOps.getStatus()).toBe(" M src/foo.ts");
+  });
+
+  it("getDiff returns stored diff text", async () => {
+    const gitOps = new InMemoryGitOps("aaa", false, "", "diff --git a/file.txt b/file.txt");
+    expect(await gitOps.getDiff("some-sha")).toBe("diff --git a/file.txt b/file.txt");
   });
 });

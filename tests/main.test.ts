@@ -761,6 +761,7 @@ describe("composition root integration", () => {
       hasDirtyTree: vi.fn().mockResolvedValue(false),
       getStatus: vi.fn().mockResolvedValue(""),
       stashBackup: vi.fn().mockResolvedValue(false),
+      getDiff: vi.fn().mockResolvedValue(""),
       measureDiff: vi.fn().mockResolvedValue({ added: 0, removed: 0, total: 0 }),
     };
 

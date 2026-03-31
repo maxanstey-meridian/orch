@@ -256,19 +256,15 @@ describe("InkOperatorGate", () => {
 
 describe("InkProgressSink", () => {
   it("maps every runtime agent role to its exact style", () => {
-    const expectedStyles = {
-      tdd: BOT_TDD,
-      review: BOT_REVIEW,
-      verify: BOT_VERIFY,
-      plan: BOT_PLAN,
-      gap: BOT_GAP,
-      final: BOT_FINAL,
-      completeness: BOT_PLAN,
-    } as const;
-
-    for (const role of AGENT_ROLES) {
-      expect(styleForRole(role)).toBe(expectedStyles[role]);
-    }
+    expect(styleForRole("tdd")).toBe(BOT_TDD);
+    expect(styleForRole("review")).toBe(BOT_REVIEW);
+    expect(styleForRole("verify")).toBe(BOT_VERIFY);
+    expect(styleForRole("plan")).toBe(BOT_PLAN);
+    expect(styleForRole("gap")).toBe(BOT_GAP);
+    expect(styleForRole("final")).toBe(BOT_FINAL);
+    expect(styleForRole("completeness")).toBe(BOT_PLAN);
+    expect(styleForRole("triage")).toEqual({ label: "Triage", color: "#888", badge: "[TRG]" });
+    expect(AGENT_ROLES).toContain("triage");
   });
 
   describe("registerInterrupts", () => {

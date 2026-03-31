@@ -36,6 +36,7 @@ export const spawnClaudePlanAgent = (
   style: AgentStyle,
   systemPrompt?: string,
   cwd?: string,
+  model?: string,
 ): ClaudeAgentProcess =>
   createClaudeAgent({
     command: "claude",
@@ -47,6 +48,7 @@ export const spawnClaudePlanAgent = (
       "--output-format",
       "stream-json",
       "--verbose",
+      ...(model ? ["--model", model] : []),
       ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
     ],
     style,

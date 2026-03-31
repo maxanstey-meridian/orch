@@ -9,4 +9,5 @@ export const ROLE_STYLES: Readonly<Record<AgentRole, AgentStyle>> = {
   gap: BOT_GAP,
   final: BOT_FINAL,
   completeness: BOT_PLAN,
+  triage: { label: "Triage", color: "#888", badge: "[TRG]" },
 };

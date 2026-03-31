@@ -3,7 +3,13 @@ import type { AgentRole } from "../domain/agent-types.js";
 import { spawnClaudeAgent, spawnClaudePlanAgent } from "./claude/claude-agent-factory.js";
 import { ROLE_STYLES } from "../ui/agent-role-styles.js";
 
-const PLAN_ROLES: ReadonlySet<AgentRole> = new Set<AgentRole>(["plan", "gap", "completeness"]);
+const PLAN_ROLES: ReadonlySet<AgentRole> = new Set<AgentRole>([
+  "plan",
+  "gap",
+  "completeness",
+  "triage",
+]);
+const TRIAGE_MODEL = "claude-haiku-4-5-20251001";
 
 export class ClaudeAgentSpawner extends AgentSpawner {
   constructor(
@@ -28,7 +34,9 @@ export class ClaudeAgentSpawner extends AgentSpawner {
     const usePlanAgent = opts?.planMode || PLAN_ROLES.has(role);
 
     const process = usePlanAgent
-      ? spawnClaudePlanAgent(style, systemPrompt, cwd)
+      ? role === "triage"
+        ? spawnClaudePlanAgent(style, systemPrompt, cwd, TRIAGE_MODEL)
+        : spawnClaudePlanAgent(style, systemPrompt, cwd)
       : spawnClaudeAgent(style, systemPrompt, opts?.resumeSessionId, cwd);
 
     return process;
