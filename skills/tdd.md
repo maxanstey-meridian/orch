@@ -78,6 +78,16 @@ the current test. Don't anticipate future tests.
 
 **Narrating instead of executing**: Writing "RED confirmed" or "GREEN. Cycle complete." without actually running tests via Bash. You must execute, read output, then report. No exceptions.
 
+## When You Cannot Write a Good Test
+
+If a feature requires integration testing that you cannot set up (e.g. real CLI interaction, real process spawning, real keyboard input in a terminal), do NOT write a mock test that passes regardless. Instead:
+
+1. Write whatever unit tests you CAN write meaningfully.
+2. Add a comment in the test file: `// MANUAL TEST REQUIRED: <description of what to test manually>`
+3. Mention it in your completion summary: "Manual testing needed for: <feature>"
+
+A test that proves nothing is worse than no test — it gives false confidence and masks regressions.
+
 ## When a previously-passing test breaks
 
 If you run tests during a GREEN step and a test that was passing before now fails, **stop**. Do not blindly fix it. Diagnose why it broke first:
@@ -102,6 +112,36 @@ All GREEN → COMMIT
 
 Do not silently fix bugs during refactor. Every behavioural fix needs a failing test first.
 
+## Defensive Testing — Regression Guards
+
+Your tests must protect the feature from being broken by future changes. After writing each test, ask yourself:
+
+> "If a future developer accidentally deleted the key line that makes this feature work, would this test fail?"
+
+If the answer is no, your test is worthless — it passes whether the feature works or not.
+
+Rules:
+
+1. **Test state transitions directly.** If your code sets a flag, changes a mode, updates a counter, or modifies
+   external state — assert that state change directly. Don't rely on downstream effects or mock call assertions.
+
+2. **Write regression guards.** For every feature you implement, identify the critical line(s) that make it work.
+   Write at least one test that would fail if that line were removed. This is non-negotiable.
+
+3. **Prefer real objects over mocks.** Mocks prove your code calls things correctly. Real objects prove your code
+   works correctly. If a dependency is a pure function or a simple data structure, use the real one.
+
+4. **Test the full path for cross-method features.** When a feature spans setup → action → effect across multiple
+   methods (e.g. a keyboard handler that sets a flag that causes a skip), test the full path — not just each
+   method in isolation.
+
+## What NOT to Test
+
+- Don't test that you called a mock with the right arguments unless the call IS the behavior (e.g. an API call).
+- Don't test internal method delegation (method A calls method B) — test the outcome.
+- Don't write tests that pass regardless of whether the feature works (e.g. mocking the thing you're testing).
+- Don't test style preferences (describe/it nesting, assertion library choice).
+
 ## Checklist Per Slice
 
 - [ ] For each behaviour: wrote test first, ran tests with Bash (confirmed RED), wrote code, ran tests with Bash (confirmed GREEN)
@@ -111,3 +151,4 @@ Do not silently fix bugs during refactor. Every behavioural fix needs a failing 
 - [ ] Tests describe behaviour, not implementation
 - [ ] Tests use public interface only
 - [ ] No speculative features added
+- [ ] Regression guard: for each feature, deleting the key implementation line would break at least one test

@@ -43,7 +43,9 @@ export const runInit = async (
     console.log("Initialising project profile. Press Enter to skip any question.");
 
     const language = await ask("Language? (e.g. TypeScript, C#, Python) ");
-    if (!language) return null;
+    if (!language) {
+      return null;
+    }
 
     const framework = await ask("Framework? (e.g. NestJS, Express, ASP.NET — or blank for none) ");
     const style = await ask(
@@ -71,7 +73,9 @@ export const runInit = async (
           console.warn(`Warning: reference path not found, skipping: ${p}`);
         }
       }
-      if (valid.length > 0) references = valid;
+      if (valid.length > 0) {
+        references = valid;
+      }
     }
 
     return {
@@ -92,11 +96,21 @@ export const runInit = async (
 export const profileToMarkdown = (profile: InitProfile): string => {
   const lines: string[] = ["## Project Profile (from init)", ""];
   lines.push(`- **Language:** ${profile.language}`);
-  if (profile.framework) lines.push(`- **Framework:** ${profile.framework}`);
-  if (profile.style) lines.push(`- **Style:** ${profile.style}`);
-  if (profile.linting) lines.push(`- **Linting:** ${profile.linting}`);
-  if (profile.references?.length) lines.push(`- **References:** ${profile.references.join(", ")}`);
-  if (profile.extraContext) lines.push(`- **Notes:** ${profile.extraContext}`);
+  if (profile.framework) {
+    lines.push(`- **Framework:** ${profile.framework}`);
+  }
+  if (profile.style) {
+    lines.push(`- **Style:** ${profile.style}`);
+  }
+  if (profile.linting) {
+    lines.push(`- **Linting:** ${profile.linting}`);
+  }
+  if (profile.references?.length) {
+    lines.push(`- **References:** ${profile.references.join(", ")}`);
+  }
+  if (profile.extraContext) {
+    lines.push(`- **Notes:** ${profile.extraContext}`);
+  }
   lines.push("");
   return lines.join("\n");
 };

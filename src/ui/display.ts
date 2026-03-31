@@ -1,5 +1,5 @@
-import { type AgentStyle } from "../agent/agent.js";
-import { type Slice, type Group } from "../plan/plan-parser.js";
+import { type AgentStyle } from "../domain/agent-types.js";
+import { type Slice, type Group } from "../infrastructure/plan/plan-parser.js";
 
 export type LogFn = (...args: unknown[]) => void;
 
@@ -63,12 +63,41 @@ export const logSection = (log: LogFn, title: string) => {
 
 export const printSliceIntro = (log: LogFn, slice: Slice) => {
   log(`\n${a.bold}${a.white}┌─ Slice ${slice.number}: ${slice.title}${a.reset}`);
-  if (slice.why) log(`${a.dim}│  ${slice.why.trim()}${a.reset}`);
+  if (slice.why) {
+    log(`${a.dim}│  ${slice.why.trim()}${a.reset}`);
+  }
+  log(`${a.dim}└──${a.reset}\n`);
+};
+
+export const printSliceContent = (log: LogFn, slice: Slice) => {
+  log(`\n${a.bold}${a.white}┌─ Slice ${slice.number}: ${slice.title}${a.reset}`);
+  if (slice.why) {
+    log(`${a.dim}│  ${slice.why.trim()}${a.reset}`);
+  }
+  if (slice.files.length) {
+    log(`${a.dim}│${a.reset}`);
+    log(`${a.dim}│  ${a.reset}${a.bold}Files:${a.reset}`);
+    for (const f of slice.files) {
+      log(`${a.dim}│    ${a.reset}${f.path} (${f.action})`);
+    }
+  }
+  if (slice.details) {
+    log(`${a.dim}│${a.reset}`);
+    log(`${a.dim}│  ${a.reset}${a.bold}Details:${a.reset}`);
+    log(`${a.dim}│  ${a.reset}${slice.details}`);
+  }
+  if (slice.tests) {
+    log(`${a.dim}│${a.reset}`);
+    log(`${a.dim}│  ${a.reset}${a.bold}Tests:${a.reset}`);
+    log(`${a.dim}│  ${a.reset}${slice.tests}`);
+  }
   log(`${a.dim}└──${a.reset}\n`);
 };
 
 export const printSliceSummary = (log: LogFn, sliceNumber: number, summary: string) => {
-  if (!summary.trim()) return;
+  if (!summary.trim()) {
+    return;
+  }
   log("");
   log(`${a.bold}${a.green}┌─ Slice ${sliceNumber} complete ────────────────────────────${a.reset}`);
   for (const line of summary.trim().split("\n")) {
@@ -86,10 +115,14 @@ export const formatPlanSummary = (log: LogFn, groups: readonly Group[]): void =>
     log(`\n${a.bold}${a.cyan}┌─ ${g.name}${a.reset}`);
     for (const s of g.slices) {
       log(`${a.dim}│${a.reset}  ${a.bold}Slice ${s.number}: ${s.title}${a.reset}`);
-      if (s.why) log(`${a.dim}│     ${s.why}${a.reset}`);
+      if (s.why) {
+        log(`${a.dim}│     ${s.why}${a.reset}`);
+      }
       const fileList = s.files.map((f) => `${f.path} (${f.action})`).join(", ");
       log(`${a.dim}│     Files: ${fileList}${a.reset}`);
-      if (s.tests) log(`${a.dim}│     Tests: ${s.tests}${a.reset}`);
+      if (s.tests) {
+        log(`${a.dim}│     Tests: ${s.tests}${a.reset}`);
+      }
     }
     log(`${a.dim}└──${a.reset}`);
   }
@@ -105,6 +138,7 @@ export type BannerOpts = {
   readonly reviewSessionId: string;
   readonly groups: readonly Group[];
   readonly worktree?: { readonly path: string; readonly branch: string };
+  readonly orchrcSummary?: string;
 };
 
 export const printStartupBanner = (log: LogFn, opts: BannerOpts): void => {
@@ -122,11 +156,15 @@ export const printStartupBanner = (log: LogFn, opts: BannerOpts): void => {
   log(
     `   ${a.dim}Mode${a.reset}    ${opts.groupFilter ? `start from "${opts.groupFilter}"` : opts.auto ? "automatic" : "interactive"}`,
   );
+  if (opts.orchrcSummary) {
+    log(`   ${a.dim}Config${a.reset}  .orchrc.json (${opts.orchrcSummary})`);
+  }
   log(`   ${BOT_TDD.badge} ${a.dim}persistent (${opts.tddSessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_REVIEW.badge} ${a.dim}persistent (${opts.reviewSessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
-  if (opts.interactive)
+  if (opts.interactive) {
     log(`   ${a.dim}Press${a.reset} ${a.bold}S${a.reset} ${a.dim}to skip current slice${a.reset}`);
+  }
 
   log("");
   for (let g = 0; g < opts.groups.length; g++) {

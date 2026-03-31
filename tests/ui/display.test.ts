@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { printStartupBanner, printSliceIntro, formatPlanSummary } from "../../src/ui/display.js";
+import { printStartupBanner, printSliceIntro, printSliceContent, formatPlanSummary } from "../../src/ui/display.js";
+import type { Slice } from "../../src/infrastructure/plan/plan-parser.js";
 
 const collect = () => {
   const lines: string[] = [];
@@ -124,9 +125,23 @@ describe("printStartupBanner", () => {
     const text = strip(lines.join("\n"));
     expect(text).not.toContain("Worktree");
   });
+
+  it("shows orchrc summary when provided", () => {
+    const { lines, log } = collect();
+    printStartupBanner(log, { ...baseOpts, orchrcSummary: "tdd: custom, review: disabled" });
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("tdd: custom, review: disabled");
+  });
+
+  it("does not show Config line when orchrcSummary is undefined", () => {
+    const { lines, log } = collect();
+    printStartupBanner(log, baseOpts);
+    const text = strip(lines.join("\n"));
+    expect(text).not.toContain("Config");
+  });
 });
 
-const makeSlice = (overrides: Partial<{ number: number; title: string; why: string; content: string; tests: string }> = {}) => ({
+const makeSlice = (overrides: Partial<Slice> = {}) => ({
   number: 1,
   title: "User login",
   content: "",
@@ -161,6 +176,64 @@ describe("printSliceIntro", () => {
     expect(middleLine).toBeDefined();
     expect(middleLine).toContain("\x1b[2m");  // dim
     expect(middleLine).toContain("\x1b[0m");  // reset
+  });
+});
+
+describe("printSliceContent", () => {
+  it("prints slice header and why", () => {
+    const { lines, log } = collect();
+    printSliceContent(log, makeSlice());
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Slice 1: User login");
+    expect(text).toContain("Users need authentication before accessing resources");
+  });
+
+  it("prints files with path and action", () => {
+    const { lines, log } = collect();
+    printSliceContent(log, makeSlice());
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("src/auth.ts");
+    expect(text).toContain("new");
+  });
+
+  it("prints details and tests fields", () => {
+    const { lines, log } = collect();
+    printSliceContent(log, makeSlice());
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Implement login flow.");
+    expect(text).toContain("Login works.");
+  });
+
+  it("handles slice with empty optional fields", () => {
+    const { lines, log } = collect();
+    printSliceContent(log, makeSlice({ why: "", tests: "", details: "" }));
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Slice 1: User login");
+    expect(text).not.toContain("Details:");
+    expect(text).not.toContain("Tests:");
+  });
+
+  it("omits Files header when files array is empty", () => {
+    const { lines, log } = collect();
+    printSliceContent(log, makeSlice({ files: [] }));
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Slice 1: User login");
+    expect(text).not.toContain("Files:");
+  });
+
+  it("prints all files when multiple are present", () => {
+    const { lines, log } = collect();
+    printSliceContent(log, makeSlice({
+      files: [
+        { path: "src/a.ts", action: "new" },
+        { path: "src/b.ts", action: "edit" },
+        { path: "src/c.ts", action: "delete" },
+      ],
+    }));
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("src/a.ts (new)");
+    expect(text).toContain("src/b.ts (edit)");
+    expect(text).toContain("src/c.ts (delete)");
   });
 });
 

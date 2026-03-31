@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
-import type { AgentStyle } from "../../src/agent/agent.js";
-import { makeStreamer } from "../../src/agent/streamer.js";
+import type { AgentStyle } from "../../src/domain/agent-types.js";
+import { makeStreamer } from "../../src/infrastructure/agent/streamer.js";
 import { a } from "../../src/ui/display.js";
 
 const style: AgentStyle = { label: "TEST", color: "C", badge: "B" };

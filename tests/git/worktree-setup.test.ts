@@ -1,21 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/git/worktree.js", () => ({
+vi.mock("../../src/infrastructure/git/worktree.js", () => ({
   createWorktree: vi.fn(),
 }));
 
-vi.mock("../../src/git/git.js", () => ({
+vi.mock("../../src/infrastructure/git/git.js", () => ({
   captureRef: vi.fn(),
 }));
 
-vi.mock("../../src/state/state.js", () => ({
+vi.mock("../../src/infrastructure/state/state.js", () => ({
   saveState: vi.fn(),
 }));
 
-import { resolveWorktree } from "../../src/git/worktree-setup.js";
-import { createWorktree } from "../../src/git/worktree.js";
-import { captureRef } from "../../src/git/git.js";
-import { saveState } from "../../src/state/state.js";
+import { resolveWorktree } from "../../src/infrastructure/git/worktree-setup.js";
+import { createWorktree } from "../../src/infrastructure/git/worktree.js";
+import { captureRef } from "../../src/infrastructure/git/git.js";
+import { saveState } from "../../src/infrastructure/state/state.js";
 
 const noop = () => {};
 

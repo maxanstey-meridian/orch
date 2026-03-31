@@ -1,4 +1,5 @@
 #!/usr/bin/env npx ts-node
+
 /**
  * main.ts — TDD orchestrator CLI
  *
@@ -9,30 +10,45 @@
  *   npx ts-node src/main.ts --plan inventory.md              # generate plan and exit
  *   npx ts-node src/main.ts --work plan.md                    # execute a plan
  *   npx ts-node src/main.ts --work plan.md --group Auth       # start from group
- *   npx ts-node src/main.ts --work plan.md --auto             # no inter-group prompts
- *   npx ts-node src/main.ts --work plan.md --no-interaction   # suppress all prompts
+ *   npx ts-node src/main.ts --work plan.md --auto             # auto-accept all prompts (--no-interaction is an alias)
  *   npx ts-node src/main.ts --work plan.json --show-plan       # inspect plan structure
  *   npx ts-node src/main.ts --work plan.md --reset            # clear state and re-run
  *   npx ts-node src/main.ts --init --plan inventory.md        # interactive project init
  */
 
-import { resolve } from "path";
 import { readFileSync, mkdirSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
-import { parsePlan } from "./plan/plan-parser.js";
-import { isPlanFormat, ensureCanonicalPlan, doGeneratePlan } from "./plan/plan-generator.js";
-import { loadState, clearState, statePathForPlan, type OrchestratorState } from "./state/state.js";
-import { runFingerprint } from "./state/fingerprint.js";
+import { resolve } from "path";
+import { createContainer } from "./composition-root.js";
+import type { OrchestratorConfig } from "./domain/config.js";
+import { CreditExhaustedError, IncompleteRunError } from "./domain/errors.js";
+import { parseBranchFlag, parseProviderFlag } from "./infrastructure/cli/cli-args.js";
+import {
+  loadAndResolveOrchrConfig,
+  resolveSkillValue,
+  buildOrchrSummary,
+} from "./infrastructure/config/orchrc.js";
+import { planGeneratorSpawnerFactory } from "./infrastructure/factories.js";
+import { runFingerprint } from "./infrastructure/fingerprint.js";
+import { getStatus, stashBackup } from "./infrastructure/git/git.js";
+import { assertGitRepo } from "./infrastructure/git/repo-check.js";
+import { resolveWorktree } from "./infrastructure/git/worktree-setup.js";
+import { checkWorktreeResume, runCleanup } from "./infrastructure/git/worktree.js";
+import {
+  isPlanFormat,
+  ensureCanonicalPlan,
+  doGeneratePlan,
+} from "./infrastructure/plan/plan-generator.js";
+import { parsePlan } from "./infrastructure/plan/plan-parser.js";
+import {
+  loadState,
+  clearState,
+  statePathForPlan,
+  type OrchestratorState,
+} from "./infrastructure/state/state.js";
 import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "./ui/display.js";
-import { Orchestrator, CreditExhaustedError, type OrchestratorConfig } from "./orchestrator.js";
-import { runInit, profileToMarkdown } from "./ui/init.js";
-import { spawnPlanAgentWithSkill, spawnGeneratePlanAgent } from "./agent/agent-factory.js";
-import { getStatus, stashBackup } from "./git/git.js";
-import { assertGitRepo } from "./git/repo-check.js";
-import { parseBranchFlag } from "./cli/cli-args.js";
-import { resolveWorktree } from "./git/worktree-setup.js";
-import { checkWorktreeResume, runCleanup } from "./git/worktree.js";
 import { createHud } from "./ui/hud.js";
+import { runInit, profileToMarkdown } from "./ui/init.js";
 
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
 
@@ -61,9 +77,8 @@ const main = async () => {
   const workMode = args.includes("--work");
   const workRaw = getArg("--work");
   const workPath = workRaw && !workRaw.startsWith("-") ? workRaw : undefined;
-  const auto = args.includes("--auto");
+  const auto = args.includes("--auto") || args.includes("--no-interaction");
   const skipFingerprint = args.includes("--skip-fingerprint");
-  const noInteraction = args.includes("--no-interaction");
   const resetState = args.includes("--reset");
   const cleanupMode = args.includes("--cleanup");
   const groupFilter = getArg("--group");
@@ -106,11 +121,18 @@ const main = async () => {
 
   // 1. Load skill prompts
   const skillsDir = resolve(import.meta.dirname, "..", "skills");
-  const tddSkill = readFileSync(resolve(skillsDir, "tdd.md"), "utf-8");
-  const reviewSkill = readFileSync(resolve(skillsDir, "deep-review.md"), "utf-8");
-  const verifySkill = readFileSync(resolve(skillsDir, "verify.md"), "utf-8");
+  const builtInTdd = readFileSync(resolve(skillsDir, "tdd.md"), "utf-8");
+  const builtInReview = readFileSync(resolve(skillsDir, "deep-review.md"), "utf-8");
+  const builtInVerify = readFileSync(resolve(skillsDir, "verify.md"), "utf-8");
 
   const cwd = process.cwd();
+  const orchrc = loadAndResolveOrchrConfig(cwd);
+  const tddSkill = resolveSkillValue(orchrc.skills.tdd, builtInTdd);
+  const reviewSkill = resolveSkillValue(orchrc.skills.review, builtInReview);
+  const verifySkill = resolveSkillValue(orchrc.skills.verify, builtInVerify);
+  const gapDisabled = "disabled" in orchrc.skills.gap;
+  const planDisabled = "disabled" in orchrc.skills.plan;
+  const orchrcSummary = buildOrchrSummary(orchrc);
   const orchDir = resolve(cwd, ".orch");
 
   // 2. Init (if requested) → fingerprint + brief
@@ -137,6 +159,7 @@ const main = async () => {
   });
 
   // 3. Resolve plan path — generate from inventory or use existing
+  const provider = parseProviderFlag(args);
   let planPath: string;
 
   if (workMode) {
@@ -149,7 +172,8 @@ const main = async () => {
       log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
       planPath = inputPath;
     } else {
-      planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnGeneratePlanAgent);
+      const spawnPlanGenerator = planGeneratorSpawnerFactory({ provider, cwd });
+      planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnPlanGenerator);
     }
   }
 
@@ -167,7 +191,9 @@ const main = async () => {
   if (cleanupMode) {
     const state = await loadState(stateFile);
     const message = await runCleanup(stateFile, state, cwd);
-    for (const line of earlyLog) origLog(line);
+    for (const line of earlyLog) {
+      origLog(line);
+    }
     origLog(message);
     process.exit(0);
   }
@@ -175,7 +201,9 @@ const main = async () => {
   // Generate-only mode: --plan without --work
   const generateOnly = !!inventoryPath && !workMode;
   if (generateOnly) {
-    for (const line of earlyLog) origLog(line);
+    for (const line of earlyLog) {
+      origLog(line);
+    }
     origLog(`Plan written to ${planPath} — review and run with --work`);
     process.exit(0);
   }
@@ -184,7 +212,9 @@ const main = async () => {
   const groups = await parsePlan(planPath);
 
   if (showPlan) {
-    for (const line of earlyLog) origLog(line);
+    for (const line of earlyLog) {
+      origLog(line);
+    }
     formatPlanSummary(origLog, groups);
     process.exit(0);
   }
@@ -194,7 +224,9 @@ const main = async () => {
   const hud = createHud(isTTY);
   hud.update({ totalSlices, completedSlices: 0, startTime: Date.now() });
   log = hud.wrapLog(origLog);
-  for (const line of earlyLog) log(line);
+  for (const line of earlyLog) {
+    log(line);
+  }
 
   // 6. Load per-plan state + resume mismatch guard + resolve worktree
   const state: OrchestratorState = await loadState(stateFile);
@@ -203,11 +235,12 @@ const main = async () => {
     origLog(resumeCheck.message);
     process.exit(1);
   }
+  // resolveWorktree persists worktree state to disk before returning,
+  // so RunOrchestration.execute() will pick it up via persistence.load().
   const {
     cwd: effectiveCwd,
     worktreeInfo,
     skipStash,
-    updatedState,
   } = await resolveWorktree({
     branchName,
     cwd,
@@ -216,19 +249,12 @@ const main = async () => {
     stateFile,
     log,
   });
-  const interactive = !noInteraction && isTTY;
+  const interactive = !auto && isTTY;
 
   // 7. Signal handlers + cleanup
-  // If SIGINT arrives during create(), _orch is null and spawned agents aren't
-  // tracked here. process.exit() follows immediately, which reaps child processes.
-  let _orch: Orchestrator | null = null;
-  const cleanup = () => {
-    if (_orch) {
-      _orch.cleanup();
-    } else {
-      hud.teardown();
-    }
-  };
+  // cleanup is set to hud.teardown initially, then upgraded to orch.dispose()
+  // after the container is created (kills agents + tears down HUD).
+  let cleanup = () => hud.teardown();
   process.on("SIGINT", () => {
     cleanup();
     process.exit(130);
@@ -251,59 +277,73 @@ const main = async () => {
 
   // Stash unrelated working tree changes (skip if using worktree — it's clean by definition)
   const didStash = skipStash ? false : await stashBackup(cwd);
-  if (didStash) log(`${ts()} ${a.dim}Backed up working tree to git stash${a.reset}`);
+  if (didStash) {
+    log(`${ts()} ${a.dim}Backed up working tree to git stash${a.reset}`);
+  }
+  log(`${ts()} ${a.dim}Initialising agents — this may take a few minutes...${a.reset}`);
 
   const planContent = await readFile(planPath, "utf-8");
 
-  // 9. Construct Orchestrator — spawns + reminds agents internally
-  _orch = await Orchestrator.create(
-    {
-      cwd: effectiveCwd,
-      planPath,
-      planContent,
-      brief,
-      noInteraction,
-      auto,
-      reviewThreshold,
-      maxReviewCycles: 3,
-      stateFile,
-      tddSkill,
-      reviewSkill,
-      verifySkill,
-    } satisfies OrchestratorConfig,
-    updatedState,
-    hud,
-    log,
-  );
-  if (interactive) _orch.setupKeyboardHandlers();
-
-  // 10. Banner + group list
-  const remaining = groups.slice(startIdx);
-  printStartupBanner(log, {
+  // 9. Composition root — wire all ports + use case
+  const orchestratorConfig = {
+    cwd: effectiveCwd,
     planPath,
+    planContent,
     brief,
     auto,
-    interactive,
-    groupFilter,
-    worktree: worktreeInfo,
-    tddSessionId: _orch.tddAgent.sessionId,
-    reviewSessionId: _orch.reviewAgent.sessionId,
-    groups: remaining,
-  });
+    reviewThreshold:
+      rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),
+    maxReviewCycles: orchrc.config.maxReviewCycles ?? 3,
+    maxReplans: orchrc.config.maxReplans ?? 2,
+    stateFile,
+    tddSkill,
+    reviewSkill,
+    verifySkill,
+    gapDisabled,
+    planDisabled,
+    tddRules: orchrc.rules.tdd,
+    provider,
+    reviewRules: orchrc.rules.review,
+  } satisfies OrchestratorConfig;
 
-  // 11. Run
+  const container = createContainer(orchestratorConfig, hud);
+  const orch = container.resolve("runOrchestration");
+  cleanup = () => orch.dispose();
+
+  // 10. Banner + run
+  const remaining = groups.slice(startIdx);
+
   try {
-    await _orch.run(remaining, 0);
+    await orch.execute(remaining, {
+      onReady: (info) =>
+        printStartupBanner(log, {
+          planPath,
+          brief,
+          auto,
+          interactive,
+          groupFilter,
+          worktree: worktreeInfo,
+          orchrcSummary,
+          tddSessionId: info.tddSessionId,
+          reviewSessionId: info.reviewSessionId,
+          groups: remaining,
+        }),
+    });
   } catch (err) {
     if (err instanceof CreditExhaustedError) {
       log(`\n${ts()} ${a.red}Credit exhaustion detected: ${err.message}${a.reset}`);
       cleanup();
       process.exit(2);
     }
+    if (err instanceof IncompleteRunError) {
+      log(`\n${ts()} ${a.red}${err.message}${a.reset}`);
+      cleanup();
+      process.exit(1);
+    }
     throw err;
   }
 
-  // 12. Cleanup
+  // 11. Cleanup
   logSection(log, `${a.green}✅ All groups complete + final review done${a.reset}`);
   const status = await getStatus(effectiveCwd);
   log(`\n${status}`);

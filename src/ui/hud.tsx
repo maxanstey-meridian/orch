@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
 import { render, Text, Static, useInput } from "ink";
+import React, { useState, useEffect } from "react";
 
 export type HudState = {
   currentSlice?: { number: number };
@@ -47,7 +47,9 @@ const formatElapsed = (ms: number): string => {
 const buildProgressBar = (completed: number, total: number, width: number): string => {
   const filled = total > 0 ? Math.round((completed / total) * width) : 0;
   const empty = width - filled;
-  if (empty === 0) return `[${"=".repeat(filled)}]`;
+  if (empty === 0) {
+    return `[${"=".repeat(filled)}]`;
+  }
   return `[${"=".repeat(filled)}>${".".repeat(empty - 1)}]`;
 };
 
@@ -144,7 +146,9 @@ const App = () => {
 
   // Spinner only runs while activity is showing — avoids constant re-renders
   useEffect(() => {
-    if (!activity) return;
+    if (!activity) {
+      return;
+    }
     const iv = setInterval(() => setSpinIdx((i) => (i + 1) % SPINNER.length), 250);
     return () => clearInterval(iv);
   }, [activity]);
@@ -152,7 +156,9 @@ const App = () => {
   useInput((input, key) => {
     // ctrl+c always quits, regardless of input mode
     if (key.ctrl && input === "c") {
-      if (_keyHandler) _keyHandler("\x03");
+      if (_keyHandler) {
+        _keyHandler("\x03");
+      }
       return;
     }
 
@@ -171,8 +177,9 @@ const App = () => {
           const m = mode;
           setMode("status");
           setInputText("");
-          if (text && _interruptSubmitHandler)
+          if (text && _interruptSubmitHandler) {
             _interruptSubmitHandler(text, m as "guide" | "interrupt");
+          }
         }
       } else if (key.escape) {
         if (mode === "ask") {
@@ -196,9 +203,15 @@ const App = () => {
     }
 
     // Status mode — dispatch to external handler
-    if (key.escape) return; // ignore
-    if (input && _keyHandler) _keyHandler(input);
-    if (key.return && _keyHandler) _keyHandler("return");
+    if (key.escape) {
+      return;
+    } // ignore
+    if (input && _keyHandler) {
+      _keyHandler(input);
+    }
+    if (key.return && _keyHandler) {
+      _keyHandler("return");
+    }
   });
 
   const cols = _getCols();
@@ -301,21 +314,29 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
   const instance = render(<App />);
 
   const notify = () => {
-    if (!tornDown && _notify) _notify();
+    if (!tornDown && _notify) {
+      _notify();
+    }
   };
 
   let writerBuffer = "";
 
   return {
     update: (partial) => {
-      if (tornDown) return;
+      if (tornDown) {
+        return;
+      }
       _hudState = { ..._hudState, ...partial };
       notify();
     },
     teardown: () => {
-      if (tornDown) return;
+      if (tornDown) {
+        return;
+      }
       tornDown = true;
-      if (writerBuffer.trim()) _lines.push(writerBuffer);
+      if (writerBuffer.trim()) {
+        _lines.push(writerBuffer);
+      }
       writerBuffer = "";
       _notify = null;
       _keyHandler = null;
@@ -327,18 +348,26 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
     wrapLog:
       (_logFn) =>
       (...args: unknown[]) => {
-        if (tornDown) return;
+        if (tornDown) {
+          return;
+        }
         const text = args.map((a) => (typeof a === "string" ? a : String(a))).join(" ");
         _lines.push(text);
         notify();
       },
     createWriter: () => (text: string) => {
-      if (tornDown) return;
+      if (tornDown) {
+        return;
+      }
       writerBuffer += text;
       const parts = writerBuffer.split("\n");
       writerBuffer = parts.pop() ?? "";
-      for (const line of parts) _lines.push(line);
-      if (parts.length > 0) notify();
+      for (const line of parts) {
+        _lines.push(line);
+      }
+      if (parts.length > 0) {
+        notify();
+      }
     },
     onKey: (handler) => {
       _keyHandler = handler;
@@ -347,18 +376,26 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
       _interruptSubmitHandler = handler;
     },
     startPrompt: (m) => {
-      if (_startPrompt) _startPrompt(m);
+      if (_startPrompt) {
+        _startPrompt(m);
+      }
     },
     setSkipping: (v) => {
-      if (_setSkipping) _setSkipping(v);
+      if (_setSkipping) {
+        _setSkipping(v);
+      }
     },
     setActivity: (text) => {
-      if (_setActivity) _setActivity(text);
+      if (_setActivity) {
+        _setActivity(text);
+      }
     },
     askUser: (prompt) =>
       new Promise((resolve) => {
         _askResolve = resolve;
-        if (_askPrompt) _askPrompt(prompt);
+        if (_askPrompt) {
+          _askPrompt(prompt);
+        }
       }),
   };
 };

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile, chmod } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { createAgent } from "../../src/agent/agent.js";
+import { createClaudeAgent as createAgent } from "../../src/infrastructure/claude/claude-agent-process.js";
 
 const makeScript = async (dir: string, name: string, body: string): Promise<string> => {
   const path = join(dir, name);
@@ -791,5 +791,177 @@ describe("createAgent + inject", () => {
 
     expect(agent.alive).toBe(false);
     expect(() => agent.inject("should be no-op")).not.toThrow();
+  });
+});
+
+describe("createAgent pipe", () => {
+  it("returns an object with a callable pipe method", async () => {
+    const script = await makeScript(
+      tempDir,
+      "agent.sh",
+      [
+        "while IFS= read -r line; do",
+        '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}\'',
+        '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+        "done",
+      ].join("\n"),
+    );
+
+    const agent = createAgent({
+      command: script,
+      args: [],
+      style: { label: "impl", color: "cyan", badge: "I" },
+    });
+
+    expect(typeof agent.pipe).toBe("function");
+    expect(() => agent.pipe(() => {}, () => {})).not.toThrow();
+
+    agent.kill();
+  });
+
+  it("routes text to persistent handler when no per-call onText", async () => {
+    const script = await makeScript(tempDir, "agent.sh", [
+      "while IFS= read -r line; do",
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"streamed"}]}}\'',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      "done",
+    ].join("\n"));
+
+    const agent = createAgent({ command: script, args: [], style: { label: "impl", color: "cyan", badge: "I" } });
+    const texts: string[] = [];
+    agent.pipe((t) => texts.push(t), () => {});
+    await agent.send("hello");
+
+    expect(texts).toEqual(["streamed"]);
+    agent.kill();
+  });
+
+  it("per-call onText overrides persistent handler", async () => {
+    const script = await makeScript(tempDir, "agent.sh", [
+      "while IFS= read -r line; do",
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"data"}]}}\'',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      "done",
+    ].join("\n"));
+
+    const agent = createAgent({ command: script, args: [], style: { label: "impl", color: "cyan", badge: "I" } });
+    const persistent: string[] = [];
+    const perCall: string[] = [];
+    agent.pipe((t) => persistent.push(t), () => {});
+    await agent.send("hello", (t) => perCall.push(t));
+
+    expect(perCall).toEqual(["data"]);
+    expect(persistent).toEqual([]);
+    agent.kill();
+  });
+
+  it("routes tool_use to persistent handler", async () => {
+    const script = await makeScript(tempDir, "agent.sh", [
+      "while IFS= read -r line; do",
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Write","input":{"file_path":"/tmp/x","content":"y"}}]}}\'',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      "done",
+    ].join("\n"));
+
+    const agent = createAgent({ command: script, args: [], style: { label: "impl", color: "cyan", badge: "I" } });
+    const tools: string[] = [];
+    agent.pipe(() => {}, (s) => tools.push(s));
+    await agent.send("hello");
+
+    expect(tools.length).toBeGreaterThan(0);
+    expect(tools[0]).toContain("Writing");
+    agent.kill();
+  });
+
+  it("persistent onToolUse receives empty string on result", async () => {
+    const script = await makeScript(tempDir, "agent.sh", [
+      "while IFS= read -r line; do",
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}\'',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      "done",
+    ].join("\n"));
+
+    const agent = createAgent({ command: script, args: [], style: { label: "impl", color: "cyan", badge: "I" } });
+    const tools: string[] = [];
+    agent.pipe(() => {}, (s) => tools.push(s));
+    await agent.send("hello");
+
+    expect(tools).toContain("");
+    agent.kill();
+  });
+
+  it("per-call onToolUse overrides persistent handler", async () => {
+    const script = await makeScript(tempDir, "agent.sh", [
+      "while IFS= read -r line; do",
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/tmp/x"}}]}}\'',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      "done",
+    ].join("\n"));
+
+    const agent = createAgent({ command: script, args: [], style: { label: "impl", color: "cyan", badge: "I" } });
+    const persistent: string[] = [];
+    const perCall: string[] = [];
+    agent.pipe(() => {}, (s) => persistent.push(s));
+    await agent.send("hello", undefined, (s) => perCall.push(s));
+
+    expect(perCall).toEqual(["Reading x"]);
+    expect(persistent).toEqual([]);
+    agent.kill();
+  });
+
+  it("pipe called twice replaces the first handler", async () => {
+    const script = await makeScript(tempDir, "agent.sh", [
+      "while IFS= read -r line; do",
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}\'',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      "done",
+    ].join("\n"));
+
+    const agent = createAgent({ command: script, args: [], style: { label: "impl", color: "cyan", badge: "I" } });
+    const first: string[] = [];
+    const second: string[] = [];
+    agent.pipe((t) => first.push(t), () => {});
+    agent.pipe((t) => second.push(t), () => {});
+    await agent.send("hello");
+
+    expect(first).toEqual([]);
+    expect(second).toEqual(["hello"]);
+    agent.kill();
+  });
+
+  it("sendQuiet suppresses persistent pipe handlers", async () => {
+    const script = await makeScript(tempDir, "agent.sh", [
+      "while IFS= read -r line; do",
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"ignored"},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/tmp/x"}}]}}\'',
+      '  echo \'{"type":"result","result":"quiet-result","duration_ms":100,"num_turns":1}\'',
+      "done",
+    ].join("\n"));
+
+    const agent = createAgent({ command: script, args: [], style: { label: "impl", color: "cyan", badge: "I" } });
+    const texts: string[] = [];
+    const tools: string[] = [];
+    agent.pipe((t) => texts.push(t), (s) => tools.push(s));
+    const result = await agent.sendQuiet("hello");
+
+    expect(result).toBe("quiet-result");
+    expect(texts).toEqual([]);
+    expect(tools).toEqual([]);
+    agent.kill();
+  });
+
+  it("send works without pipe (no persistent handlers)", async () => {
+    const script = await makeScript(tempDir, "agent.sh", [
+      "while IFS= read -r line; do",
+      '  echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"hi"},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/tmp/x"}}]}}\'',
+      '  echo \'{"type":"result","result":"ok","duration_ms":100,"num_turns":1}\'',
+      "done",
+    ].join("\n"));
+
+    const agent = createAgent({ command: script, args: [], style: { label: "impl", color: "cyan", badge: "I" } });
+    const result = await agent.send("hello");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.assistantText).toBe("hi");
+    agent.kill();
   });
 });
