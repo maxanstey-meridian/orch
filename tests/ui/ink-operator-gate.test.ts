@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { SilentOperatorGate, InkOperatorGate, InkProgressSink, SilentProgressSink } from "../../src/ui/ink-operator-gate.js";
+import { AGENT_ROLES } from "../../src/domain/agent-types.js";
+import { SilentOperatorGate, InkOperatorGate, InkProgressSink, SilentProgressSink, styleForRole } from "../../src/ui/ink-operator-gate.js";
 import type { Hud } from "../../src/ui/hud.js";
 
 const createMockHud = (overrides: Partial<Hud> = {}): Hud => ({
@@ -62,6 +63,14 @@ describe("SilentProgressSink", () => {
   it("setActivity is a no-op", () => {
     const sink = new SilentProgressSink();
     expect(() => sink.setActivity("x")).not.toThrow();
+  });
+
+  it("createStreamer returns a no-op function", () => {
+    const sink = new SilentProgressSink();
+    const streamer = sink.createStreamer("tdd");
+
+    expect(typeof streamer).toBe("function");
+    expect(() => streamer("streamed text")).not.toThrow();
   });
 
   it("teardown is a no-op", () => {
@@ -190,6 +199,18 @@ describe("InkOperatorGate", () => {
 });
 
 describe("InkProgressSink", () => {
+  it("maps every runtime agent role to a valid style", () => {
+    for (const role of AGENT_ROLES) {
+      const style = styleForRole(role);
+
+      expect(style).toMatchObject({
+        label: expect.any(String),
+        color: expect.any(String),
+        badge: expect.any(String),
+      });
+    }
+  });
+
   describe("registerInterrupts", () => {
     it("returns InterruptHandler and wires hud handlers", () => {
       const hud = createMockHud();
@@ -270,6 +291,15 @@ describe("InkProgressSink", () => {
     const sink = new InkProgressSink(hud);
     sink.setActivity("building...");
     expect(hud.setActivity).toHaveBeenCalledWith("building...");
+  });
+
+  it("createStreamer returns a callable function", () => {
+    const hud = createMockHud();
+    const sink = new InkProgressSink(hud);
+    const streamer = sink.createStreamer("tdd");
+
+    expect(typeof streamer).toBe("function");
+    expect(() => streamer("streamed text")).not.toThrow();
   });
 
   it("teardown delegates to hud.teardown", () => {
