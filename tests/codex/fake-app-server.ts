@@ -27,9 +27,11 @@ export type FakeAppServer = {
   readonly receivedRequests: ReceivedRequest[];
   readonly receivedNotifications: ReceivedNotification[];
   readonly receivedResponses: ReceivedResponse[];
+  readonly lastTurnId: string | undefined;
   readonly stdout: PassThrough;
   setTurnScript(events: TurnScript): void;
   hangOnTurn(): void;
+  stallTurnAfterStart(): void;
   close(): void;
 };
 
@@ -45,11 +47,23 @@ export const createFakeAppServer = (): FakeAppServer => {
   const receivedResponses: ReceivedResponse[] = [];
   let turnScript: TurnScript = [];
   let shouldHangOnTurn = false;
+  let shouldStallTurnAfterStart = false;
+  let nextTurnId = 1;
+  let activeTurnId: string | undefined;
+  let lastTurnId: string | undefined;
 
   const rl = createInterface({ input: clientStdin });
 
   const sendResponse = (id: number, result: unknown) => {
     clientStdout.push(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
+  };
+
+  const sendError = (id: number, message: string) => {
+    clientStdout.push(JSON.stringify({
+      jsonrpc: '2.0',
+      id,
+      error: { code: -32000, message },
+    }) + '\n');
   };
 
   let nextServerRequestId = 1000;
@@ -124,8 +138,12 @@ export const createFakeAppServer = (): FakeAppServer => {
       case 'turn/start': {
         // If hanging, don't respond at all (simulates process death mid-turn)
         if (shouldHangOnTurn) break;
+        const turnId = `turn-${nextTurnId++}`;
+        activeTurnId = turnId;
+        lastTurnId = turnId;
         // Immediate ack with inProgress status (matches real Codex)
-        sendResponse(id, { turn: { id: `turn-${Date.now()}`, status: 'inProgress' } });
+        sendResponse(id, { turn: { id: turnId, status: 'inProgress' } });
+        if (shouldStallTurnAfterStart) break;
         // Emit scripted events — approvals as server requests, rest as notifications
         for (const event of turnScript) {
           const notif = eventToNotification(event);
@@ -139,8 +157,25 @@ export const createFakeAppServer = (): FakeAppServer => {
         if (!turnScript.some((e) => e.kind === 'turnCompleted')) {
           sendNotification('turn/completed', { turn: { status: 'completed' } });
         }
+        activeTurnId = undefined;
+        shouldStallTurnAfterStart = false;
         break;
       }
+      case 'turn/steer':
+        if (params?.turnId !== activeTurnId) {
+          sendError(id as number, `unknown turn ${String(params?.turnId ?? '')}`);
+          break;
+        }
+        sendResponse(id as number, {});
+        break;
+      case 'turn/interrupt':
+        if (params?.turnId !== activeTurnId) {
+          sendError(id as number, `unknown turn ${String(params?.turnId ?? '')}`);
+          break;
+        }
+        activeTurnId = undefined;
+        sendResponse(id as number, {});
+        break;
       default:
         // Unknown methods get an empty response for requests
         if (typeof id === 'number') {
@@ -155,9 +190,13 @@ export const createFakeAppServer = (): FakeAppServer => {
     receivedRequests,
     receivedNotifications,
     receivedResponses,
+    get lastTurnId() {
+      return lastTurnId;
+    },
     stdout: clientStdout,
     setTurnScript: (events) => { turnScript = events; },
     hangOnTurn: () => { shouldHangOnTurn = true; },
+    stallTurnAfterStart: () => { shouldStallTurnAfterStart = true; },
     close: () => {
       rl.close();
       clientStdin.end();

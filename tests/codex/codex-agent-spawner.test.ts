@@ -142,29 +142,20 @@ describe('CodexAgentSpawner', () => {
     const client = createCodexAppServerClient(fake2.proc);
     await client.initialize();
     await client.startThread();
-
-    fake2.setTurnScript([
-      { kind: 'textDelta', text: 'hello' },
-      { kind: 'textDelta', text: 'done' }, { kind: 'turnCompleted', resultText: '' },
-    ]);
+    fake2.stallTurnAfterStart();
 
     // Before turn: no turnId
     expect(client.currentTurnId).toBeUndefined();
 
-    let capturedTurnId: string | undefined;
-    await client.startTurn('go', (event) => {
-      if (event.kind === 'textDelta') {
-        capturedTurnId = client.currentTurnId;
-      }
-    });
+    const turnPromise = client.startTurn('go', () => {}).catch(() => {});
+    await tick();
 
     // During turn, currentTurnId was defined
-    expect(capturedTurnId).toBeDefined();
-    expect(typeof capturedTurnId).toBe('string');
+    expect(client.currentTurnId).toBe(fake2.lastTurnId);
     // After turn completes, currentTurnId is cleared
-    expect(client.currentTurnId).toBeUndefined();
-
     fake2.close();
+    await turnPromise;
+    expect(client.currentTurnId).toBeUndefined();
   });
 
   it('alive becomes false when process dies unexpectedly', async () => {
@@ -280,7 +271,7 @@ describe('CodexAgentSpawner', () => {
     it('steerTurn sends turn/steer RPC during active turn', async () => {
       const { createCodexAppServerClient } = await import('../../src/infrastructure/codex/codex-app-server-client.js');
       const fake2 = createFakeAppServer();
-      fake2.hangOnTurn();
+      fake2.stallTurnAfterStart();
       const client = createCodexAppServerClient(fake2.proc);
       await client.initialize();
       await client.startThread();
@@ -295,7 +286,7 @@ describe('CodexAgentSpawner', () => {
       expect(steer).toBeDefined();
       expect(steer!.params?.message).toBe('fix the types');
       expect(steer!.params?.threadId).toBe(client.threadId);
-      expect(steer!.params?.turnId).toBe(client.currentTurnId);
+      expect(steer!.params?.turnId).toBe(fake2.lastTurnId);
 
       fake2.close();
       await turnPromise;
@@ -316,7 +307,7 @@ describe('CodexAgentSpawner', () => {
     it('interruptTurn sends turn/interrupt RPC during active turn', async () => {
       const { createCodexAppServerClient } = await import('../../src/infrastructure/codex/codex-app-server-client.js');
       const fake2 = createFakeAppServer();
-      fake2.hangOnTurn();
+      fake2.stallTurnAfterStart();
       const client = createCodexAppServerClient(fake2.proc);
       await client.initialize();
       await client.startThread();
@@ -329,7 +320,7 @@ describe('CodexAgentSpawner', () => {
       const interrupt = fake2.receivedRequests.find((r) => r.method === 'turn/interrupt');
       expect(interrupt).toBeDefined();
       expect(interrupt!.params?.threadId).toBe(client.threadId);
-      expect(interrupt!.params?.turnId).toBe(client.currentTurnId);
+      expect(interrupt!.params?.turnId).toBe(fake2.lastTurnId);
 
       fake2.close();
       await turnPromise;
@@ -351,7 +342,7 @@ describe('CodexAgentSpawner', () => {
   describe('inject and kill', () => {
     it('inject() during active turn sends turn/steer', async () => {
       fake = createFakeAppServer();
-      fake.hangOnTurn();
+      fake.stallTurnAfterStart();
       const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
@@ -366,6 +357,7 @@ describe('CodexAgentSpawner', () => {
       const steer = fake.receivedRequests.find((r) => r.method === 'turn/steer');
       expect(steer).toBeDefined();
       expect(steer!.params?.message).toBe('fix the types');
+      expect(steer!.params?.turnId).toBe(fake.lastTurnId);
 
       handle.kill();
       await sendPromise;
@@ -447,7 +439,7 @@ describe('CodexAgentSpawner', () => {
 
     it('kill() during active turn sends interrupt then closes', async () => {
       fake = createFakeAppServer();
-      fake.hangOnTurn();
+      fake.stallTurnAfterStart();
       const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
       const handle = spawner.spawn('tdd');
 
@@ -461,6 +453,7 @@ describe('CodexAgentSpawner', () => {
 
       const interrupt = fake.receivedRequests.find((r) => r.method === 'turn/interrupt');
       expect(interrupt).toBeDefined();
+      expect(interrupt!.params?.turnId).toBe(fake.lastTurnId);
       expect(handle.alive).toBe(false);
 
       await sendPromise;
@@ -678,7 +671,7 @@ describe('CodexAgentSpawner', () => {
 
     it('cancel decision interrupts turn', async () => {
       fake = createFakeAppServer();
-      fake.hangOnTurn();
+      fake.stallTurnAfterStart();
       const gate: RuntimeInteractionGate = {
         decide: vi.fn().mockResolvedValue({ kind: 'cancel' }),
       };
@@ -702,6 +695,38 @@ describe('CodexAgentSpawner', () => {
 
       const interrupt = fake.receivedRequests.find((r) => r.method === 'turn/interrupt');
       expect(interrupt).toBeDefined();
+
+      handle.kill();
+      await sendPromise;
+    });
+
+    it('legacy codex/approvalRequest sends codex/approvalResponse notification', async () => {
+      fake = createFakeAppServer();
+      fake.stallTurnAfterStart();
+      const gate: RuntimeInteractionGate = {
+        decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
+      };
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, gate);
+      const handle = spawner.spawn('tdd');
+
+      await tick();
+
+      const sendPromise = handle.send('go').catch(() => {});
+      await tick();
+
+      fake.stdout.push(JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'codex/approvalRequest',
+        params: { id: 'legacy-req', kind: 'command', summary: 'run npm test' },
+      }) + '\n');
+      await tick();
+      await tick();
+
+      const approvalResponse = fake.receivedNotifications.find(
+        (n) => n.method === 'codex/approvalResponse',
+      );
+      expect(approvalResponse).toBeDefined();
+      expect(approvalResponse!.params).toEqual({ id: 'legacy-req', approved: true });
 
       handle.kill();
       await sendPromise;
