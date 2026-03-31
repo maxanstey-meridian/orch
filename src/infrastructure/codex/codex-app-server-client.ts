@@ -10,6 +10,8 @@ export type CodexAppServerClient = {
   startThread(developerInstructions?: string): Promise<string>;
   resumeThread(threadId: string, developerInstructions?: string): Promise<string>;
   startTurn(prompt: string, onEvent: (e: CodexEvent) => void): Promise<string>;
+  steerTurn(message: string): Promise<void>;
+  interruptTurn(): Promise<void>;
   close(): void;
 };
 
@@ -80,6 +82,16 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
       onEvent({ kind: 'turnCompleted', resultText });
 
       return resultText;
+    },
+
+    steerTurn: async (message) => {
+      if (!currentTurnId) throw new Error('No active turn to steer');
+      await rpc.request('turn/steer', { threadId, turnId: currentTurnId, message });
+    },
+
+    interruptTurn: async () => {
+      if (!currentTurnId) throw new Error('No active turn to interrupt');
+      await rpc.request('turn/interrupt', { threadId, turnId: currentTurnId });
     },
 
     close: () => {

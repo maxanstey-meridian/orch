@@ -31,6 +31,7 @@ export class CodexAgentSpawner extends AgentSpawner {
     let sessionId = opts?.resumeSessionId ?? '';
     let persistentOnText: ((text: string) => void) | undefined;
     let persistentOnToolUse: ((summary: string) => void) | undefined;
+    const pendingGuidance: string[] = [];
 
     // Ready promise: initialize → start/resume thread
     const ready = (async () => {
@@ -52,12 +53,18 @@ export class CodexAgentSpawner extends AgentSpawner {
         try {
           await ready;
 
+          let effectivePrompt = prompt;
+          if (pendingGuidance.length > 0) {
+            const guidance = pendingGuidance.splice(0).join('\n');
+            effectivePrompt = `[Prior operator guidance — incorporate before proceeding]\n${guidance}\n[End prior guidance]\n\n${prompt}`;
+          }
+
           let assistantText = '';
           let failed = false;
           const effectiveOnText = onText ?? persistentOnText;
           const effectiveOnToolUse = onToolUse ?? persistentOnToolUse;
 
-          const resultText = await client.startTurn(prompt, (event) => {
+          const resultText = await client.startTurn(effectivePrompt, (event) => {
             switch (event.kind) {
               case 'textDelta':
                 assistantText += event.text;
@@ -99,11 +106,19 @@ export class CodexAgentSpawner extends AgentSpawner {
         }
       },
 
-      inject: (_message) => {
-        // Will be implemented in Slice 5
+      inject: (message) => {
+        if (client.currentTurnId) {
+          // Fire-and-forget: inject returns void but steerTurn is async
+          client.steerTurn(message).catch(() => {});
+        } else {
+          pendingGuidance.push(message);
+        }
       },
 
       kill: () => {
+        if (client.currentTurnId) {
+          client.interruptTurn().catch(() => {});
+        }
         client.close();
       },
 

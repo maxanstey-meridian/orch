@@ -265,6 +265,224 @@ describe('CodexAgentSpawner', () => {
     expect(result.assistantText).toContain('serverOverloaded');
   });
 
+  describe('steerTurn and interruptTurn', () => {
+    it('steerTurn sends turn/steer RPC during active turn', async () => {
+      const { createCodexAppServerClient } = await import('../../src/infrastructure/codex/codex-app-server-client.js');
+      const fake2 = createFakeAppServer();
+      fake2.hangOnTurn();
+      const client = createCodexAppServerClient(fake2.proc);
+      await client.initialize();
+      await client.startThread();
+
+      // Start turn (will hang — not awaited). Catch rejection on close.
+      const turnPromise = client.startTurn('go', () => {}).catch(() => {});
+      await tick();
+
+      await client.steerTurn('fix the types');
+
+      const steer = fake2.receivedRequests.find((r) => r.method === 'turn/steer');
+      expect(steer).toBeDefined();
+      expect(steer!.params?.message).toBe('fix the types');
+      expect(steer!.params?.threadId).toBe(client.threadId);
+      expect(steer!.params?.turnId).toBe(client.currentTurnId);
+
+      fake2.close();
+      await turnPromise;
+    });
+
+    it('steerTurn throws when no active turn', async () => {
+      const { createCodexAppServerClient } = await import('../../src/infrastructure/codex/codex-app-server-client.js');
+      const fake2 = createFakeAppServer();
+      const client = createCodexAppServerClient(fake2.proc);
+      await client.initialize();
+      await client.startThread();
+
+      await expect(client.steerTurn('msg')).rejects.toThrow();
+
+      fake2.close();
+    });
+
+    it('interruptTurn sends turn/interrupt RPC during active turn', async () => {
+      const { createCodexAppServerClient } = await import('../../src/infrastructure/codex/codex-app-server-client.js');
+      const fake2 = createFakeAppServer();
+      fake2.hangOnTurn();
+      const client = createCodexAppServerClient(fake2.proc);
+      await client.initialize();
+      await client.startThread();
+
+      const turnPromise = client.startTurn('go', () => {}).catch(() => {});
+      await tick();
+
+      await client.interruptTurn();
+
+      const interrupt = fake2.receivedRequests.find((r) => r.method === 'turn/interrupt');
+      expect(interrupt).toBeDefined();
+      expect(interrupt!.params?.threadId).toBe(client.threadId);
+      expect(interrupt!.params?.turnId).toBe(client.currentTurnId);
+
+      fake2.close();
+      await turnPromise;
+    });
+
+    it('interruptTurn throws when no active turn', async () => {
+      const { createCodexAppServerClient } = await import('../../src/infrastructure/codex/codex-app-server-client.js');
+      const fake2 = createFakeAppServer();
+      const client = createCodexAppServerClient(fake2.proc);
+      await client.initialize();
+      await client.startThread();
+
+      await expect(client.interruptTurn()).rejects.toThrow();
+
+      fake2.close();
+    });
+  });
+
+  describe('inject and kill', () => {
+    it('inject() during active turn sends turn/steer', async () => {
+      fake = createFakeAppServer();
+      fake.hangOnTurn();
+      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      await tick(); // wait for ready
+
+      const sendPromise = handle.send('prompt').catch(() => {});
+      await tick(); // wait for turn to be active
+
+      handle.inject('fix the types');
+      await tick();
+
+      const steer = fake.receivedRequests.find((r) => r.method === 'turn/steer');
+      expect(steer).toBeDefined();
+      expect(steer!.params?.message).toBe('fix the types');
+
+      handle.kill();
+      await sendPromise;
+    });
+
+    it('inject() between turns queues the message (no RPC sent)', async () => {
+      fake = createFakeAppServer();
+      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      await tick(); // wait for ready
+
+      handle.inject('guidance 1');
+      await tick();
+
+      const steer = fake.receivedRequests.find((r) => r.method === 'turn/steer');
+      expect(steer).toBeUndefined();
+    });
+
+    it('queued guidance prepended to next send()', async () => {
+      fake = createFakeAppServer();
+      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      await tick();
+
+      handle.inject('guidance A');
+      handle.inject('guidance B');
+
+      fake.setTurnScript([{ kind: 'turnCompleted', resultText: 'done' }]);
+      await handle.send('do the thing');
+
+      const turnStart = fake.receivedRequests.filter((r) => r.method === 'turn/start');
+      const prompt = turnStart[0]?.params?.prompt as string;
+      expect(prompt).toContain('guidance A');
+      expect(prompt).toContain('guidance B');
+      expect(prompt).toContain('do the thing');
+      // Guidance appears before the actual prompt
+      expect(prompt.indexOf('guidance A')).toBeLessThan(prompt.indexOf('do the thing'));
+    });
+
+    it('multiple queued messages appear in insertion order', async () => {
+      fake = createFakeAppServer();
+      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      await tick();
+
+      handle.inject('first');
+      handle.inject('second');
+
+      fake.setTurnScript([{ kind: 'turnCompleted', resultText: 'done' }]);
+      await handle.send('go');
+
+      const turnStart = fake.receivedRequests.filter((r) => r.method === 'turn/start');
+      const prompt = turnStart[0]?.params?.prompt as string;
+      expect(prompt.indexOf('first')).toBeLessThan(prompt.indexOf('second'));
+    });
+
+    it('queue is cleared after flush', async () => {
+      fake = createFakeAppServer();
+      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      await tick();
+
+      handle.inject('one-time guidance');
+      fake.setTurnScript([{ kind: 'turnCompleted', resultText: 'done' }]);
+      await handle.send('first send');
+
+      // Second send should have no guidance
+      fake.setTurnScript([{ kind: 'turnCompleted', resultText: 'done2' }]);
+      await handle.send('second send');
+
+      const turnStarts = fake.receivedRequests.filter((r) => r.method === 'turn/start');
+      const secondPrompt = turnStarts[1]?.params?.prompt as string;
+      expect(secondPrompt).toBe('second send');
+    });
+
+    it('kill() during active turn sends interrupt then closes', async () => {
+      fake = createFakeAppServer();
+      fake.hangOnTurn();
+      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      await tick();
+
+      const sendPromise = handle.send('prompt').catch(() => {});
+      await tick();
+
+      handle.kill();
+      await tick();
+
+      const interrupt = fake.receivedRequests.find((r) => r.method === 'turn/interrupt');
+      expect(interrupt).toBeDefined();
+      expect(handle.alive).toBe(false);
+
+      await sendPromise;
+    });
+
+    it('kill() while idle closes without interrupt', async () => {
+      fake = createFakeAppServer();
+      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      await tick();
+
+      handle.kill();
+      await tick();
+
+      const interrupt = fake.receivedRequests.find((r) => r.method === 'turn/interrupt');
+      expect(interrupt).toBeUndefined();
+      expect(handle.alive).toBe(false);
+    });
+
+    it('after kill(), alive is false', async () => {
+      fake = createFakeAppServer();
+      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      await tick();
+
+      handle.kill();
+
+      expect(handle.alive).toBe(false);
+    });
+  });
+
   it('spawn with resumeSessionId calls thread/resume with that id', async () => {
     fake = createFakeAppServer();
     const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
