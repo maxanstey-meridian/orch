@@ -10,7 +10,15 @@ import {
 } from "../application/ports/progress-sink.port.js";
 import type { AgentRole, AgentStyle } from "../domain/agent-types.js";
 import type { Slice } from "../domain/plan.js";
-import { BOT_TDD, BOT_REVIEW, BOT_GAP, BOT_FINAL, BOT_VERIFY, BOT_PLAN, printSliceIntro } from "./display.js";
+import {
+  BOT_TDD,
+  BOT_REVIEW,
+  BOT_GAP,
+  BOT_FINAL,
+  BOT_VERIFY,
+  BOT_PLAN,
+  printSliceIntro,
+} from "./display.js";
 import { makeStreamer } from "../infrastructure/agent/streamer.js";
 import type { Hud } from "./hud.js";
 
@@ -136,8 +144,12 @@ export class InkProgressSink extends ProgressSink {
     });
 
     return {
-      onGuide: (cb) => { guideCallback = cb; },
-      onInterrupt: (cb) => { interruptCallback = cb; },
+      onGuide: (cb) => {
+        guideCallback = cb;
+      },
+      onInterrupt: (cb) => {
+        interruptCallback = cb;
+      },
     };
   }
 
