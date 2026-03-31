@@ -37,7 +37,7 @@ describe("AgentResult", () => {
 });
 
 describe("AgentRole", () => {
-  it("covers all 7 roles (exhaustiveness guard)", () => {
+  it("covers all 8 roles (exhaustiveness guard)", () => {
     const allRoles: Record<AgentRole, true> = {
       tdd: true,
       review: true,
@@ -46,7 +46,8 @@ describe("AgentRole", () => {
       gap: true,
       final: true,
       completeness: true,
+      triage: true,
     };
-    expect(Object.keys(allRoles)).toHaveLength(7);
+    expect(Object.keys(allRoles)).toHaveLength(8);
   });
 });

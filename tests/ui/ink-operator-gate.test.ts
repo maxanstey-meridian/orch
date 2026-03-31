@@ -233,10 +233,11 @@ describe("InkProgressSink", () => {
       gap: BOT_GAP,
       final: BOT_FINAL,
       completeness: BOT_PLAN,
+      triage: { label: "Triage", color: "#888", badge: "[TRG]" },
     } as const;
 
     for (const role of AGENT_ROLES) {
-      expect(styleForRole(role)).toBe(expectedStyles[role]);
+      expect(styleForRole(role)).toEqual(expectedStyles[role]);
     }
   });
 

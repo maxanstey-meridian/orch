@@ -84,6 +84,34 @@ describe("spawnClaudePlanAgent", () => {
     expect(args).not.toContain("--append-system-prompt");
   });
 
+  it("passes --model when a model override is provided", async () => {
+    const { spawnClaudePlanAgent } = await loadModule();
+
+    spawnClaudePlanAgent(
+      { label: "PLAN", color: "", badge: "" },
+      undefined,
+      undefined,
+      "claude-haiku-4-5-20251001",
+    );
+
+    const callArgs = mockedCreateAgent.mock.calls[0][0];
+    const args: string[] = callArgs.args;
+
+    expect(args).toContain("--model");
+    expect(args[args.indexOf("--model") + 1]).toBe("claude-haiku-4-5-20251001");
+  });
+
+  it("omits --model when no model override is provided", async () => {
+    const { spawnClaudePlanAgent } = await loadModule();
+
+    spawnClaudePlanAgent({ label: "PLAN", color: "", badge: "" });
+
+    const callArgs = mockedCreateAgent.mock.calls[0][0];
+    const args: string[] = callArgs.args;
+
+    expect(args).not.toContain("--model");
+  });
+
   it("forwards the provided style to createClaudeAgent", async () => {
     const { spawnClaudePlanAgent } = await loadModule();
 

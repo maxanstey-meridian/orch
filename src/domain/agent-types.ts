@@ -12,6 +12,7 @@ export const AGENT_ROLES = [
   "gap",
   "final",
   "completeness",
+  "triage",
 ] as const;
 
 export type AgentRole = (typeof AGENT_ROLES)[number];
