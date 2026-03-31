@@ -17,6 +17,7 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
   const rpc: JsonRpcClient = createJsonRpcClient(proc);
   let threadId: string | undefined;
   let currentTurnId: string | undefined;
+  let nextTurnSeq = 1;
   let alive = true;
 
   return {
@@ -57,6 +58,7 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
       };
       rpc.onNotification(turnHandler);
 
+      currentTurnId = `turn-${nextTurnSeq++}`;
       const params: Record<string, unknown> = { threadId, prompt };
       const result = await rpc.request('turn/start', params) as { result?: string };
       currentTurnId = undefined;

@@ -11,16 +11,19 @@ describe('CodexAgentSpawner', () => {
     fake?.close();
   });
 
-  it('spawn with no resumeSessionId calls thread/start and sets sessionId', async () => {
+  it('spawn with no resumeSessionId calls thread/start and sessionId is the thread id', async () => {
     fake = createFakeAppServer();
     const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
     const handle = spawner.spawn('tdd');
 
-    await tick();
+    // sessionId is not available synchronously — need to await ready via send
+    fake.setTurnScript([{ kind: 'turnCompleted', resultText: '' }]);
+    await handle.send('init');
 
     const threadStart = fake.receivedRequests.find((r) => r.method === 'thread/start');
     expect(threadStart).toBeDefined();
-    expect(handle.sessionId).toBeTruthy();
+    // sessionId must be the real thread id returned by the server, not a UUID
+    expect(handle.sessionId).toMatch(/^thread-/);
   });
 
   it('send() resolves with AgentResult on turnCompleted', async () => {
@@ -121,6 +124,50 @@ describe('CodexAgentSpawner', () => {
     const threadStart = fake.receivedRequests.find((r) => r.method === 'thread/start');
     expect(threadStart).toBeDefined();
     expect(threadStart!.params?.developerInstructions).toBe('plan instructions');
+  });
+
+  it('currentTurnId is defined during an active turn', async () => {
+    fake = createFakeAppServer();
+    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const handle = spawner.spawn('tdd');
+
+    let turnIdDuringTurn: string | undefined;
+    fake.setTurnScript([
+      { kind: 'textDelta', text: 'mid-turn' },
+      { kind: 'turnCompleted', resultText: 'done' },
+    ]);
+
+    // Access the client's currentTurnId via the handle's internal client
+    // We test this by checking that inject() during send would hit the steer path (Slice 5 prep)
+    // For now, test via the app-server-client directly
+    const { createCodexAppServerClient } = await import('../../src/infrastructure/codex/codex-app-server-client.js');
+    const fake2 = createFakeAppServer();
+    const client = createCodexAppServerClient(fake2.proc);
+    await client.initialize();
+    await client.startThread();
+
+    fake2.setTurnScript([
+      { kind: 'textDelta', text: 'hello' },
+      { kind: 'turnCompleted', resultText: 'done' },
+    ]);
+
+    // Before turn: no turnId
+    expect(client.currentTurnId).toBeUndefined();
+
+    let capturedTurnId: string | undefined;
+    await client.startTurn('go', (event) => {
+      if (event.kind === 'textDelta') {
+        capturedTurnId = client.currentTurnId;
+      }
+    });
+
+    // During turn, currentTurnId was defined
+    expect(capturedTurnId).toBeDefined();
+    expect(typeof capturedTurnId).toBe('string');
+    // After turn completes, currentTurnId is cleared
+    expect(client.currentTurnId).toBeUndefined();
+
+    fake2.close();
   });
 
   it('spawn with resumeSessionId calls thread/resume with that id', async () => {

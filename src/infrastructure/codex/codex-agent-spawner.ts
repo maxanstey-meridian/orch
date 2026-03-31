@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import { AgentSpawner, type AgentHandle } from '../../application/ports/agent-spawner.port.js';
 import type { AgentRole } from '../../domain/agent-types.js';
@@ -26,10 +25,10 @@ export class CodexAgentSpawner extends AgentSpawner {
     },
   ): AgentHandle {
     const style = ROLE_STYLES[role];
-    const sessionId = opts?.resumeSessionId ?? randomUUID();
     const proc = this.processFactory();
     const client = createCodexAppServerClient(proc);
 
+    let sessionId = opts?.resumeSessionId ?? '';
     let persistentOnText: ((text: string) => void) | undefined;
     let persistentOnToolUse: ((summary: string) => void) | undefined;
 
@@ -39,7 +38,7 @@ export class CodexAgentSpawner extends AgentSpawner {
       if (opts?.resumeSessionId) {
         await client.resumeThread(opts.resumeSessionId, opts?.systemPrompt);
       } else {
-        await client.startThread(opts?.systemPrompt);
+        sessionId = await client.startThread(opts?.systemPrompt);
       }
     })();
 
