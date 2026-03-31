@@ -1,15 +1,19 @@
 import type { OrchestratorConfig, Provider } from "../domain/config.js";
+import { spawn } from "node:child_process";
 import { spawnClaudeGeneratePlanAgent } from "./claude/claude-agent-factory.js";
 import type { Hud } from "../ui/hud.js";
 import { ClaudeAgentSpawner } from "./claude-agent-spawner.js";
+import { CodexAgentSpawner } from "./codex/codex-agent-spawner.js";
 import { FsStatePersistence } from "./fs-state-persistence.js";
 import { ChildProcessGitOps } from "./child-process-git-ops.js";
 import { DefaultPromptBuilder } from "./default-prompt-builder.js";
 import { InkOperatorGate, SilentOperatorGate, InkProgressSink, SilentProgressSink } from "../ui/ink-operator-gate.js";
+import { SilentRuntimeInteractionGate, InkRuntimeInteractionGate } from "../ui/ink-runtime-interaction-gate.js";
 import type { OperatorGate } from "../application/ports/operator-gate.port.js";
 import type { ProgressSink } from "../application/ports/progress-sink.port.js";
+import type { RuntimeInteractionGate } from "../application/ports/runtime-interaction.port.js";
 
-export const agentSpawnerFactory = (config: OrchestratorConfig) => {
+export const agentSpawnerFactory = (config: OrchestratorConfig, runtimeInteractionGate: RuntimeInteractionGate) => {
   switch (config.provider) {
     case "claude":
       return new ClaudeAgentSpawner(
@@ -17,14 +21,18 @@ export const agentSpawnerFactory = (config: OrchestratorConfig) => {
         config.cwd,
       );
     case "codex":
-      throw new Error("Codex provider is not yet implemented");
+      return new CodexAgentSpawner(
+        config.cwd,
+        { auto: config.auto, noInteraction: config.noInteraction },
+        () => spawn("codex", ["app-server"], { cwd: config.cwd, stdio: ["pipe", "pipe", "pipe"] }),
+      );
     default: {
       const _exhaustive: never = config.provider;
       throw new Error(`Unknown provider: ${_exhaustive}`);
     }
   }
 };
-agentSpawnerFactory.inject = ["config"] as const;
+agentSpawnerFactory.inject = ["config", "runtimeInteractionGate"] as const;
 
 export const statePersistenceFactory = (config: OrchestratorConfig) =>
   new FsStatePersistence(config.stateFile);
@@ -45,6 +53,12 @@ operatorGateFactory.inject = ["config", "hud"] as const;
 export const progressSinkFactory = (config: OrchestratorConfig, hud: Hud): ProgressSink =>
   config.noInteraction ? new SilentProgressSink() : new InkProgressSink(hud);
 progressSinkFactory.inject = ["config", "hud"] as const;
+
+export const runtimeInteractionGateFactory = (config: OrchestratorConfig, hud: Hud): RuntimeInteractionGate =>
+  config.auto || config.noInteraction
+    ? new SilentRuntimeInteractionGate()
+    : new InkRuntimeInteractionGate(hud);
+runtimeInteractionGateFactory.inject = ["config", "hud"] as const;
 
 export const planGeneratorSpawnerFactory = (opts: { provider: Provider; cwd: string }) => {
   switch (opts.provider) {

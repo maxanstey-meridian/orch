@@ -12,6 +12,10 @@ vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
   ),
 }));
 
+import { SilentRuntimeInteractionGate } from "../../src/ui/ink-runtime-interaction-gate.js";
+
+const dummyGate = new SilentRuntimeInteractionGate();
+
 const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig => ({
   cwd: "/tmp/test",
   planPath: "/tmp/plan.json",
@@ -41,9 +45,9 @@ describe("agentSpawnerFactory", () => {
       "../../src/infrastructure/claude-agent-spawner.js"
     );
     const config = makeConfig();
-    const result = agentSpawnerFactory(config);
+    const result = agentSpawnerFactory(config, dummyGate);
     expect(result).toBeInstanceOf(ClaudeAgentSpawner);
-    expect(agentSpawnerFactory.inject).toEqual(["config"]);
+    expect(agentSpawnerFactory.inject).toEqual(["config", "runtimeInteractionGate"]);
   });
 
   it("passes config skills and cwd through to the spawner", async () => {
@@ -56,7 +60,7 @@ describe("agentSpawnerFactory", () => {
       tddSkill: "my-tdd-skill",
       cwd: "/custom/cwd",
     });
-    const spawner = agentSpawnerFactory(config);
+    const spawner = agentSpawnerFactory(config, dummyGate);
     spawner.spawn("tdd");
 
     expect(spawnClaudeAgent).toHaveBeenCalledWith(
@@ -67,10 +71,14 @@ describe("agentSpawnerFactory", () => {
     );
   });
 
-  it("throws for codex provider (not yet implemented)", async () => {
+  it("creates CodexAgentSpawner for codex provider", async () => {
     const { agentSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const { CodexAgentSpawner } = await import(
+      "../../src/infrastructure/codex/codex-agent-spawner.js"
+    );
     const config = makeConfig({ provider: "codex" });
-    expect(() => agentSpawnerFactory(config)).toThrow("not yet implemented");
+    const result = agentSpawnerFactory(config, dummyGate);
+    expect(result).toBeInstanceOf(CodexAgentSpawner);
   });
 });
 
