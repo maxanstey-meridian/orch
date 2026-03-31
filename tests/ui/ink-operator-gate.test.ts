@@ -57,6 +57,12 @@ describe("SilentOperatorGate", () => {
     expect(result).toBe(true);
   });
 
+  it("creditExhausted returns quit", async () => {
+    const gate = new SilentOperatorGate();
+    const result = await gate.creditExhausted("tdd", "credit-exhausted");
+    expect(result).toEqual({ kind: "quit" });
+  });
+
 });
 
 describe("SilentProgressSink", () => {
@@ -220,6 +226,29 @@ describe("InkOperatorGate", () => {
       const gate = new InkOperatorGate(hud);
       const result = await gate.confirmNextGroup("Ports B");
       expect(result).toBe(true);
+    });
+  });
+
+  describe("creditExhausted", () => {
+    it("'q' returns quit", async () => {
+      const hud = createMockHud({ askUser: vi.fn().mockResolvedValueOnce("q") });
+      const gate = new InkOperatorGate(hud);
+      const result = await gate.creditExhausted("tdd", "credit-exhausted");
+      expect(result).toEqual({ kind: "quit" });
+    });
+
+    it("'r' returns retry", async () => {
+      const hud = createMockHud({ askUser: vi.fn().mockResolvedValueOnce("r") });
+      const gate = new InkOperatorGate(hud);
+      const result = await gate.creditExhausted("tdd", "credit-exhausted");
+      expect(result).toEqual({ kind: "retry" });
+    });
+
+    it("'' defaults to retry", async () => {
+      const hud = createMockHud({ askUser: vi.fn().mockResolvedValueOnce("") });
+      const gate = new InkOperatorGate(hud);
+      const result = await gate.creditExhausted("tdd", "credit-exhausted");
+      expect(result).toEqual({ kind: "retry" });
     });
   });
 

@@ -5,8 +5,7 @@ import type {
   RuntimeInteractionGate,
   RuntimeInteractionRequest,
 } from "../../application/ports/runtime-interaction.port.js";
-import type { CodexApprovalRequest, CodexTurnError } from "./codex-notifications.js";
-import { categorizeCodexError } from "./codex-error-mapper.js";
+import type { CodexApprovalRequest } from "./codex-notifications.js";
 import { ROLE_STYLES } from "../../ui/agent-role-styles.js";
 import { createCodexAppServerClient } from "./codex-app-server-client.js";
 import { detectQuestion } from "../agent/question-detector.js";
@@ -43,21 +42,6 @@ const createTextBuffer = (flush: (text: string) => void) => {
   };
 };
 
-const errorToResultText = (error: CodexTurnError): string => {
-  const category = categorizeCodexError(error);
-  switch (category) {
-    case "creditExhausted":
-      return `Credit exhausted: ${error.message}`;
-    case "retryable":
-      return error.code === "rateLimited"
-        ? `Rate limit exceeded: ${error.message}`
-        : `Server overloaded: ${error.message}`;
-    case "unauthorized":
-      return `Unauthorized: ${error.message}`;
-    case "unknown":
-      return `Error: ${error.code} — ${error.message}`;
-  }
-};
 
 type ProcessFactory = () => ChildProcess;
 
@@ -203,7 +187,7 @@ export class CodexAgentSpawner extends AgentSpawner {
                 break;
               case "turnFailed":
                 failed = true;
-                failureResultText = errorToResultText(event.error);
+                failureResultText = event.message;
                 assistantText += `\n[${failureResultText}]`;
                 break;
               case "approvalRequested":

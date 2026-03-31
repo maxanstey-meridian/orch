@@ -5,6 +5,7 @@ import {
 import type {
   GateDecision,
   VerifyDecision,
+  CreditDecision,
 } from "../../../src/application/ports/operator-gate.port.js";
 
 describe("GateDecision", () => {
@@ -37,6 +38,9 @@ class AutoOperatorGate extends OperatorGate {
     return { kind: "accept" };
   }
   async verifyFailed(_sliceNumber: number, _summary: string): Promise<VerifyDecision> {
+    return { kind: "retry" };
+  }
+  async creditExhausted(_label: string, _message: string): Promise<CreditDecision> {
     return { kind: "retry" };
   }
   async askUser(_prompt: string): Promise<string> {

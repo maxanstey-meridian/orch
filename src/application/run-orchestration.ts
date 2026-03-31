@@ -805,10 +805,15 @@ export class RunOrchestration {
 
       if (!apiError.retryable) {
         await this.persistence.save(this.state);
-        throw new CreditExhaustedError(
-          `Terminal API error during ${label}: ${apiError.kind}`,
-          result.assistantText.length > 0 ? "mid-response" : "rejected",
-        );
+        const decision = await this.gate.creditExhausted(label, `${apiError.kind}: ${result.resultText.slice(0, 200)}`);
+        if (decision.kind === "quit") {
+          throw new CreditExhaustedError(
+            `Terminal API error during ${label}: ${apiError.kind}`,
+            result.assistantText.length > 0 ? "mid-response" : "rejected",
+          );
+        }
+        // retry — operator chose to wait and retry
+        continue;
       }
 
       attempt++;
@@ -821,14 +826,18 @@ export class RunOrchestration {
     }
   }
 
-  async checkCredit(result: AgentResult, agent: AgentHandle): Promise<void> {
+  async checkCredit(result: AgentResult, agent: AgentHandle, label = "post-send"): Promise<void> {
     const apiError = detectApiError(result, agent.stderr);
     if (!apiError || apiError.retryable) return;
     await this.persistence.save(this.state);
-    throw new CreditExhaustedError(
-      `Terminal API error: ${apiError.kind}`,
-      result.assistantText.length > 0 ? "mid-response" : "rejected",
-    );
+    const decision = await this.gate.creditExhausted(label, `${apiError.kind}: ${result.resultText.slice(0, 200)}`);
+    if (decision.kind === "quit") {
+      throw new CreditExhaustedError(
+        `Terminal API error: ${apiError.kind}`,
+        result.assistantText.length > 0 ? "mid-response" : "rejected",
+      );
+    }
+    // operator chose retry — caller will re-send
   }
 
   async respawnTdd(): Promise<void> {

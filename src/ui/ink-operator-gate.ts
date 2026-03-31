@@ -2,6 +2,7 @@ import {
   OperatorGate,
   type GateDecision,
   type VerifyDecision,
+  type CreditDecision,
 } from "../application/ports/operator-gate.port.js";
 import {
   ProgressSink,
@@ -22,6 +23,10 @@ export class SilentOperatorGate extends OperatorGate {
 
   async verifyFailed(_sliceNumber: number, _summary: string): Promise<VerifyDecision> {
     return { kind: "stop" };
+  }
+
+  async creditExhausted(_label: string, _message: string): Promise<CreditDecision> {
+    return { kind: "quit" };
   }
 
   async askUser(_prompt: string): Promise<string> {
@@ -91,6 +96,15 @@ export class InkOperatorGate extends OperatorGate {
     const choice = answer.trim().toLowerCase();
     if (choice === "s") return { kind: "skip" };
     if (choice === "t") return { kind: "stop" };
+    return { kind: "retry" };
+  }
+
+  async creditExhausted(label: string, message: string): Promise<CreditDecision> {
+    const answer = await this.hud.askUser(
+      `Credit exhaustion during ${label}:\n${message}\n\n(r)etry / (q)uit? `,
+    );
+    const choice = answer.trim().toLowerCase();
+    if (choice === "q") return { kind: "quit" };
     return { kind: "retry" };
   }
 
