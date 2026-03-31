@@ -14,7 +14,7 @@ import { parseVerifyResult } from "../domain/verify.js";
 import { isCleanReview } from "../domain/review-check.js";
 import { isAlreadyImplemented } from "../domain/transition.js";
 import { shouldReview } from "../domain/review.js";
-import { CreditExhaustedError } from "../domain/errors.js";
+import { CreditExhaustedError, IncompleteRunError } from "../domain/errors.js";
 import { advanceState } from "../domain/state.js";
 import type { Phase } from "../domain/phase.js";
 import { transition } from "../domain/transition.js";
@@ -59,6 +59,16 @@ export class RunOrchestration {
     private readonly config: OrchestratorConfig,
     private readonly progressSink: ProgressSink,
   ) {}
+
+  private failIncompleteSlice(slice: Slice, reason: string): never {
+    this.phase = { kind: "Idle" };
+    this.sliceSkipFlag = false;
+    throw new IncompleteRunError(`Slice ${slice.number} did not complete: ${reason}`);
+  }
+
+  private canSkipCurrentSlice(): boolean {
+    return "sliceNumber" in this.phase;
+  }
 
   private pipeToSink(agent: AgentHandle, role: AgentRole): void {
     const streamer = this.progressSink.createStreamer(role);
@@ -120,6 +130,11 @@ export class RunOrchestration {
     interrupts.onInterrupt((text) => {
       this.hardInterruptPending = text;
       if (this.tddAgent) this.tddAgent.kill();
+    });
+    interrupts.onSkip(() => {
+      if (!this.canSkipCurrentSlice()) return false;
+      this.sliceSkipFlag = true;
+      return true;
     });
 
     const runBaseSha = await this.git.captureRef();
@@ -196,18 +211,7 @@ export class RunOrchestration {
         }
 
         if (pteResult.skipped) {
-          this.phase = { kind: "Idle" };
-          this.sliceSkipFlag = false;
-          this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
-          await this.persistence.save(this.state);
-          await this.respawnTdd();
-          this.slicesCompleted++;
-          groupCompleted++;
-          this.progressSink.updateProgress({
-            completedSlices: this.slicesCompleted,
-            groupCompleted,
-          });
-          continue;
+          this.failIncompleteSlice(slice, "execution was skipped before delivery");
         }
 
         let tddResult = pteResult.tddResult;
@@ -242,6 +246,10 @@ export class RunOrchestration {
         const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
         reviewBase = sliceResult.reviewBase;
         this.phase = { kind: "Idle" };
+
+        if (sliceResult.skipped) {
+          this.failIncompleteSlice(slice, "verification or review did not complete");
+        }
 
         if (!sliceResult.skipped) {
           groupCompleted++;
@@ -582,7 +590,7 @@ export class RunOrchestration {
     );
     let parsed = parseVerifyResult(verifyResult.assistantText ?? "");
 
-    if (!parsed.passed) {
+    while (!parsed.passed) {
       this.phase = transition(this.phase, { kind: "VerifyFailed" });
 
       const failureContext =
@@ -610,14 +618,12 @@ export class RunOrchestration {
         const decision = await this.gate.verifyFailed(slice.number, failSummary);
 
         if (decision.kind === "stop") {
-          this.progressSink.teardown();
-          throw new Error("Operator stopped");
+          throw new IncompleteRunError(`Slice ${slice.number} verification failed and execution stopped`);
         }
         if (decision.kind === "skip") {
           return false;
         }
-        // Operator chose retry — continue to review, don't loop
-        return true;
+        continue;
       }
 
       // Re-verify — tell the verifier what TDD fixed
@@ -639,14 +645,12 @@ export class RunOrchestration {
         const decision = await this.gate.verifyFailed(slice.number, failSummary);
 
         if (decision.kind === "stop") {
-          this.progressSink.teardown();
-          throw new Error("Operator stopped");
+          throw new IncompleteRunError(`Slice ${slice.number} verification failed and execution stopped`);
         }
         if (decision.kind === "skip") {
           return false;
         }
-        // retry — continue to review
-        return true;
+        continue;
       }
     }
 

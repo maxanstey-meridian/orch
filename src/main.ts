@@ -33,7 +33,7 @@ import {
 } from "./infrastructure/state/state.js";
 import { runFingerprint } from "./infrastructure/fingerprint.js";
 import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "./ui/display.js";
-import { CreditExhaustedError } from "./domain/errors.js";
+import { CreditExhaustedError, IncompleteRunError } from "./domain/errors.js";
 import type { OrchestratorConfig } from "./domain/config.js";
 import { createContainer } from "./composition-root.js";
 import { runInit, profileToMarkdown } from "./ui/init.js";
@@ -324,6 +324,11 @@ const main = async () => {
       log(`\n${ts()} ${a.red}Credit exhaustion detected: ${err.message}${a.reset}`);
       cleanup();
       process.exit(2);
+    }
+    if (err instanceof IncompleteRunError) {
+      log(`\n${ts()} ${a.red}${err.message}${a.reset}`);
+      cleanup();
+      process.exit(1);
     }
     throw err;
   }

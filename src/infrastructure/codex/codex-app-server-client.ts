@@ -29,13 +29,38 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
   const rpc: JsonRpcClient = createJsonRpcClient(proc);
   let threadId: string | undefined;
   let currentTurnId: string | undefined;
-  let nextTurnSeq = 1;
   let alive = true;
   // Maps itemId → raw JSON-RPC request id (preserves number/string type for response)
   const serverRequestIds = new Map<string, number | string>();
+  let rejectActiveTurn: ((error: Error) => void) | null = null;
+
+  const clearTurnHandlers = () => {
+    rpc.onNotification(() => {});
+    rpc.onServerRequest(() => {});
+  };
+
+  const readTurnId = (raw: unknown): string => {
+    const result = raw as Record<string, unknown> | undefined;
+    const turn = result?.turn;
+
+    if (
+      typeof turn === "object" &&
+      turn !== null &&
+      typeof (turn as Record<string, unknown>).id === "string"
+    ) {
+      return (turn as Record<string, unknown>).id as string;
+    }
+
+    if (typeof result?.turnId === "string") {
+      return result.turnId;
+    }
+
+    throw new Error("turn/start response missing turn id");
+  };
 
   const markDead = () => {
     alive = false;
+    rejectActiveTurn?.(new Error("process exited"));
   };
   // Hook process events when available (real ChildProcess)
   if (typeof proc.on === "function") {
@@ -100,10 +125,21 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
     startTurn: async (prompt, onEvent) => {
       let accumulatedText = "";
       let resolveCompletion: ((text: string) => void) | null = null;
+      let settled = false;
 
-      const completionPromise = new Promise<string>((resolve) => {
-        resolveCompletion = resolve;
+      const completionPromise = new Promise<string>((resolve, reject) => {
+        resolveCompletion = (text: string) => {
+          if (settled) return;
+          settled = true;
+          resolve(text);
+        };
+        rejectActiveTurn = (error: Error) => {
+          if (settled) return;
+          settled = true;
+          reject(error);
+        };
       });
+      completionPromise.catch(() => {});
 
       const turnHandler = (n: { method: string; params?: Record<string, unknown> }) => {
         const event = normalizeNotification(n);
@@ -130,22 +166,24 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
         }
       });
 
-      currentTurnId = `turn-${nextTurnSeq++}`;
       const params: Record<string, unknown> = {
         threadId,
         input: [{ type: "text", text: prompt }],
       };
 
-      // turn/start returns immediately with an ack — the real result comes via turn/completed notification
-      await rpc.request("turn/start", params);
+      try {
+        // turn/start returns immediately with an ack — the real result comes via turn/completed notification
+        const startResult = await rpc.request("turn/start", params);
+        currentTurnId = readTurnId(startResult);
 
-      const resultText = await completionPromise;
-      currentTurnId = undefined;
-      rpc.onNotification(() => {});
-      rpc.onServerRequest(() => {});
-
-      onEvent({ kind: "turnCompleted", resultText });
-      return resultText;
+        const resultText = await completionPromise;
+        onEvent({ kind: "turnCompleted", resultText });
+        return resultText;
+      } finally {
+        rejectActiveTurn = null;
+        currentTurnId = undefined;
+        clearTurnHandlers();
+      }
     },
 
     steerTurn: async (message) => {
@@ -159,15 +197,26 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
     },
 
     respondToApproval: (requestId, approved) => {
-      const decision = approved ? "accept" : "cancel";
-      // Look up the raw JSON-RPC id (preserves number type) for the response
-      const rpcId = serverRequestIds.get(requestId) ?? requestId;
-      serverRequestIds.delete(requestId);
-      rpc.respond(rpcId, { decision });
+      const rpcId = serverRequestIds.get(requestId);
+
+      if (rpcId !== undefined) {
+        serverRequestIds.delete(requestId);
+        const decision = approved ? "accept" : "cancel";
+        rpc.respond(rpcId, { decision });
+        return;
+      }
+
+      stdin.write(JSON.stringify({
+        jsonrpc: "2.0",
+        method: "codex/approvalResponse",
+        params: { id: requestId, approved },
+      }) + "\n");
     },
 
     close: () => {
       alive = false;
+      rejectActiveTurn?.(new Error("client closed"));
+      rejectActiveTurn = null;
       rpc.close();
     },
   };

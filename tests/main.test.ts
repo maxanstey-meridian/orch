@@ -671,6 +671,7 @@ import type { OrchestratorConfig } from "../src/domain/config.js";
 import type { AgentResult } from "../src/domain/agent-types.js";
 import type { AgentHandle } from "../src/application/ports/agent-spawner.port.js";
 import { RunOrchestration } from "../src/application/run-orchestration.js";
+import { IncompleteRunError } from "../src/domain/errors.js";
 
 const makeTestConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig => ({
   cwd: "/tmp/test",
@@ -736,12 +737,19 @@ describe("composition root integration", () => {
     // Replace ports with in-memory test doubles AFTER construction
     const tddAgent = makeTestAgent();
     const reviewAgent = makeTestAgent();
+    const verifyAgent = {
+      ...makeTestAgent(),
+      send: vi.fn().mockResolvedValue(makeTestResult({
+        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+      })),
+    };
     (orch as any).agents = {
       spawn: vi.fn().mockReturnValue(makeTestAgent()),
     };
     (orch as any).agents.spawn
       .mockReturnValueOnce(tddAgent)
-      .mockReturnValueOnce(reviewAgent);
+      .mockReturnValueOnce(reviewAgent)
+      .mockReturnValueOnce(verifyAgent);
     (orch as any).persistence = {
       load: vi.fn().mockResolvedValue({}),
       save: vi.fn().mockResolvedValue(undefined),
@@ -934,5 +942,32 @@ describe("composition root integration", () => {
 
     expect(exitCode).toBe(2);
   });
-});
 
+  it("IncompleteRunError from execute bypasses success cleanup", async () => {
+    const cleanup = vi.fn();
+    const logSection = vi.fn();
+    const clearState = vi.fn().mockResolvedValue(undefined);
+    let exitCode: number | undefined;
+
+    try {
+      throw new IncompleteRunError("Slice 1 did not complete: verification or review did not complete");
+    } catch (err) {
+      if (err instanceof IncompleteRunError) {
+        cleanup();
+        exitCode = 1;
+      } else {
+        throw err;
+      }
+    }
+
+    if (exitCode === undefined) {
+      logSection();
+      await clearState("/tmp/state.json");
+    }
+
+    expect(exitCode).toBe(1);
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(logSection).not.toHaveBeenCalled();
+    expect(clearState).not.toHaveBeenCalled();
+  });
+});

@@ -4,6 +4,7 @@ import type { Slice } from "../../domain/plan.js";
 export type InterruptHandler = {
   onGuide(callback: (text: string) => void): void;
   onInterrupt(callback: (text: string) => void): void;
+  onSkip(callback: () => boolean): void;
 };
 
 export type ProgressUpdate = {
