@@ -111,6 +111,22 @@ describe("git", () => {
       const ref = await captureRef(repoDir);
       expect(await getDiff(repoDir, ref)).toBe("");
     });
+
+    it("ignores uncommitted working-tree changes and returns committed diff only", async () => {
+      const refBefore = await captureRef(repoDir);
+      await writeFile(join(repoDir, "file.txt"), "committed change");
+      exec("git add file.txt", repoDir);
+      exec('git commit -m "second"', repoDir);
+
+      await writeFile(join(repoDir, "file.txt"), "working tree change");
+
+      const diff = await getDiff(repoDir, refBefore);
+      const expected = exec(`git diff ${refBefore}..HEAD`, repoDir);
+
+      expect(diff).toBe(expected);
+      expect(diff).toContain("committed change");
+      expect(diff).not.toContain("working tree change");
+    });
   });
 
   describe("hasDirtyTree", () => {
