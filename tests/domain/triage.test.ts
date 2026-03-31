@@ -79,6 +79,14 @@ describe("parseTriageResult", () => {
     expect(parseTriageResult("definitely not JSON")).toEqual(FULL_TRIAGE);
   });
 
+  it("returns FULL_TRIAGE when the JSON is malformed", () => {
+    expect(
+      parseTriageResult(`\`\`\`json
+{"completeness": true,
+\`\`\``),
+    ).toEqual(FULL_TRIAGE);
+  });
+
   it("returns FULL_TRIAGE when required fields are missing", () => {
     expect(
       parseTriageResult(
@@ -133,5 +141,17 @@ describe("buildTriagePrompt", () => {
     expect(prompt).toContain("Output ONLY the raw JSON object");
     expect(prompt).toContain("No markdown code fences");
     expect(prompt).toContain("no commentary");
+  });
+
+  it("includes the classifier dimensions and stage-decision guidance", () => {
+    const prompt = buildTriagePrompt("diff --git a/file.ts b/file.ts");
+
+    expect(prompt).toContain("file count");
+    expect(prompt).toContain("scope of the change");
+    expect(prompt).toContain("nature of the change");
+    expect(prompt).toContain("cascade risk across adjacent code paths");
+    expect(prompt).toContain(
+      "Decide whether the pipeline should run completeness, verify, review, and gap analysis",
+    );
   });
 });

@@ -130,6 +130,10 @@ const makeUc = (
 // ── Tests ──
 
 describe("RunOrchestration", () => {
+  it.todo(
+    "skips completeness, verify, review, and gap analysis when triage disables them once Slice 4 wires triage into orchestration",
+  );
+
   describe("Cycle 1: scaffold", () => {
     it("resolves immediately for empty group list", async () => {
       const { uc } = makeUc();
