@@ -2,11 +2,28 @@ import type { ChildProcess } from 'node:child_process';
 import { AgentSpawner, type AgentHandle } from '../../application/ports/agent-spawner.port.js';
 import type { AgentRole } from '../../domain/agent-types.js';
 import type { RuntimeInteractionGate, RuntimeInteractionRequest } from '../../application/ports/runtime-interaction.port.js';
-import type { CodexApprovalRequest } from './codex-notifications.js';
+import type { CodexApprovalRequest, CodexTurnError } from './codex-notifications.js';
+import { categorizeCodexError } from './codex-error-mapper.js';
 import { ROLE_STYLES } from '../claude-agent-spawner.js';
 import { createCodexAppServerClient } from './codex-app-server-client.js';
 import { detectQuestion } from '../agent/question-detector.js';
 import { resolveCodexModeConfig } from './codex-mode-config.js';
+
+const errorToResultText = (error: CodexTurnError): string => {
+  const category = categorizeCodexError(error);
+  switch (category) {
+    case 'creditExhausted':
+      return `Credit exhausted: ${error.message}`;
+    case 'retryable':
+      return error.code === 'rateLimited'
+        ? `Rate limit exceeded: ${error.message}`
+        : `Server overloaded: ${error.message}`;
+    case 'unauthorized':
+      return `Unauthorized: ${error.message}`;
+    case 'unknown':
+      return `Error: ${error.code} — ${error.message}`;
+  }
+};
 
 type ProcessFactory = () => ChildProcess;
 
@@ -26,7 +43,7 @@ export class CodexAgentSpawner extends AgentSpawner {
     private readonly defaultCwd: string,
     private readonly config: { readonly auto: boolean; readonly noInteraction: boolean },
     private readonly processFactory: ProcessFactory,
-    private readonly gate?: RuntimeInteractionGate,
+    private readonly gate: RuntimeInteractionGate,
   ) {
     super();
   }
@@ -54,10 +71,10 @@ export class CodexAgentSpawner extends AgentSpawner {
     const handleApprovalEvent = (request: CodexApprovalRequest) => {
       if (modeConfig.approvalMode === 'auto-approve') {
         client.respondToApproval(request.id, true);
-      } else if (this.gate) {
+      } else {
         approvalChain = approvalChain.then(async () => {
           try {
-            const decision = await this.gate!.decide(mapApprovalToInteraction(request));
+            const decision = await this.gate.decide(mapApprovalToInteraction(request));
             switch (decision.kind) {
               case 'approve':
                 client.respondToApproval(request.id, true);
@@ -110,6 +127,7 @@ export class CodexAgentSpawner extends AgentSpawner {
 
           let assistantText = '';
           let failed = false;
+          let failureResultText = '';
           const effectiveOnText = onText ?? persistentOnText;
           const effectiveOnToolUse = onToolUse ?? persistentOnToolUse;
 
@@ -124,7 +142,8 @@ export class CodexAgentSpawner extends AgentSpawner {
                 break;
               case 'turnFailed':
                 failed = true;
-                assistantText += `\n[Error: ${event.error.code} — ${event.error.message}]`;
+                failureResultText = errorToResultText(event.error);
+                assistantText += `\n[${failureResultText}]`;
                 break;
               case 'approvalRequested':
                 handleApprovalEvent(event.request);
@@ -135,7 +154,7 @@ export class CodexAgentSpawner extends AgentSpawner {
           return {
             exitCode: failed ? 1 : 0,
             assistantText,
-            resultText,
+            resultText: failed ? failureResultText : resultText,
             needsInput: detectQuestion(assistantText),
             sessionId,
           };

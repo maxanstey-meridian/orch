@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { spawn, execSync } from 'node:child_process';
 import { createCodexAppServerClient, type CodexAppServerClient } from '../../src/infrastructure/codex/codex-app-server-client.js';
 import { CodexAgentSpawner } from '../../src/infrastructure/codex/codex-agent-spawner.js';
+import { SilentRuntimeInteractionGate } from '../../src/ui/ink-runtime-interaction-gate.js';
 import type { CodexEvent } from '../../src/infrastructure/codex/codex-notifications.js';
 
 const hasCodex = (() => {
@@ -67,6 +68,7 @@ describe.skipIf(!hasCodex)('CodexAgentSpawner integration (real codex binary)', 
       process.cwd(),
       { auto: true, noInteraction: false },
       spawnAppServer,
+      new SilentRuntimeInteractionGate(),
     );
     const handle = spawner.spawn('tdd');
 
@@ -84,6 +86,7 @@ describe.skipIf(!hasCodex)('CodexAgentSpawner integration (real codex binary)', 
       process.cwd(),
       { auto: true, noInteraction: false },
       spawnAppServer,
+      new SilentRuntimeInteractionGate(),
     );
     const handle = spawner.spawn('tdd');
 

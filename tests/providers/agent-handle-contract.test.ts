@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { AgentSpawner, AgentHandle } from '../../src/application/ports/agent-spawner.port.js';
 import { ClaudeAgentSpawner } from '../../src/infrastructure/claude-agent-spawner.js';
 import { CodexAgentSpawner } from '../../src/infrastructure/codex/codex-agent-spawner.js';
+import { SilentRuntimeInteractionGate } from '../../src/ui/ink-runtime-interaction-gate.js';
 import { createFakeAppServer, type FakeAppServer } from '../codex/fake-app-server.js';
 
 // --- Claude mock setup ---
@@ -152,6 +153,7 @@ describeAgentHandleContract('CodexAgentSpawner', () => {
       '/tmp/test',
       { auto: false, noInteraction: false },
       () => fake.proc,
+      new SilentRuntimeInteractionGate(),
     ),
     beforeSend: () => {
       // Re-set the turn script before each send so it's available
