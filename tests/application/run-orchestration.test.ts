@@ -4,6 +4,7 @@ import type { AgentHandle } from "../../src/application/ports/agent-spawner.port
 import type { OrchestratorConfig } from "../../src/domain/config.js";
 import type { Slice, Group } from "../../src/domain/plan.js";
 import { RunOrchestration } from "../../src/application/run-orchestration.js";
+import { IncompleteRunError } from "../../src/domain/errors.js";
 
 // ── Helpers ──
 
@@ -45,6 +46,15 @@ const makeAgent = (resultOverrides?: Partial<AgentResult>, stderr = ""): AgentHa
   inject: vi.fn(),
   kill: vi.fn(),
   pipe: vi.fn(),
+});
+
+const makeAgentWith = (
+  overrides: Partial<AgentHandle>,
+  resultOverrides?: Partial<AgentResult>,
+  stderr = "",
+): AgentHandle => ({
+  ...makeAgent(resultOverrides, stderr),
+  ...overrides,
 });
 
 const makeSlice = (overrides?: Partial<Slice>): Slice => ({
@@ -631,8 +641,7 @@ describe("RunOrchestration", () => {
       const ports = makePorts();
       const { uc, spawner } = makeUc(ports);
       // Verify agent fails once with overloaded then passes
-      const verifyAgent = {
-        ...makeAgent(undefined, ""),
+      const verifyAgent = makeAgentWith({
         send: vi.fn()
           .mockResolvedValueOnce(makeResult({
             exitCode: 1,
@@ -643,7 +652,7 @@ describe("RunOrchestration", () => {
             assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
           })),
         stderr: "529 overloaded",
-      } as unknown as AgentHandle;
+      });
       spawner.spawn.mockReturnValue(verifyAgent);
       uc.tddAgent = makeAgent();
 
@@ -665,7 +674,7 @@ describe("RunOrchestration", () => {
       uc.phase = { kind: "Verifying", sliceNumber: 1 };
       gate.verifyFailed.mockResolvedValue({ kind: "stop" as const });
 
-      await expect(uc.verify(makeSlice(), "sha0")).rejects.toThrow("Operator stopped");
+      await expect(uc.verify(makeSlice(), "sha0")).rejects.toThrow(IncompleteRunError);
       expect(progressSink.teardown).toHaveBeenCalled();
     });
   });
@@ -1057,7 +1066,7 @@ describe("RunOrchestration", () => {
 
     it("bails out when TDD agent is not alive", async () => {
       const { uc, git } = makeUc();
-      const deadAgent = { ...makeAgent(), alive: false } as unknown as AgentHandle;
+      const deadAgent = makeAgentWith({ alive: false });
       uc.tddAgent = deadAgent;
       git.hasDirtyTree.mockResolvedValue(true);
 
@@ -1143,11 +1152,10 @@ describe("RunOrchestration", () => {
       uc.phase = { kind: "Planning", sliceNumber: 1, attempt: 1 };
 
       // First TDD agent dies after send
-      const deadTddAgent = {
-        ...makeAgent(),
+      const deadTddAgent = makeAgentWith({
         alive: false,
         send: vi.fn().mockResolvedValue(makeResult()),
-      } as unknown as AgentHandle;
+      });
       uc.tddAgent = deadTddAgent;
 
       // Spawner returns plan agent first, then new TDD on respawn
@@ -1244,8 +1252,7 @@ describe("RunOrchestration", () => {
     it("retries fix and re-verify when operator chooses retry after re-verify failure", async () => {
       const ports = makePorts();
       const { uc, spawner, gate, git } = makeUc(ports);
-      const verifyAgent = {
-        ...makeAgent(),
+      const verifyAgent = makeAgentWith({
         send: vi.fn()
           .mockResolvedValueOnce(makeResult({
             assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- first failure\n",
@@ -1256,7 +1263,7 @@ describe("RunOrchestration", () => {
           .mockResolvedValueOnce(makeResult({
             assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
           })),
-      } as unknown as AgentHandle;
+      });
       spawner.spawn.mockReturnValue(verifyAgent);
       uc.tddAgent = makeAgent();
       uc.phase = { kind: "Verifying", sliceNumber: 1 };
@@ -1269,6 +1276,34 @@ describe("RunOrchestration", () => {
       expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
       expect(verifyAgent.send).toHaveBeenCalledTimes(3);
       expect(gate.verifyFailed).toHaveBeenCalledTimes(1);
+    });
+
+    it("fails execute when a slice is skipped after verification failure", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: "test",
+        reviewSkill: null,
+      });
+      const { uc, spawner, gate, persistence } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- test broke\n",
+      });
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent)
+        .mockReturnValueOnce(verifyAgent);
+      gate.verifyFailed.mockResolvedValue({ kind: "skip" as const });
+
+      await expect(
+        uc.execute([{ name: "G1", slices: [makeSlice({ number: 1 })] }]),
+      ).rejects.toThrow(IncompleteRunError);
+      expect(persistence.save).not.toHaveBeenCalledWith(
+        expect.objectContaining({ lastCompletedSlice: 1 }),
+      );
     });
   });
 
@@ -1439,11 +1474,16 @@ describe("RunOrchestration", () => {
 
   describe("onReady callback", () => {
     it("calls onReady with session IDs after agent spawn", async () => {
-      const { uc, spawner } = makeUc();
-      const tddAgent = makeAgent();
-      const reviewAgent = makeAgent();
-      (tddAgent as any).sessionId = "tdd-sess-123";
-      (reviewAgent as any).sessionId = "rev-sess-456";
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgentWith({ sessionId: "tdd-sess-123" });
+      const reviewAgent = makeAgentWith({ sessionId: "rev-sess-456" });
       spawner.spawn
         .mockReturnValueOnce(tddAgent)
         .mockReturnValueOnce(reviewAgent);
@@ -1464,7 +1504,14 @@ describe("RunOrchestration", () => {
     });
 
     it("works without onReady (optional)", async () => {
-      const { uc } = makeUc();
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc } = makeUc(ports, config);
       const group: Group = {
         name: "G",
         slices: [makeSlice()],
@@ -1477,14 +1524,20 @@ describe("RunOrchestration", () => {
 
   describe("dispose", () => {
     it("kills all agents and tears down progressSink", async () => {
-      const { uc, spawner, progressSink } = makeUc();
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      const { uc, spawner, progressSink } = makeUc(ports, config);
       const tddAgent = makeAgent();
       const reviewAgent = makeAgent();
       const verifyAgent = makeAgent();
       spawner.spawn
         .mockReturnValueOnce(tddAgent)
-        .mockReturnValueOnce(reviewAgent)
-        .mockReturnValueOnce(verifyAgent);
+        .mockReturnValueOnce(reviewAgent);
 
       // Execute to spawn agents
       const group: Group = {
@@ -1785,7 +1838,7 @@ describe("RunOrchestration", () => {
       expect(uc.phase).toEqual({ kind: "Idle" });
     });
 
-    it("skipped slice resets phase to Idle for next slice", async () => {
+    it("skipped slice fails the run instead of continuing to the next slice", async () => {
       const ports = makePorts();
       const config = makeConfig({
         planDisabled: true,
@@ -1817,10 +1870,8 @@ describe("RunOrchestration", () => {
         },
       ];
 
-      // Should not throw — phase resets to Idle between slices
-      await expect(uc.execute(groups)).resolves.toBeUndefined();
-      // Second slice should have been processed
-      expect(sendCount).toBeGreaterThanOrEqual(2);
+      await expect(uc.execute(groups)).rejects.toThrow(IncompleteRunError);
+      expect(sendCount).toBe(1);
     });
 
     it("hard interrupt during execute phase does not crash the pipeline", async () => {
@@ -2118,8 +2169,8 @@ describe("RunOrchestration", () => {
         reviewSkill: null,
       });
       const { uc, spawner, persistence } = makeUc(ports, config);
-      const tddAgent = { ...makeAgent(), sessionId: "tdd-111" } as unknown as AgentHandle;
-      const reviewAgent = { ...makeAgent(), sessionId: "rev-222" } as unknown as AgentHandle;
+      const tddAgent = makeAgentWith({ sessionId: "tdd-111" });
+      const reviewAgent = makeAgentWith({ sessionId: "rev-222" });
       spawner.spawn
         .mockReturnValueOnce(tddAgent)
         .mockReturnValueOnce(reviewAgent)
@@ -2616,13 +2667,21 @@ describe("RunOrchestration", () => {
 
     it("createStreamer is called with verify when verify agent spawns", async () => {
       const ports = makePorts();
-      ports.git.hasChanges.mockResolvedValue(true);
       const config = makeConfig({
         planDisabled: true,
         gapDisabled: true,
         reviewSkill: null,
       });
-      const { uc, progressSink } = makeUc(ports, config);
+      const { uc, spawner, progressSink } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+      });
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent)
+        .mockReturnValueOnce(verifyAgent);
 
       await uc.execute([{ name: "G", slices: [makeSlice()] }]);
 
@@ -2961,13 +3020,12 @@ describe("RunOrchestration", () => {
       const ports = makePorts();
       const { uc, spawner, progressSink } = makeUc(ports);
       const callOrder: string[] = [];
-      const verifyAgent = {
-        ...makeAgent(),
+      const verifyAgent = makeAgentWith({
         send: vi.fn(async (...args) => {
           callOrder.push("verify-send");
           return makeResult({ assistantText: "### VERIFY_RESULT\n**Status:** PASS\n" });
         }),
-      } as unknown as AgentHandle;
+      });
       spawner.spawn.mockReturnValue(verifyAgent);
       uc.tddAgent = makeAgent();
       progressSink.logBadge.mockImplementation((role: string, phase: string) => {
@@ -2990,8 +3048,7 @@ describe("RunOrchestration", () => {
         callOrder.push("capture-ref");
         return "sha1";
       });
-      const verifyAgent = {
-        ...makeAgent(),
+      const verifyAgent = makeAgentWith({
         send: vi.fn()
           .mockImplementationOnce(async () => {
             callOrder.push("verify-send-1");
@@ -3005,7 +3062,7 @@ describe("RunOrchestration", () => {
               assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
             });
           }),
-      } as unknown as AgentHandle;
+      });
       spawner.spawn.mockReturnValue(verifyAgent);
       uc.tddAgent = makeAgent();
       (uc.tddAgent.send as ReturnType<typeof vi.fn>).mockImplementation(async () => {
@@ -3284,11 +3341,10 @@ describe("RunOrchestration", () => {
       const planAgent = makeAgent({ planText: "the plan" });
       uc.phase = { kind: "Planning", sliceNumber: 1, attempt: 1 };
 
-      const deadTddAgent = {
-        ...makeAgent(),
+      const deadTddAgent = makeAgentWith({
         alive: false,
         send: vi.fn().mockResolvedValue(makeResult()),
-      } as unknown as AgentHandle;
+      });
 
       const freshTddAgent = makeAgent();
       const reviewAgent = makeAgent();

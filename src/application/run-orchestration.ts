@@ -14,7 +14,7 @@ import { parseVerifyResult } from "../domain/verify.js";
 import { isCleanReview } from "../domain/review-check.js";
 import { isAlreadyImplemented } from "../domain/transition.js";
 import { shouldReview } from "../domain/review.js";
-import { CreditExhaustedError } from "../domain/errors.js";
+import { CreditExhaustedError, IncompleteRunError } from "../domain/errors.js";
 import { advanceState } from "../domain/state.js";
 import type { Phase } from "../domain/phase.js";
 import { transition } from "../domain/transition.js";
@@ -59,6 +59,12 @@ export class RunOrchestration {
     private readonly config: OrchestratorConfig,
     private readonly progressSink: ProgressSink,
   ) {}
+
+  private failIncompleteSlice(slice: Slice, reason: string): never {
+    this.phase = { kind: "Idle" };
+    this.sliceSkipFlag = false;
+    throw new IncompleteRunError(`Slice ${slice.number} did not complete: ${reason}`);
+  }
 
   private pipeToSink(agent: AgentHandle, role: AgentRole): void {
     const streamer = this.progressSink.createStreamer(role);
@@ -196,18 +202,7 @@ export class RunOrchestration {
         }
 
         if (pteResult.skipped) {
-          this.phase = { kind: "Idle" };
-          this.sliceSkipFlag = false;
-          this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
-          await this.persistence.save(this.state);
-          await this.respawnTdd();
-          this.slicesCompleted++;
-          groupCompleted++;
-          this.progressSink.updateProgress({
-            completedSlices: this.slicesCompleted,
-            groupCompleted,
-          });
-          continue;
+          this.failIncompleteSlice(slice, "execution was skipped before delivery");
         }
 
         let tddResult = pteResult.tddResult;
@@ -242,6 +237,10 @@ export class RunOrchestration {
         const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
         reviewBase = sliceResult.reviewBase;
         this.phase = { kind: "Idle" };
+
+        if (sliceResult.skipped) {
+          this.failIncompleteSlice(slice, "verification or review did not complete");
+        }
 
         if (!sliceResult.skipped) {
           groupCompleted++;
@@ -611,7 +610,7 @@ export class RunOrchestration {
 
         if (decision.kind === "stop") {
           this.progressSink.teardown();
-          throw new Error("Operator stopped");
+          throw new IncompleteRunError(`Slice ${slice.number} verification failed and execution stopped`);
         }
         if (decision.kind === "skip") {
           return false;
@@ -639,7 +638,7 @@ export class RunOrchestration {
 
         if (decision.kind === "stop") {
           this.progressSink.teardown();
-          throw new Error("Operator stopped");
+          throw new IncompleteRunError(`Slice ${slice.number} verification failed and execution stopped`);
         }
         if (decision.kind === "skip") {
           return false;
