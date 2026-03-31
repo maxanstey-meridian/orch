@@ -142,9 +142,358 @@ const makeUc = (
 // ── Tests ──
 
 describe("RunOrchestration", () => {
-  it.todo(
-    "skips completeness, verify, review, and gap analysis when triage disables them once Slice 4 wires triage into orchestration",
-  );
+  describe("triage gating", () => {
+    it("returns FULL_TRIAGE and skips triage agent when diff is empty", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      // getDiff returns "" by default
+      const { uc, spawner } = makeUc(ports, config);
+      spawner.spawn.mockReturnValue(makeAgent());
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      expect(spawner.spawn).not.toHaveBeenCalledWith("triage", expect.anything());
+    });
+
+    it("returns FULL_TRIAGE and skips triage agent when provider is codex", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        provider: "codex",
+      });
+      ports.git.getDiff.mockResolvedValue("diff --git a/foo.ts b/foo.ts\n+added line");
+      const { uc, spawner } = makeUc(ports, config);
+      spawner.spawn.mockReturnValue(makeAgent());
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      expect(spawner.spawn).not.toHaveBeenCalledWith("triage", expect.anything());
+    });
+
+    it("spawns triage agent, parses result, and kills agent for non-empty diff", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      ports.git.getDiff.mockResolvedValue("diff --git a/foo.ts b/foo.ts\n+added line");
+      const triageAgent = makeAgent({
+        assistantText: '{"completeness":false,"verify":false,"review":true,"gap":false,"reason":"docs only"}',
+      });
+      const { uc, spawner, progressSink } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)      // tdd
+        .mockReturnValueOnce(reviewAgent)    // review
+        .mockReturnValueOnce(triageAgent);   // triage
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      expect(spawner.spawn).toHaveBeenCalledWith("triage", expect.anything());
+      expect(triageAgent.send).toHaveBeenCalled();
+      expect(triageAgent.kill).toHaveBeenCalled();
+      expect(progressSink.logBadge).toHaveBeenCalledWith("triage", "docs only");
+    });
+
+    it("returns FULL_TRIAGE when triage agent throws (graceful degradation)", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      ports.git.getDiff.mockResolvedValue("diff --git a/foo.ts b/foo.ts\n+added line");
+      const triageAgent = makeAgent();
+      (triageAgent.send as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("agent crashed"));
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent)
+        .mockReturnValueOnce(triageAgent);
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+
+      // Should not throw — graceful degradation
+      await expect(uc.execute(groups)).resolves.toBeUndefined();
+    });
+
+    it("skips completeness when triage.runCompleteness is false", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      // Non-empty diff triggers triage
+      ports.git.getDiff.mockResolvedValue("diff --git a/foo.ts\n+line");
+      // hasChanges true so completeness would normally run
+      ports.git.hasChanges.mockResolvedValue(true);
+      const triageAgent = makeAgent({
+        assistantText: '{"completeness":false,"verify":true,"review":true,"gap":true,"reason":"trivial"}',
+      });
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent)
+        .mockReturnValueOnce(triageAgent) // triage
+        .mockReturnValue(makeAgent());    // any other agents
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      expect(spawner.spawn).not.toHaveBeenCalledWith("completeness", expect.anything());
+    });
+
+    it("skips verify when triage.runVerify is false", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: "test",
+        reviewSkill: null,
+      });
+      ports.git.getDiff.mockResolvedValue("diff --git a/foo.ts\n+line");
+      // captureRef returns different SHA to indicate real changes (not already-implemented)
+      ports.git.captureRef.mockResolvedValue("sha1");
+      const triageAgent = makeAgent({
+        assistantText: '{"completeness":true,"verify":false,"review":true,"gap":true,"reason":"trivial verify"}',
+      });
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent)
+        .mockReturnValueOnce(triageAgent)
+        .mockReturnValue(makeAgent());
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      expect(spawner.spawn).not.toHaveBeenCalledWith("verify", expect.anything());
+    });
+
+    it("skips review when triage.runReview is false", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: null,
+        reviewSkill: "test",
+        reviewThreshold: 0,
+      });
+      ports.git.getDiff.mockResolvedValue("diff --git a/foo.ts\n+line");
+      ports.git.captureRef.mockResolvedValue("sha1");
+      ports.git.hasChanges.mockResolvedValue(true);
+      ports.git.measureDiff.mockResolvedValue({ added: 30, removed: 20, total: 50 });
+      const triageAgent = makeAgent({
+        assistantText: '{"completeness":true,"verify":true,"review":false,"gap":true,"reason":"trivial review"}',
+      });
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent)
+        .mockReturnValueOnce(triageAgent)
+        .mockReturnValue(makeAgent());
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      // Review agent should not have received a review prompt
+      expect(reviewAgent.send).not.toHaveBeenCalled();
+    });
+
+    it("skips all phases when triage returns all-false flags", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: "test",
+        reviewSkill: "test",
+        reviewThreshold: 0,
+      });
+      ports.git.getDiff.mockResolvedValue("diff --git a/foo.ts\n+line");
+      ports.git.captureRef.mockResolvedValue("sha1");
+      ports.git.hasChanges.mockResolvedValue(true);
+      ports.git.measureDiff.mockResolvedValue({ added: 30, removed: 20, total: 50 });
+      const triageAgent = makeAgent({
+        assistantText: '{"completeness":false,"verify":false,"review":false,"gap":false,"reason":"all trivial"}',
+      });
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn
+        .mockReturnValueOnce(tddAgent)
+        .mockReturnValueOnce(reviewAgent)
+        .mockReturnValueOnce(triageAgent)
+        .mockReturnValue(makeAgent());
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      expect(spawner.spawn).not.toHaveBeenCalledWith("completeness", expect.anything());
+      expect(spawner.spawn).not.toHaveBeenCalledWith("verify", expect.anything());
+      expect(reviewAgent.send).not.toHaveBeenCalled();
+      // Slice still completes
+      expect(uc.slicesCompleted).toBe(1);
+    });
+
+    it("skips gap analysis when all slices have runGap=false", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: false,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      ports.git.getDiff.mockResolvedValue("diff --git a/foo.ts\n+line");
+      ports.git.hasChanges.mockResolvedValue(true);
+      const triageAgent = makeAgent({
+        assistantText: '{"completeness":false,"verify":false,"review":false,"gap":false,"reason":"no gap needed"}',
+      });
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd") return tddAgent;
+        if (role === "review") return reviewAgent;
+        if (role === "triage") return triageAgent;
+        return makeAgent();
+      });
+
+      const groups: Group[] = [
+        {
+          name: "G1",
+          slices: [makeSlice({ number: 1 }), makeSlice({ number: 2 })],
+        },
+      ];
+      await uc.execute(groups);
+
+      expect(spawner.spawn).not.toHaveBeenCalledWith("gap", expect.anything());
+    });
+
+    it("runs gap analysis when at least one slice has runGap=true", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: false,
+        verifySkill: null,
+        reviewSkill: null,
+      });
+      ports.git.getDiff.mockResolvedValue("diff --git a/foo.ts\n+line");
+      ports.git.hasChanges.mockResolvedValue(true);
+      let triageCallCount = 0;
+      const triageAgentNoGap = makeAgent({
+        assistantText: '{"completeness":false,"verify":false,"review":false,"gap":false,"reason":"no gap"}',
+      });
+      const triageAgentWithGap = makeAgent({
+        assistantText: '{"completeness":false,"verify":false,"review":false,"gap":true,"reason":"needs gap"}',
+      });
+      const gapAgent = makeAgent({ assistantText: "NO_GAPS_FOUND" });
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent();
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd") return tddAgent;
+        if (role === "review") return reviewAgent;
+        if (role === "triage") {
+          triageCallCount++;
+          return triageCallCount === 1 ? triageAgentNoGap : triageAgentWithGap;
+        }
+        if (role === "gap") return gapAgent;
+        return makeAgent();
+      });
+
+      const groups: Group[] = [
+        {
+          name: "G1",
+          slices: [makeSlice({ number: 1 }), makeSlice({ number: 2 })],
+        },
+      ];
+      await uc.execute(groups);
+
+      expect(spawner.spawn).toHaveBeenCalledWith("gap", expect.anything());
+    });
+
+    it("selectively gates: verify skipped but completeness and review run", async () => {
+      const ports = makePorts();
+      const config = makeConfig({
+        planDisabled: true,
+        gapDisabled: true,
+        verifySkill: "test",
+        reviewSkill: "test",
+        reviewThreshold: 0,
+      });
+      ports.git.getDiff.mockResolvedValue("diff --git a/foo.ts\n+line");
+      ports.git.captureRef.mockResolvedValue("sha1");
+      ports.git.hasChanges.mockResolvedValue(true);
+      ports.git.measureDiff.mockResolvedValue({ added: 30, removed: 20, total: 50 });
+      const triageAgent = makeAgent({
+        assistantText: '{"completeness":true,"verify":false,"review":true,"gap":true,"reason":"selective"}',
+      });
+      const completenessAgent = makeAgent({ assistantText: "SLICE_COMPLETE" });
+      const { uc, spawner } = makeUc(ports, config);
+      const tddAgent = makeAgent();
+      const reviewAgent = makeAgent({ assistantText: "REVIEW_CLEAN" });
+      spawner.spawn.mockImplementation((role: string) => {
+        if (role === "tdd") return tddAgent;
+        if (role === "review") return reviewAgent;
+        if (role === "triage") return triageAgent;
+        if (role === "completeness") return completenessAgent;
+        return makeAgent();
+      });
+
+      const groups: Group[] = [
+        { name: "G1", slices: [makeSlice({ number: 1 })] },
+      ];
+      await uc.execute(groups);
+
+      // Completeness ran
+      expect(spawner.spawn).toHaveBeenCalledWith("completeness", expect.anything());
+      // Verify skipped
+      expect(spawner.spawn).not.toHaveBeenCalledWith("verify", expect.anything());
+      // Review ran
+      expect(reviewAgent.send).toHaveBeenCalled();
+    });
+  });
 
   describe("Cycle 1: scaffold", () => {
     it("resolves immediately for empty group list", async () => {

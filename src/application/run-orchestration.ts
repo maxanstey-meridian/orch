@@ -9,6 +9,9 @@ import type { OrchestratorState } from "../domain/state.js";
 import type { AgentResult, AgentRole } from "../domain/agent-types.js";
 import type { Group } from "../domain/plan.js";
 import type { Slice } from "../domain/plan.js";
+import type { TriageResult } from "../domain/triage.js";
+import { FULL_TRIAGE } from "../domain/triage.js";
+import { buildTriagePrompt, parseTriageResult } from "../infrastructure/diff-triage.js";
 import { detectApiError } from "../domain/api-errors.js";
 import { parseVerifyResult } from "../domain/verify.js";
 import { isCleanReview } from "../domain/review-check.js";
@@ -172,6 +175,7 @@ export class RunOrchestration {
       const groupBaseSha = await this.git.captureRef();
       let reviewBase = groupBaseSha;
       let groupCompleted = 0;
+      const groupTriageResults: TriageResult[] = [];
 
       for (const slice of group.slices) {
         if (
@@ -239,11 +243,17 @@ export class RunOrchestration {
         // Commit sweep
         await this.commitSweep(`Slice ${slice.number}`);
 
+        // Triage: classify the diff to decide which pipeline phases to run
+        const triage = await this.triageDiff(verifyBaseSha);
+        groupTriageResults.push(triage);
+
         // Completeness check
-        await this.completenessCheck(slice, verifyBaseSha);
+        if (triage.runCompleteness) {
+          await this.completenessCheck(slice, verifyBaseSha);
+        }
 
         // Post-TDD pipeline: verify → review → summary
-        const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha);
+        const sliceResult = await this.runSlice(slice, reviewBase, tddResult, verifyBaseSha, triage);
         reviewBase = sliceResult.reviewBase;
         this.phase = { kind: "Idle" };
 
@@ -261,7 +271,7 @@ export class RunOrchestration {
       }
 
       // Gap analysis
-      await this.gapAnalysis(group, groupBaseSha);
+      await this.gapAnalysis(group, groupBaseSha, groupTriageResults);
 
       // Commit sweep
       await this.commitSweep(group.name);
@@ -403,6 +413,7 @@ export class RunOrchestration {
     reviewBase: string,
     tddResult: AgentResult,
     verifyBaseSha: string,
+    triage: TriageResult = FULL_TRIAGE,
   ): Promise<{ reviewBase: string; skipped: boolean }> {
     const tddText = tddResult.assistantText ?? "";
     const headAfterTdd = await this.git.captureRef();
@@ -416,8 +427,8 @@ export class RunOrchestration {
     }
 
     // Verify gate
-    if (this.config.verifySkill === null) {
-      // verify disabled
+    if (this.config.verifySkill === null || !triage.runVerify) {
+      // verify disabled or triage skipped it
     } else {
       const verified = await this.verify(slice, verifyBaseSha);
       if (!verified) {
@@ -453,7 +464,7 @@ export class RunOrchestration {
       return { reviewBase, skipped: true };
     }
 
-    if (this.config.reviewSkill !== null) {
+    if (this.config.reviewSkill !== null && triage.runReview) {
       await this.reviewFix(slice.content, reviewBase);
     }
     const newReviewBase = await this.git.captureRef();
@@ -705,9 +716,14 @@ export class RunOrchestration {
     this.phase = transition(this.phase, { kind: "AllPassesDone" });
   }
 
-  async gapAnalysis(group: Group, groupBaseSha: string): Promise<void> {
+  async gapAnalysis(
+    group: Group,
+    groupBaseSha: string,
+    triageResults: readonly TriageResult[] = [],
+  ): Promise<void> {
     if (!(await this.git.hasChanges(groupBaseSha))) return;
     if (this.config.gapDisabled) return;
+    if (triageResults.length > 0 && !triageResults.some((t) => t.runGap)) return;
 
     this.phase = transition(this.phase, { kind: "StartGap", groupName: group.name });
 
@@ -749,6 +765,24 @@ export class RunOrchestration {
 
     gapAgent.kill();
     this.phase = transition(this.phase, { kind: "GapDone" });
+  }
+
+  async triageDiff(baseSha: string): Promise<TriageResult> {
+    const diff = await this.git.getDiff(baseSha);
+    if (!diff) return FULL_TRIAGE;
+    if (this.config.provider === "codex") return FULL_TRIAGE;
+
+    try {
+      const agent = this.agents.spawn("triage", { cwd: this.config.cwd });
+      const prompt = buildTriagePrompt(diff);
+      const result = await agent.send(prompt);
+      agent.kill();
+      const triage = parseTriageResult(result.assistantText ?? "");
+      this.progressSink.logBadge("triage", triage.reason);
+      return triage;
+    } catch {
+      return FULL_TRIAGE;
+    }
   }
 
   async commitSweep(label: string): Promise<void> {
