@@ -96,7 +96,7 @@ export const createFakeAppServer = (): FakeAppServer => {
       case 'turnCompleted':
         return { method: 'turn/completed', params: { result: event.resultText } };
       case 'turnFailed':
-        return { method: 'error', params: { code: event.error.code, message: event.error.message } };
+        return { method: 'error', params: { error: { message: event.message, codexErrorInfo: 'unknown' }, willRetry: false } };
       case 'approvalRequested':
         return { method: 'item/commandExecution/requestApproval', params: { itemId: event.request.id, reason: event.request.summary, command: event.request.summary } };
       case 'ignored':

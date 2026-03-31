@@ -254,7 +254,7 @@ describe('CodexAgentSpawner', () => {
     fake = createFakeAppServer();
     fake.setTurnScript([
       { kind: 'textDelta', text: 'partial' },
-      { kind: 'turnFailed', error: { code: 'serverOverloaded', message: 'Server is overloaded' } },
+      { kind: 'turnFailed', message: 'Server is overloaded' },
       { kind: 'turnCompleted', resultText: '' },
     ]);
     const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
@@ -263,8 +263,8 @@ describe('CodexAgentSpawner', () => {
     const result = await handle.send('go');
 
     expect(result.exitCode).toBe(1);
-    expect(result.assistantText).toContain('Server overloaded');
-    expect(result.resultText).toContain('Server overloaded');
+    expect(result.assistantText).toContain('Server is overloaded');
+    expect(result.resultText).toContain('Server is overloaded');
   });
 
   describe('steerTurn and interruptTurn', () => {
@@ -966,7 +966,7 @@ describe('CodexAgentSpawner', () => {
     it('turnFailed surfaces categorized error in resultText', async () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
-        { kind: 'turnFailed', error: { code: 'serverOverloaded', message: 'overloaded' } },
+        { kind: 'turnFailed', message: 'overloaded' },
         { kind: 'turnCompleted', resultText: '' },
       ]);
       const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
@@ -982,7 +982,7 @@ describe('CodexAgentSpawner', () => {
       const { detectApiError } = await import('../../src/domain/api-errors.js');
       fake = createFakeAppServer();
       fake.setTurnScript([
-        { kind: 'turnFailed', error: { code: 'usageLimitExceeded', message: 'Usage limit exceeded' } },
+        { kind: 'turnFailed', message: "You've hit your usage limit" },
         { kind: 'turnCompleted', resultText: '' },
       ]);
       const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
@@ -1000,7 +1000,7 @@ describe('CodexAgentSpawner', () => {
       const { detectApiError } = await import('../../src/domain/api-errors.js');
       fake = createFakeAppServer();
       fake.setTurnScript([
-        { kind: 'turnFailed', error: { code: 'rateLimited', message: 'Too many requests' } },
+        { kind: 'turnFailed', message: 'rate limit exceeded' },
         { kind: 'turnCompleted', resultText: '' },
       ]);
       const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
@@ -1018,7 +1018,7 @@ describe('CodexAgentSpawner', () => {
       const { detectApiError } = await import('../../src/domain/api-errors.js');
       fake = createFakeAppServer();
       fake.setTurnScript([
-        { kind: 'turnFailed', error: { code: 'serverOverloaded', message: 'Server is overloaded' } },
+        { kind: 'turnFailed', message: '529 overloaded' },
         { kind: 'turnCompleted', resultText: '' },
       ]);
       const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);

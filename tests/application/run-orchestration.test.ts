@@ -80,6 +80,7 @@ const makePorts = () => {
   const gate = {
     confirmPlan: vi.fn().mockResolvedValue({ kind: "accept" as const }),
     verifyFailed: vi.fn().mockResolvedValue({ kind: "skip" as const }),
+    creditExhausted: vi.fn().mockResolvedValue({ kind: "quit" as const }),
     askUser: vi.fn().mockResolvedValue(""),
     confirmNextGroup: vi.fn().mockResolvedValue(true),
   };

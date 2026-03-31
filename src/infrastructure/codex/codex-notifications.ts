@@ -1,10 +1,5 @@
 import type { JsonRpcNotification } from "./codex-json-rpc.js";
 
-export type CodexTurnError = {
-  readonly code: string;
-  readonly message: string;
-};
-
 export type CodexApprovalRequest = {
   readonly id: string;
   readonly kind: "command" | "fileChange" | "permission";
@@ -15,7 +10,7 @@ export type CodexEvent =
   | { readonly kind: "textDelta"; readonly text: string }
   | { readonly kind: "toolActivity"; readonly summary: string }
   | { readonly kind: "turnCompleted"; readonly resultText: string }
-  | { readonly kind: "turnFailed"; readonly error: CodexTurnError }
+  | { readonly kind: "turnFailed"; readonly message: string }
   | { readonly kind: "approvalRequested"; readonly request: CodexApprovalRequest }
   | { readonly kind: "ignored" };
 
@@ -76,13 +71,7 @@ export const normalizeNotification = (n: JsonRpcNotification): CodexEvent => {
       };
     }
     case "error": {
-      return {
-        kind: "turnFailed",
-        error: {
-          code: String(params?.code ?? "unknown"),
-          message: String(params?.message ?? "unknown"),
-        },
-      };
+      return { kind: "turnFailed", message: JSON.stringify(params ?? {}) };
     }
     case "turn/completed": {
       // Result text is accumulated from item/agentMessage/delta by the adapter — this is just a signal

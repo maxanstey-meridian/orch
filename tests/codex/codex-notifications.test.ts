@@ -66,15 +66,13 @@ describe('normalizeNotification', () => {
     ).toEqual({ kind: 'turnCompleted', resultText: '' });
   });
 
-  it('maps error notification to turnFailed', () => {
+  it('maps error notification to turnFailed with stringified params', () => {
+    const params = { error: { message: "You've hit your usage limit", codexErrorInfo: 'usageLimitExceeded' }, willRetry: false };
     expect(
-      normalizeNotification({
-        method: 'error',
-        params: { code: 'rateLimited', message: 'Too many requests' },
-      }),
+      normalizeNotification({ method: 'error', params }),
     ).toEqual({
       kind: 'turnFailed',
-      error: { code: 'rateLimited', message: 'Too many requests' },
+      message: JSON.stringify(params),
     });
   });
 
@@ -90,10 +88,10 @@ describe('normalizeNotification', () => {
     ).toEqual({ kind: 'turnCompleted', resultText: '' });
   });
 
-  it('defaults code and message to unknown when error params are empty', () => {
+  it('stringifies empty error params', () => {
     expect(
       normalizeNotification({ method: 'error', params: {} }),
-    ).toEqual({ kind: 'turnFailed', error: { code: 'unknown', message: 'unknown' } });
+    ).toEqual({ kind: 'turnFailed', message: '{}' });
   });
 
   it('returns ignored for approval request with invalid kind', () => {
