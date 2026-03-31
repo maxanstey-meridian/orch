@@ -13,7 +13,7 @@ describe('CodexAgentSpawner', () => {
 
   it('spawn with no resumeSessionId calls thread/start and sessionId is the thread id', async () => {
     fake = createFakeAppServer();
-    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
     const handle = spawner.spawn('tdd');
 
     // sessionId is not available synchronously — need to await ready via send
@@ -32,7 +32,7 @@ describe('CodexAgentSpawner', () => {
       { kind: 'textDelta', text: 'hello' },
       { kind: 'turnCompleted', resultText: 'final result' },
     ]);
-    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
     const handle = spawner.spawn('tdd');
 
     const result = await handle.send('do something');
@@ -50,7 +50,7 @@ describe('CodexAgentSpawner', () => {
       { kind: 'textDelta', text: 'two' },
       { kind: 'turnCompleted', resultText: 'done' },
     ]);
-    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
     const handle = spawner.spawn('tdd');
     const onText = vi.fn();
 
@@ -67,7 +67,7 @@ describe('CodexAgentSpawner', () => {
       { kind: 'toolActivity', summary: 'command: npm test' },
       { kind: 'turnCompleted', resultText: 'done' },
     ]);
-    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
     const handle = spawner.spawn('tdd');
     const onToolUse = vi.fn();
 
@@ -82,7 +82,7 @@ describe('CodexAgentSpawner', () => {
       { kind: 'textDelta', text: 'ignored' },
       { kind: 'turnCompleted', resultText: 'the answer' },
     ]);
-    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
     const handle = spawner.spawn('tdd');
     const onText = vi.fn();
     const onToolUse = vi.fn();
@@ -102,7 +102,7 @@ describe('CodexAgentSpawner', () => {
       { kind: 'toolActivity', summary: 'command: test' },
       { kind: 'turnCompleted', resultText: 'done' },
     ]);
-    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
     const handle = spawner.spawn('tdd');
     const onText = vi.fn();
     const onToolUse = vi.fn();
@@ -116,7 +116,7 @@ describe('CodexAgentSpawner', () => {
 
   it('spawn with planMode and systemPrompt passes developerInstructions to thread/start', async () => {
     fake = createFakeAppServer();
-    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
     spawner.spawn('plan', { planMode: true, systemPrompt: 'plan instructions' });
 
     await tick();
@@ -159,7 +159,7 @@ describe('CodexAgentSpawner', () => {
 
   it('alive becomes false when process dies unexpectedly', async () => {
     fake = createFakeAppServer();
-    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
     const handle = spawner.spawn('tdd');
 
     fake.setTurnScript([{ kind: 'turnCompleted', resultText: '' }]);
@@ -177,7 +177,7 @@ describe('CodexAgentSpawner', () => {
   it('send() resolves with exitCode 1 when process dies mid-turn', async () => {
     fake = createFakeAppServer();
     fake.hangOnTurn();
-    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
     const handle = spawner.spawn('tdd');
 
     // Wait for ready (initialize + thread/start)
@@ -198,7 +198,7 @@ describe('CodexAgentSpawner', () => {
   it('sendQuiet() returns empty string when process dies mid-turn', async () => {
     fake = createFakeAppServer();
     fake.hangOnTurn();
-    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
     const handle = spawner.spawn('tdd');
 
     await new Promise((r) => setTimeout(r, 10));
@@ -256,7 +256,7 @@ describe('CodexAgentSpawner', () => {
       { kind: 'turnFailed', error: { code: 'serverOverloaded', message: 'Server is overloaded' } },
       { kind: 'turnCompleted', resultText: '' },
     ]);
-    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
     const handle = spawner.spawn('tdd');
 
     const result = await handle.send('go');
@@ -341,7 +341,7 @@ describe('CodexAgentSpawner', () => {
     it('inject() during active turn sends turn/steer', async () => {
       fake = createFakeAppServer();
       fake.hangOnTurn();
-      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
       const handle = spawner.spawn('tdd');
 
       await tick(); // wait for ready
@@ -362,7 +362,7 @@ describe('CodexAgentSpawner', () => {
 
     it('inject() between turns queues the message (no RPC sent)', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
       const handle = spawner.spawn('tdd');
 
       await tick(); // wait for ready
@@ -376,7 +376,7 @@ describe('CodexAgentSpawner', () => {
 
     it('queued guidance prepended to next send()', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -398,7 +398,7 @@ describe('CodexAgentSpawner', () => {
 
     it('multiple queued messages appear in insertion order', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -416,7 +416,7 @@ describe('CodexAgentSpawner', () => {
 
     it('queue is cleared after flush', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -437,7 +437,7 @@ describe('CodexAgentSpawner', () => {
     it('kill() during active turn sends interrupt then closes', async () => {
       fake = createFakeAppServer();
       fake.hangOnTurn();
-      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -457,7 +457,7 @@ describe('CodexAgentSpawner', () => {
 
     it('kill() while idle closes without interrupt', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -472,7 +472,7 @@ describe('CodexAgentSpawner', () => {
 
     it('after kill(), alive is false', async () => {
       fake = createFakeAppServer();
-      const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
       const handle = spawner.spawn('tdd');
 
       await tick();
@@ -485,7 +485,7 @@ describe('CodexAgentSpawner', () => {
 
   it('spawn with resumeSessionId calls thread/resume with that id', async () => {
     fake = createFakeAppServer();
-    const spawner = new CodexAgentSpawner('/tmp/test', () => fake.proc);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
     const handle = spawner.spawn('tdd', { resumeSessionId: 'prev-thread' });
 
     await tick();
@@ -494,5 +494,67 @@ describe('CodexAgentSpawner', () => {
     expect(threadResume).toBeDefined();
     expect(threadResume!.params?.threadId).toBe('prev-thread');
     expect(handle.sessionId).toBe('prev-thread');
+  });
+
+  describe('mode config and sandbox', () => {
+    it('plan role passes read-only sandbox to thread/start', async () => {
+      fake = createFakeAppServer();
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
+      spawner.spawn('plan');
+
+      await tick();
+
+      const threadStart = fake.receivedRequests.find((r) => r.method === 'thread/start');
+      expect(threadStart!.params?.sandbox).toBe('read-only');
+    });
+
+    it('tdd role passes workspace-write sandbox to thread/start', async () => {
+      fake = createFakeAppServer();
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
+      spawner.spawn('tdd');
+
+      await tick();
+
+      const threadStart = fake.receivedRequests.find((r) => r.method === 'thread/start');
+      expect(threadStart!.params?.sandbox).toBe('workspace-write');
+    });
+
+    it('auto-approve mode auto-approves approval events during turn', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'approvalRequested', request: { id: 'req-1', kind: 'command', summary: 'run npm test' } },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: true, noInteraction: false }, () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      const result = await handle.send('go');
+
+      expect(result.resultText).toBe('done');
+      // Check that an approval response was sent
+      const approvalResponse = fake.receivedNotifications.find(
+        (n) => n.method === 'codex/approvalResponse',
+      );
+      expect(approvalResponse).toBeDefined();
+      expect(approvalResponse!.params?.id).toBe('req-1');
+      expect(approvalResponse!.params?.approved).toBe(true);
+    });
+
+    it('interactive mode does NOT auto-approve approval events', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'approvalRequested', request: { id: 'req-1', kind: 'command', summary: 'run npm test' } },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      await handle.send('go');
+
+      const approvalResponse = fake.receivedNotifications.find(
+        (n) => n.method === 'codex/approvalResponse',
+      );
+      expect(approvalResponse).toBeUndefined();
+    });
   });
 });

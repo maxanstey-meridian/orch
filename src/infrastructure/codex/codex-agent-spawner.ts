@@ -4,12 +4,14 @@ import type { AgentRole } from '../../domain/agent-types.js';
 import { ROLE_STYLES } from '../claude-agent-spawner.js';
 import { createCodexAppServerClient } from './codex-app-server-client.js';
 import { detectQuestion } from '../agent/question-detector.js';
+import { resolveCodexModeConfig } from './codex-mode-config.js';
 
 type ProcessFactory = () => ChildProcess;
 
 export class CodexAgentSpawner extends AgentSpawner {
   constructor(
     private readonly defaultCwd: string,
+    private readonly config: { readonly auto: boolean; readonly noInteraction: boolean },
     private readonly processFactory: ProcessFactory,
   ) {
     super();
@@ -25,6 +27,7 @@ export class CodexAgentSpawner extends AgentSpawner {
     },
   ): AgentHandle {
     const style = ROLE_STYLES[role];
+    const modeConfig = resolveCodexModeConfig(role, this.config);
     const proc = this.processFactory();
     const client = createCodexAppServerClient(proc);
 
@@ -33,13 +36,18 @@ export class CodexAgentSpawner extends AgentSpawner {
     let persistentOnToolUse: ((summary: string) => void) | undefined;
     const pendingGuidance: string[] = [];
 
+    const threadOpts = {
+      developerInstructions: opts?.systemPrompt,
+      sandbox: modeConfig.sandbox,
+    };
+
     // Ready promise: initialize → start/resume thread
     const ready = (async () => {
       await client.initialize();
       if (opts?.resumeSessionId) {
-        await client.resumeThread(opts.resumeSessionId, opts?.systemPrompt);
+        await client.resumeThread(opts.resumeSessionId, threadOpts);
       } else {
-        sessionId = await client.startThread(opts?.systemPrompt);
+        sessionId = await client.startThread(threadOpts);
       }
     })();
 
@@ -76,6 +84,11 @@ export class CodexAgentSpawner extends AgentSpawner {
               case 'turnFailed':
                 failed = true;
                 assistantText += `\n[Error: ${event.error.code} — ${event.error.message}]`;
+                break;
+              case 'approvalRequested':
+                if (modeConfig.approvalMode === 'auto-approve') {
+                  client.respondToApproval(event.request.id, true);
+                }
                 break;
             }
           });

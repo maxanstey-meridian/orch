@@ -2,16 +2,22 @@ import type { ChildProcess } from 'node:child_process';
 import { createJsonRpcClient, type JsonRpcClient } from './codex-json-rpc.js';
 import { normalizeNotification, type CodexEvent } from './codex-notifications.js';
 
+export type ThreadOptions = {
+  readonly developerInstructions?: string;
+  readonly sandbox?: string;
+};
+
 export type CodexAppServerClient = {
   readonly threadId: string | undefined;
   readonly currentTurnId: string | undefined;
   readonly alive: boolean;
   initialize(): Promise<void>;
-  startThread(developerInstructions?: string): Promise<string>;
-  resumeThread(threadId: string, developerInstructions?: string): Promise<string>;
+  startThread(opts?: ThreadOptions): Promise<string>;
+  resumeThread(threadId: string, opts?: ThreadOptions): Promise<string>;
   startTurn(prompt: string, onEvent: (e: CodexEvent) => void): Promise<string>;
   steerTurn(message: string): Promise<void>;
   interruptTurn(): Promise<void>;
+  respondToApproval(requestId: string, approved: boolean): void;
   close(): void;
 };
 
@@ -43,20 +49,26 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
       proc.stdin!.write(JSON.stringify({ jsonrpc: '2.0', method: 'initialized' }) + '\n');
     },
 
-    startThread: async (developerInstructions?) => {
+    startThread: async (opts?) => {
       const params: Record<string, unknown> = {};
-      if (developerInstructions) {
-        params.developerInstructions = developerInstructions;
+      if (opts?.developerInstructions) {
+        params.developerInstructions = opts.developerInstructions;
+      }
+      if (opts?.sandbox) {
+        params.sandbox = opts.sandbox;
       }
       const result = await rpc.request('thread/start', params) as { threadId: string };
       threadId = result.threadId;
       return threadId;
     },
 
-    resumeThread: async (tid, developerInstructions?) => {
+    resumeThread: async (tid, opts?) => {
       const params: Record<string, unknown> = { threadId: tid };
-      if (developerInstructions) {
-        params.developerInstructions = developerInstructions;
+      if (opts?.developerInstructions) {
+        params.developerInstructions = opts.developerInstructions;
+      }
+      if (opts?.sandbox) {
+        params.sandbox = opts.sandbox;
       }
       await rpc.request('thread/resume', params);
       threadId = tid;
@@ -92,6 +104,14 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
     interruptTurn: async () => {
       if (!currentTurnId) throw new Error('No active turn to interrupt');
       await rpc.request('turn/interrupt', { threadId, turnId: currentTurnId });
+    },
+
+    respondToApproval: (requestId, approved) => {
+      proc.stdin!.write(JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'codex/approvalResponse',
+        params: { id: requestId, approved },
+      }) + '\n');
     },
 
     close: () => {

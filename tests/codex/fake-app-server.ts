@@ -12,9 +12,15 @@ type ReceivedRequest = {
 
 type TurnScript = ReadonlyArray<CodexEvent>;
 
+type ReceivedNotification = {
+  readonly method: string;
+  readonly params?: Record<string, unknown>;
+};
+
 export type FakeAppServer = {
   readonly proc: ChildProcess;
   readonly receivedRequests: ReceivedRequest[];
+  readonly receivedNotifications: ReceivedNotification[];
   readonly stdout: PassThrough;
   setTurnScript(events: TurnScript): void;
   hangOnTurn(): void;
@@ -29,6 +35,7 @@ export const createFakeAppServer = (): FakeAppServer => {
   const proc = { stdin: clientStdin, stdout: clientStdout, kill } as unknown as ChildProcess;
 
   const receivedRequests: ReceivedRequest[] = [];
+  const receivedNotifications: ReceivedNotification[] = [];
   let turnScript: TurnScript = [];
   let shouldHangOnTurn = false;
 
@@ -81,9 +88,11 @@ export const createFakeAppServer = (): FakeAppServer => {
     const method = msg.method as string;
     const params = msg.params as Record<string, unknown> | undefined;
 
-    // Only record requests (have id), not notifications
     if (typeof id === 'number') {
       receivedRequests.push({ id, method, params });
+    } else {
+      // Record notifications (no id)
+      receivedNotifications.push({ method, params });
     }
 
     switch (method) {
@@ -127,6 +136,7 @@ export const createFakeAppServer = (): FakeAppServer => {
   return {
     proc,
     receivedRequests,
+    receivedNotifications,
     stdout: clientStdout,
     setTurnScript: (events) => { turnScript = events; },
     hangOnTurn: () => { shouldHangOnTurn = true; },
