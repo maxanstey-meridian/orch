@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AgentRole, AgentStyle } from "../../src/domain/agent-types.js";
-import type { ClaudeAgentProcess } from "../../src/infrastructure/claude/claude-agent-process.js";
-import type { AgentHandle } from "../../src/application/ports/agent-spawner.port.js";
+import type { AgentRole, AgentStyle } from "#domain/agent-types.js";
+import type { ClaudeAgentProcess } from "#infrastructure/claude/claude-agent-process.js";
+import type { AgentHandle } from "#application/ports/agent-spawner.port.js";
 
 vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
   spawnClaudeAgent: vi.fn(() => ({
@@ -40,15 +40,15 @@ vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
   })),
 }));
 
-import { spawnClaudeAgent, spawnClaudePlanAgent } from "../../src/infrastructure/claude/claude-agent-factory.js";
+import { spawnClaudeAgent, spawnClaudePlanAgent } from "#infrastructure/claude/claude-agent-factory.js";
 import type { Mock } from "vitest";
 
 const mockedSpawnAgent = spawnClaudeAgent as Mock;
 const mockedSpawnPlanAgent = spawnClaudePlanAgent as Mock;
 
-import { ClaudeAgentSpawner } from "../../src/infrastructure/claude-agent-spawner.js";
-import { ROLE_STYLES } from "../../src/ui/agent-role-styles.js";
-import { BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL } from "../../src/ui/display.js";
+import { ClaudeAgentSpawner } from "#infrastructure/claude-agent-spawner.js";
+import { ROLE_STYLES } from "#ui/agent-role-styles.js";
+import { BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL } from "#ui/display.js";
 
 describe("ClaudeAgentProcess / AgentHandle structural compatibility", () => {
   it("ClaudeAgentProcess structurally satisfies AgentHandle", () => {

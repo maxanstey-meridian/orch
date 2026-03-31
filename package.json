@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "imports": {
+    "#application/*": "./src/application/*",
+    "#domain/*": "./src/domain/*",
+    "#infrastructure/*": "./src/infrastructure/*",
+    "#ui/*": "./src/ui/*"
+  },
   "scripts": {
     "lint": "oxlint src/",
     "lint:fix": "oxlint --fix src/",

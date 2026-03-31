@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { AGENT_ROLES } from "../../src/domain/agent-types.js";
-import type { AgentStyle, AgentResult, AgentRole } from "../../src/domain/agent-types.js";
+import { AGENT_ROLES } from "#domain/agent-types.js";
+import type { AgentStyle, AgentResult, AgentRole } from "#domain/agent-types.js";
 
 describe("AgentStyle", () => {
   it("is structurally constructable", () => {

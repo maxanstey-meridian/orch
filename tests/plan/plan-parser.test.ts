@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { writeFile, mkdtemp, rm } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { parsePlan } from "../../src/infrastructure/plan/plan-parser.js";
+import { parsePlan } from "#infrastructure/plan/plan-parser.js";
 
 const withTempFile = async (content: string, fn: (path: string) => Promise<void>) => {
   const dir = await mkdtemp(join(tmpdir(), "orch-test-"));

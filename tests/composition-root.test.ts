@@ -11,8 +11,8 @@ vi.mock("../src/infrastructure/claude/claude-agent-factory.js", () => ({
   ),
 }));
 
-import type { OrchestratorConfig } from "../src/domain/config.js";
-import { RunOrchestration } from "../src/application/run-orchestration.js";
+import type { OrchestratorConfig } from "#domain/config.js";
+import { RunOrchestration } from "#application/run-orchestration.js";
 
 const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig => ({
   cwd: "/tmp/test",

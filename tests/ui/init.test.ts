@@ -3,8 +3,8 @@ import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { writeFileSync, mkdirSync } from "fs";
-import { runInit, profileToMarkdown, type InitProfile, type AskFn, type AskHandle } from "../../src/ui/init.js";
-import { runFingerprint } from "../../src/infrastructure/fingerprint.js";
+import { runInit, profileToMarkdown, type InitProfile, type AskFn, type AskHandle } from "#ui/init.js";
+import { runFingerprint } from "#infrastructure/fingerprint.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shouldReview } from "../../src/domain/review.js";
+import { shouldReview } from "#domain/review.js";
 
 describe("shouldReview", () => {
   it("returns true when total equals threshold", () => {

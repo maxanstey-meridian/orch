@@ -1,4 +1,4 @@
-import type { LogFn } from "../../ui/display.js";
+import type { LogFn } from "#ui/display.js";
 import { saveState, type OrchestratorState } from "../state/state.js";
 import { captureRef } from "./git.js";
 import { createWorktree } from "./worktree.js";

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildContent } from "../../src/domain/plan.js";
+import { buildContent } from "#domain/plan.js";
 
 describe("buildContent", () => {
   it("produces expected markdown for a single-file slice", () => {

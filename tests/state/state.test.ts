@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { rm, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { loadState, saveState, clearState, statePathForPlan } from "../../src/infrastructure/state/state.js";
+import { loadState, saveState, clearState, statePathForPlan } from "#infrastructure/state/state.js";
 
 const testPath = join(tmpdir(), `orch-state-test-${process.pid}.json`);
 

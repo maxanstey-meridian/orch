@@ -3,10 +3,10 @@ import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { extractJson, planSummaryLines, generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "../../src/infrastructure/plan/plan-generator.js";
-import { PlanSchema, parsePlanJson } from "../../src/infrastructure/plan/plan-schema.js";
-import type { PromptAgent } from "../../src/application/ports/agent-spawner.port.js";
-import type { AgentResult } from "../../src/domain/agent-types.js";
+import { extractJson, planSummaryLines, generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "#infrastructure/plan/plan-generator.js";
+import { PlanSchema, parsePlanJson } from "#infrastructure/plan/plan-schema.js";
+import type { PromptAgent } from "#application/ports/agent-spawner.port.js";
+import type { AgentResult } from "#domain/agent-types.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

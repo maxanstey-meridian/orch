@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseProviderFlag } from "../../src/infrastructure/cli/cli-args.js";
+import { parseProviderFlag } from "#infrastructure/cli/cli-args.js";
 
 describe("parseProviderFlag", () => {
   it("returns claude when no --provider flag is present", () => {

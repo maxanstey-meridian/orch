@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import { parsePlanJson } from "./plan-schema.js";
 
-export type { Slice, Group, FileAction } from "../../domain/plan.js";
+export type { Slice, Group, FileAction } from "#domain/plan.js";
 
 export const parsePlan = async (
   filePath: string,

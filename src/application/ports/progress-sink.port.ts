@@ -1,5 +1,5 @@
-import type { AgentRole } from "../../domain/agent-types.js";
-import type { Slice } from "../../domain/plan.js";
+import type { AgentRole } from "#domain/agent-types.js";
+import type { Slice } from "#domain/plan.js";
 
 export type InterruptHandler = {
   onGuide(callback: (text: string) => void): void;

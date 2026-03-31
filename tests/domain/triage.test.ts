@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { FULL_TRIAGE } from "../../src/domain/triage.js";
-import { buildTriagePrompt, parseTriageResult } from "../../src/infrastructure/diff-triage.js";
+import { FULL_TRIAGE } from "#domain/triage.js";
+import { buildTriagePrompt, parseTriageResult } from "#infrastructure/diff-triage.js";
 
 describe("FULL_TRIAGE", () => {
   it("enables every pipeline stage with the default reason", () => {

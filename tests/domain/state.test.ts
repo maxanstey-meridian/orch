@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { advanceState } from "../../src/domain/state.js";
-import type { OrchestratorState } from "../../src/domain/state.js";
+import { advanceState } from "#domain/state.js";
+import type { OrchestratorState } from "#domain/state.js";
 
 describe("advanceState", () => {
   it("sliceDone updates lastCompletedSlice and lastSliceImplemented", () => {

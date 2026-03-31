@@ -1,8 +1,8 @@
 import { randomBytes, createHash } from "crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
-import type { PromptAgent } from "../../application/ports/agent-spawner.port.js";
-import { a, type LogFn } from "../../ui/display.js";
+import type { PromptAgent } from "#application/ports/agent-spawner.port.js";
+import { a, type LogFn } from "#ui/display.js";
 import type { Group } from "./plan-parser.js";
 import { parsePlanJson } from "./plan-schema.js";
 

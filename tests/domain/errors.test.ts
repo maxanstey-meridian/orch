@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CreditExhaustedError } from "../../src/domain/errors.js";
+import { CreditExhaustedError } from "#domain/errors.js";
 
 describe("CreditExhaustedError", () => {
   it("stores message and mid-response kind", () => {

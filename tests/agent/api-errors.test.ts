@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { detectApiError } from "../../src/domain/api-errors.js";
-import type { AgentResult } from "../../src/domain/agent-types.js";
+import { detectApiError } from "#domain/api-errors.js";
+import type { AgentResult } from "#domain/agent-types.js";
 
 const makeResult = (overrides: Partial<AgentResult> = {}): AgentResult => ({
   exitCode: 0,

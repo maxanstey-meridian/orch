@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rm, writeFile } from "node:fs/promises";
-import { FsStatePersistence } from "../../src/infrastructure/fs-state-persistence.js";
+import { FsStatePersistence } from "#infrastructure/fs-state-persistence.js";
 
 const testPath = join(tmpdir(), `fs-state-persistence-${process.pid}.json`);
 

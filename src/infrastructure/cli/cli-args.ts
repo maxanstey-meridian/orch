@@ -1,4 +1,4 @@
-import type { Provider } from "../../domain/config.js";
+import type { Provider } from "#domain/config.js";
 
 const VALID_PROVIDERS: Provider[] = ["claude", "codex"];
 

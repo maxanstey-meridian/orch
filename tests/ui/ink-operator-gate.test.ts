@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { AGENT_ROLES } from "../../src/domain/agent-types.js";
-import type { Slice } from "../../src/domain/plan.js";
-import { SilentOperatorGate, InkOperatorGate, InkProgressSink, SilentProgressSink, styleForRole } from "../../src/ui/ink-operator-gate.js";
-import type { Hud } from "../../src/ui/hud.js";
-import { BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL } from "../../src/ui/display.js";
+import { AGENT_ROLES } from "#domain/agent-types.js";
+import type { Slice } from "#domain/plan.js";
+import { SilentOperatorGate, InkOperatorGate, InkProgressSink, SilentProgressSink, styleForRole } from "#ui/ink-operator-gate.js";
+import type { Hud } from "#ui/hud.js";
+import { BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL } from "#ui/display.js";
 
 const createMockHud = (overrides: Partial<Hud> = {}): Hud => ({
   update: vi.fn(),

@@ -6,8 +6,8 @@ import { mkdtemp, rm, writeFile, readFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execSync, spawnSync } from "child_process";
-import { loadState, saveState, clearState, statePathForPlan } from "../src/infrastructure/state/state.js";
-import { resolvePlanId } from "../src/infrastructure/plan/plan-generator.js";
+import { loadState, saveState, clearState, statePathForPlan } from "#infrastructure/state/state.js";
+import { resolvePlanId } from "#infrastructure/plan/plan-generator.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
@@ -667,11 +667,11 @@ vi.mock("../src/infrastructure/claude/claude-agent-factory.js", () => ({
   ),
 }));
 
-import type { OrchestratorConfig } from "../src/domain/config.js";
-import type { AgentResult } from "../src/domain/agent-types.js";
-import type { AgentHandle } from "../src/application/ports/agent-spawner.port.js";
-import { RunOrchestration } from "../src/application/run-orchestration.js";
-import { IncompleteRunError } from "../src/domain/errors.js";
+import type { OrchestratorConfig } from "#domain/config.js";
+import type { AgentResult } from "#domain/agent-types.js";
+import type { AgentHandle } from "#application/ports/agent-spawner.port.js";
+import { RunOrchestration } from "#application/run-orchestration.js";
+import { IncompleteRunError } from "#domain/errors.js";
 
 const makeTestConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig => ({
   cwd: "/tmp/test",

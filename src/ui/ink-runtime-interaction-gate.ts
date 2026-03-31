@@ -2,7 +2,7 @@ import {
   RuntimeInteractionGate,
   type RuntimeInteractionRequest,
   type RuntimeInteractionDecision,
-} from "../application/ports/runtime-interaction.port.js";
+} from "#application/ports/runtime-interaction.port.js";
 import type { Hud } from "./hud.js";
 
 export class SilentRuntimeInteractionGate implements RuntimeInteractionGate {

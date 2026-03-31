@@ -1,8 +1,8 @@
 import { z } from "zod";
-import type { Group, Slice } from "../../domain/plan.js";
-import { buildContent } from "../../domain/plan.js";
+import type { Group, Slice } from "#domain/plan.js";
+import { buildContent } from "#domain/plan.js";
 
-export type { FileAction } from "../../domain/plan.js";
+export type { FileAction } from "#domain/plan.js";
 
 export const FileActionSchema = z.object({
   path: z.string().min(1),

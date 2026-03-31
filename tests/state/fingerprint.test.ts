@@ -14,7 +14,7 @@ import {
   runFingerprint,
   wrapBrief,
   generateBrief,
-} from "../../src/infrastructure/fingerprint.js";
+} from "#infrastructure/fingerprint.js";
 
 let tempDir: string;
 

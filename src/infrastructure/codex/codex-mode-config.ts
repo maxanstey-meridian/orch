@@ -1,4 +1,4 @@
-import type { AgentRole } from "../../domain/agent-types.js";
+import type { AgentRole } from "#domain/agent-types.js";
 
 export type CodexModeConfig = {
   readonly sandbox: "read-only" | "workspace-write";

@@ -1,4 +1,4 @@
-import { PromptBuilder, type FinalPass } from "../application/ports/prompt-builder.port.js";
+import { PromptBuilder, type FinalPass } from "#application/ports/prompt-builder.port.js";
 import {
   TDD_RULES_REMINDER,
   REVIEW_RULES_REMINDER,

@@ -1,6 +1,6 @@
 import { createInjector } from "typed-inject";
-import { RunOrchestration } from "./application/run-orchestration.js";
-import type { OrchestratorConfig } from "./domain/config.js";
+import { RunOrchestration } from "#application/run-orchestration.js";
+import type { OrchestratorConfig } from "#domain/config.js";
 import {
   agentSpawnerFactory,
   statePersistenceFactory,
@@ -9,8 +9,8 @@ import {
   operatorGateFactory,
   progressSinkFactory,
   runtimeInteractionGateFactory,
-} from "./infrastructure/factories.js";
-import type { Hud } from "./ui/hud.js";
+} from "#infrastructure/factories.js";
+import type { Hud } from "#ui/hud.js";
 
 export const createContainer = (config: OrchestratorConfig, hud: Hud) =>
   createInjector()

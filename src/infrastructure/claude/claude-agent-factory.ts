@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import type { AgentStyle } from "../../domain/agent-types.js";
-import { BOT_PLAN, BOT_GAP } from "../../ui/display.js";
+import type { AgentStyle } from "#domain/agent-types.js";
+import { BOT_PLAN, BOT_GAP } from "#ui/display.js";
 import { createClaudeAgent, type ClaudeAgentProcess } from "./claude-agent-process.js";
 
 // ─── Agent helpers ───────────────────────────────────────────────────────────

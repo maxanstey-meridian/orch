@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AgentResult } from "../../src/domain/agent-types.js";
-import type { AgentHandle } from "../../src/application/ports/agent-spawner.port.js";
-import type { OrchestratorConfig } from "../../src/domain/config.js";
-import type { Slice, Group } from "../../src/domain/plan.js";
-import { RunOrchestration } from "../../src/application/run-orchestration.js";
-import { IncompleteRunError } from "../../src/domain/errors.js";
+import type { AgentResult } from "#domain/agent-types.js";
+import type { AgentHandle } from "#application/ports/agent-spawner.port.js";
+import type { OrchestratorConfig } from "#domain/config.js";
+import type { Slice, Group } from "#domain/plan.js";
+import { RunOrchestration } from "#application/run-orchestration.js";
+import { IncompleteRunError } from "#domain/errors.js";
 
 // ── Helpers ──
 

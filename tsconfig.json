@@ -12,7 +12,10 @@
     "jsx": "react-jsx",
     "sourceMap": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "#application/*": ["./src/application/*"],
+      "#domain/*": ["./src/domain/*"],
+      "#infrastructure/*": ["./src/infrastructure/*"],
+      "#ui/*": ["./src/ui/*"]
     }
   },
   "include": ["src"],

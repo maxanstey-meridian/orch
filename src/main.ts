@@ -19,36 +19,36 @@
 import { readFileSync, mkdirSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { resolve } from "path";
-import { createContainer } from "./composition-root.js";
-import type { OrchestratorConfig } from "./domain/config.js";
-import { CreditExhaustedError, IncompleteRunError } from "./domain/errors.js";
-import { parseBranchFlag, parseProviderFlag } from "./infrastructure/cli/cli-args.js";
+import type { OrchestratorConfig } from "#domain/config.js";
+import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
+import { parseBranchFlag, parseProviderFlag } from "#infrastructure/cli/cli-args.js";
 import {
   loadAndResolveOrchrConfig,
   resolveSkillValue,
   buildOrchrSummary,
-} from "./infrastructure/config/orchrc.js";
-import { planGeneratorSpawnerFactory } from "./infrastructure/factories.js";
-import { runFingerprint } from "./infrastructure/fingerprint.js";
-import { getStatus, stashBackup } from "./infrastructure/git/git.js";
-import { assertGitRepo } from "./infrastructure/git/repo-check.js";
-import { resolveWorktree } from "./infrastructure/git/worktree-setup.js";
-import { checkWorktreeResume, runCleanup } from "./infrastructure/git/worktree.js";
+} from "#infrastructure/config/orchrc.js";
+import { planGeneratorSpawnerFactory } from "#infrastructure/factories.js";
+import { runFingerprint } from "#infrastructure/fingerprint.js";
+import { getStatus, stashBackup } from "#infrastructure/git/git.js";
+import { assertGitRepo } from "#infrastructure/git/repo-check.js";
+import { resolveWorktree } from "#infrastructure/git/worktree-setup.js";
+import { checkWorktreeResume, runCleanup } from "#infrastructure/git/worktree.js";
 import {
   isPlanFormat,
   ensureCanonicalPlan,
   doGeneratePlan,
-} from "./infrastructure/plan/plan-generator.js";
-import { parsePlan } from "./infrastructure/plan/plan-parser.js";
+} from "#infrastructure/plan/plan-generator.js";
+import { parsePlan } from "#infrastructure/plan/plan-parser.js";
 import {
   loadState,
   clearState,
   statePathForPlan,
   type OrchestratorState,
-} from "./infrastructure/state/state.js";
-import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "./ui/display.js";
-import { createHud } from "./ui/hud.js";
-import { runInit, profileToMarkdown } from "./ui/init.js";
+} from "#infrastructure/state/state.js";
+import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "#ui/display.js";
+import { createHud } from "#ui/hud.js";
+import { runInit, profileToMarkdown } from "#ui/init.js";
+import { createContainer } from "./composition-root.js";
 
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
 

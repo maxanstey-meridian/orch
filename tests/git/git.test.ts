@@ -9,7 +9,7 @@ import {
   getDiff,
   getStatus,
   hasDirtyTree,
-} from "../../src/infrastructure/git/git.js";
+} from "#infrastructure/git/git.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 

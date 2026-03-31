@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import type { OrchestratorConfig } from "../../src/domain/config.js";
-import type { Hud } from "../../src/ui/hud.js";
+import type { OrchestratorConfig } from "#domain/config.js";
+import type { Hud } from "#ui/hud.js";
 
 vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
   spawnClaudeAgent: vi.fn(),
@@ -13,7 +13,7 @@ vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
   ),
 }));
 
-import { SilentRuntimeInteractionGate } from "../../src/ui/ink-runtime-interaction-gate.js";
+import { SilentRuntimeInteractionGate } from "#ui/ink-runtime-interaction-gate.js";
 
 const dummyGate = new SilentRuntimeInteractionGate();
 

@@ -1,4 +1,4 @@
-import { FULL_TRIAGE, type TriageResult } from "../domain/triage.js";
+import { FULL_TRIAGE, type TriageResult } from "#domain/triage.js";
 
 type ParsedTriageResult = {
   readonly completeness: boolean;

@@ -1,6 +1,6 @@
-import { AgentSpawner, type AgentHandle } from "../application/ports/agent-spawner.port.js";
-import type { AgentRole } from "../domain/agent-types.js";
-import { ROLE_STYLES } from "../ui/agent-role-styles.js";
+import { AgentSpawner, type AgentHandle } from "#application/ports/agent-spawner.port.js";
+import type { AgentRole } from "#domain/agent-types.js";
+import { ROLE_STYLES } from "#ui/agent-role-styles.js";
 import { spawnClaudeAgent, spawnClaudePlanAgent } from "./claude/claude-agent-factory.js";
 
 const PLAN_ROLES: ReadonlySet<AgentRole> = new Set<AgentRole>([

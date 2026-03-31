@@ -3,15 +3,15 @@ import {
   type GateDecision,
   type VerifyDecision,
   type CreditDecision,
-} from "../application/ports/operator-gate.port.js";
+} from "#application/ports/operator-gate.port.js";
 import {
   ProgressSink,
   type InterruptHandler,
   type ProgressUpdate,
-} from "../application/ports/progress-sink.port.js";
-import type { AgentRole, AgentStyle } from "../domain/agent-types.js";
-import type { Slice } from "../domain/plan.js";
-import { makeStreamer } from "../infrastructure/agent/streamer.js";
+} from "#application/ports/progress-sink.port.js";
+import type { AgentRole, AgentStyle } from "#domain/agent-types.js";
+import type { Slice } from "#domain/plan.js";
+import { makeStreamer } from "#infrastructure/agent/streamer.js";
 import { ROLE_STYLES } from "./agent-role-styles.js";
 import { printSliceIntro } from "./display.js";
 import type { Hud } from "./hud.js";

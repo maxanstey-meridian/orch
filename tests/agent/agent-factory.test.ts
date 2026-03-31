@@ -13,7 +13,7 @@ vi.mock("../../src/infrastructure/claude/claude-agent-process.js", () => ({
   })),
 }));
 
-import { createClaudeAgent } from "../../src/infrastructure/claude/claude-agent-process.js";
+import { createClaudeAgent } from "#infrastructure/claude/claude-agent-process.js";
 import type { Mock } from "vitest";
 
 const mockedCreateAgent = createClaudeAgent as Mock;

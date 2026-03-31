@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { withBrief, buildTddPrompt, buildReviewPreamble, buildReviewPrompt, buildGapPrompt, buildFinalPasses, buildCommitSweepPrompt, buildPlanPrompt } from "../../src/infrastructure/plan/prompts.js";
+import { withBrief, buildTddPrompt, buildReviewPreamble, buildReviewPrompt, buildGapPrompt, buildFinalPasses, buildCommitSweepPrompt, buildPlanPrompt } from "#infrastructure/plan/prompts.js";
 
 describe("withBrief", () => {
   it("returns prompt unchanged when brief is empty", () => {

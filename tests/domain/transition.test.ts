@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { Phase } from "../../src/domain/phase.js";
-import { transition, canSkip, isAlreadyImplemented } from "../../src/domain/transition.js";
+import type { Phase } from "#domain/phase.js";
+import { transition, canSkip, isAlreadyImplemented } from "#domain/transition.js";
 
 describe("Phase union", () => {
   it("each variant is constructable with correct kind and fields", () => {

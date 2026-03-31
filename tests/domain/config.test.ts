@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { OrchestratorConfig } from "../../src/domain/config.js";
+import type { OrchestratorConfig } from "#domain/config.js";
 
 describe("OrchestratorConfig", () => {
   it("accepts a valid config with all required fields", () => {

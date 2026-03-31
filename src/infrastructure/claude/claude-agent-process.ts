@@ -1,8 +1,8 @@
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { Readable } from "stream";
-import type { AgentHandle } from "../../application/ports/agent-spawner.port.js";
-import type { AgentStyle, AgentResult } from "../../domain/agent-types.js";
+import type { AgentHandle } from "#application/ports/agent-spawner.port.js";
+import type { AgentStyle, AgentResult } from "#domain/agent-types.js";
 import { detectQuestion } from "../agent/question-detector.js";
 
 type ToolUseBlock = {

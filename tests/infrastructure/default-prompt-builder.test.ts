@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { DefaultPromptBuilder } from "../../src/infrastructure/default-prompt-builder.js";
-import { PromptBuilder } from "../../src/application/ports/prompt-builder.port.js";
-import { withBrief, buildPlanPrompt, buildTddPrompt, buildReviewPrompt, buildCompletenessPrompt, buildCommitSweepPrompt, buildGapPrompt, buildFinalPasses } from "../../src/infrastructure/plan/prompts.js";
-import { TDD_RULES_REMINDER, REVIEW_RULES_REMINDER, buildRulesReminder } from "../../src/infrastructure/claude/claude-agent-factory.js";
+import { DefaultPromptBuilder } from "#infrastructure/default-prompt-builder.js";
+import { PromptBuilder } from "#application/ports/prompt-builder.port.js";
+import { withBrief, buildPlanPrompt, buildTddPrompt, buildReviewPrompt, buildCompletenessPrompt, buildCommitSweepPrompt, buildGapPrompt, buildFinalPasses } from "#infrastructure/plan/prompts.js";
+import { TDD_RULES_REMINDER, REVIEW_RULES_REMINDER, buildRulesReminder } from "#infrastructure/claude/claude-agent-factory.js";
 
 const BRIEF = "This is a test brief";
 const PLAN_CONTENT = "Full plan content here";

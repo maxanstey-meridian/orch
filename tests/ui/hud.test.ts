@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildStatusLine, createHud } from "../../src/ui/hud.js";
-import type { HudState } from "../../src/ui/hud.js";
+import { buildStatusLine, createHud } from "#ui/hud.js";
+import type { HudState } from "#ui/hud.js";
 
 const makeMockStdout = (overrides: { columns?: number; rows?: number } = {}) => {
   const written: string[] = [];

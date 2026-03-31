@@ -1,4 +1,4 @@
-import type { AgentStyle, AgentResult, AgentRole } from "../../domain/agent-types.js";
+import type { AgentStyle, AgentResult, AgentRole } from "#domain/agent-types.js";
 
 export type AgentHandle = {
   readonly sessionId: string;

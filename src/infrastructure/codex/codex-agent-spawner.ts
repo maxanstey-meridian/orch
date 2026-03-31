@@ -1,11 +1,11 @@
 import type { ChildProcess } from "node:child_process";
-import { AgentSpawner, type AgentHandle } from "../../application/ports/agent-spawner.port.js";
+import { AgentSpawner, type AgentHandle } from "#application/ports/agent-spawner.port.js";
 import type {
   RuntimeInteractionGate,
   RuntimeInteractionRequest,
-} from "../../application/ports/runtime-interaction.port.js";
-import type { AgentRole } from "../../domain/agent-types.js";
-import { ROLE_STYLES } from "../../ui/agent-role-styles.js";
+} from "#application/ports/runtime-interaction.port.js";
+import type { AgentRole } from "#domain/agent-types.js";
+import { ROLE_STYLES } from "#ui/agent-role-styles.js";
 import { detectQuestion } from "../agent/question-detector.js";
 import { createCodexAppServerClient } from "./codex-app-server-client.js";
 import { resolveCodexModeConfig } from "./codex-mode-config.js";

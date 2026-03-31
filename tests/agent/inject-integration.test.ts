@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createClaudeAgent as createAgent } from "../../src/infrastructure/claude/claude-agent-process.js";
+import { createClaudeAgent as createAgent } from "#infrastructure/claude/claude-agent-process.js";
 
 /**
  * Integration tests that spawn a real `claude` process to verify

@@ -12,10 +12,10 @@ vi.mock("../../src/infrastructure/state/state.js", () => ({
   saveState: vi.fn(),
 }));
 
-import { resolveWorktree } from "../../src/infrastructure/git/worktree-setup.js";
-import { createWorktree } from "../../src/infrastructure/git/worktree.js";
-import { captureRef } from "../../src/infrastructure/git/git.js";
-import { saveState } from "../../src/infrastructure/state/state.js";
+import { resolveWorktree } from "#infrastructure/git/worktree-setup.js";
+import { createWorktree } from "#infrastructure/git/worktree.js";
+import { captureRef } from "#infrastructure/git/git.js";
+import { saveState } from "#infrastructure/state/state.js";
 
 const noop = () => {};
 

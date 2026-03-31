@@ -20,11 +20,11 @@ import {
   getStatus,
   getDiff,
   stashBackup,
-} from "../../src/infrastructure/git/git.js";
-import { measureDiff } from "../../src/infrastructure/cli/review-threshold.js";
-import { shouldReview } from "../../src/domain/review.js";
+} from "#infrastructure/git/git.js";
+import { measureDiff } from "#infrastructure/cli/review-threshold.js";
+import { shouldReview } from "#domain/review.js";
 import type { Mock } from "vitest";
-import { ChildProcessGitOps } from "../../src/infrastructure/child-process-git-ops.js";
+import { ChildProcessGitOps } from "#infrastructure/child-process-git-ops.js";
 
 describe("ChildProcessGitOps", () => {
   const adapter = new ChildProcessGitOps("/test/repo");
