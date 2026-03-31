@@ -1,24 +1,9 @@
 import { AgentSpawner, type AgentHandle } from "../application/ports/agent-spawner.port.js";
-import type { AgentRole, AgentStyle } from "../domain/agent-types.js";
+import type { AgentRole } from "../domain/agent-types.js";
 import { spawnClaudeAgent, spawnClaudePlanAgent } from "./claude/claude-agent-factory.js";
-import {
-  BOT_TDD,
-  BOT_REVIEW,
-  BOT_VERIFY,
-  BOT_PLAN,
-  BOT_GAP,
-  BOT_FINAL,
-} from "../ui/display.js";
+import { ROLE_STYLES } from "../ui/agent-role-styles.js";
 
-export const ROLE_STYLES: Record<AgentRole, AgentStyle> = {
-  tdd: BOT_TDD,
-  review: BOT_REVIEW,
-  verify: BOT_VERIFY,
-  plan: BOT_PLAN,
-  gap: BOT_GAP,
-  final: BOT_FINAL,
-  completeness: BOT_PLAN,
-};
+export { ROLE_STYLES };
 
 const PLAN_ROLES: ReadonlySet<AgentRole> = new Set<AgentRole>(["plan", "gap", "completeness"]);
 

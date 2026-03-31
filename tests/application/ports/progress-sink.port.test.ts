@@ -80,7 +80,7 @@ describe("styleForRole", () => {
     ["final", "FINAL"],
     ["verify", "VERIFY"],
     ["plan", "PLAN"],
-    ["completeness", "TDD"],
+    ["completeness", "PLAN"],
   ] as const)("maps %s → label %s", (role, expectedLabel) => {
     expect(styleForRole(role).label).toBe(expectedLabel);
   });

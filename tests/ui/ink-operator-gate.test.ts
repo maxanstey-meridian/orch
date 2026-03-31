@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { AGENT_ROLES } from "../../src/domain/agent-types.js";
 import { SilentOperatorGate, InkOperatorGate, InkProgressSink, SilentProgressSink, styleForRole } from "../../src/ui/ink-operator-gate.js";
 import type { Hud } from "../../src/ui/hud.js";
+import { BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL } from "../../src/ui/display.js";
 
 const createMockHud = (overrides: Partial<Hud> = {}): Hud => ({
   update: vi.fn(),
@@ -199,15 +200,19 @@ describe("InkOperatorGate", () => {
 });
 
 describe("InkProgressSink", () => {
-  it("maps every runtime agent role to a valid style", () => {
-    for (const role of AGENT_ROLES) {
-      const style = styleForRole(role);
+  it("maps every runtime agent role to its exact style", () => {
+    const expectedStyles = {
+      tdd: BOT_TDD,
+      review: BOT_REVIEW,
+      verify: BOT_VERIFY,
+      plan: BOT_PLAN,
+      gap: BOT_GAP,
+      final: BOT_FINAL,
+      completeness: BOT_PLAN,
+    } as const;
 
-      expect(style).toMatchObject({
-        label: expect.any(String),
-        color: expect.any(String),
-        badge: expect.any(String),
-      });
+    for (const role of AGENT_ROLES) {
+      expect(styleForRole(role)).toBe(expectedStyles[role]);
     }
   });
 

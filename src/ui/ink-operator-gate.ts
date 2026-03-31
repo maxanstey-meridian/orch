@@ -10,15 +10,8 @@ import {
 } from "../application/ports/progress-sink.port.js";
 import type { AgentRole, AgentStyle } from "../domain/agent-types.js";
 import type { Slice } from "../domain/plan.js";
-import {
-  BOT_TDD,
-  BOT_REVIEW,
-  BOT_GAP,
-  BOT_FINAL,
-  BOT_VERIFY,
-  BOT_PLAN,
-  printSliceIntro,
-} from "./display.js";
+import { printSliceIntro } from "./display.js";
+import { ROLE_STYLES } from "./agent-role-styles.js";
 import { makeStreamer } from "../infrastructure/agent/streamer.js";
 import type { Hud } from "./hud.js";
 
@@ -41,16 +34,7 @@ export class SilentOperatorGate extends OperatorGate {
 }
 
 export const styleForRole = (role: AgentRole): AgentStyle => {
-  const map: Record<AgentRole, AgentStyle> = {
-    tdd: BOT_TDD,
-    review: BOT_REVIEW,
-    gap: BOT_GAP,
-    final: BOT_FINAL,
-    verify: BOT_VERIFY,
-    plan: BOT_PLAN,
-    completeness: BOT_TDD,
-  };
-  return map[role];
+  return ROLE_STYLES[role];
 };
 
 export class SilentProgressSink extends ProgressSink {
