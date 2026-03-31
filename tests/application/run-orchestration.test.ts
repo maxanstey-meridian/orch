@@ -2498,6 +2498,23 @@ describe("RunOrchestration", () => {
       expect(progressSink.createStreamer).toHaveBeenCalledWith("tdd");
     });
 
+    it("pipeToSink passes the exact streamer function to agent.pipe", async () => {
+      const ports = makePorts();
+      const streamerFn = vi.fn();
+      ports.progressSink.createStreamer.mockReturnValue(streamerFn);
+      const { uc, spawner } = makeUc(ports);
+      const agent = makeAgent();
+      spawner.spawn.mockReturnValue(agent);
+      uc.tddAgent = agent;
+
+      await uc.respawnTdd();
+
+      expect(agent.pipe).toHaveBeenCalledWith(
+        streamerFn,
+        expect.any(Function),
+      );
+    });
+
     it("pipeToSink onSummary routes to progressSink.setActivity", async () => {
       const ports = makePorts();
       const { uc, spawner, progressSink } = makeUc(ports);

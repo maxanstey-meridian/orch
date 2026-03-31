@@ -63,7 +63,7 @@ export class RunOrchestration {
   private pipeToSink(agent: AgentHandle, role: AgentRole): void {
     const streamer = this.progressSink.createStreamer(role);
     agent.pipe(
-      (text) => streamer(text),
+      streamer,
       (summary) => this.progressSink.setActivity(summary),
     );
   }
