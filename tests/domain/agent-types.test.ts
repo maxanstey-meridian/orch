@@ -38,9 +38,17 @@ describe("AgentResult", () => {
 });
 
 describe("AgentRole", () => {
-  it("exports triage in the runtime AGENT_ROLES array", () => {
-    expect(AGENT_ROLES).toContain("triage");
-    expect(AGENT_ROLES).toHaveLength(8);
+  it("exports the full runtime AGENT_ROLES array including triage", () => {
+    expect(AGENT_ROLES).toEqual([
+      "tdd",
+      "review",
+      "verify",
+      "plan",
+      "gap",
+      "final",
+      "completeness",
+      "triage",
+    ]);
   });
 
   it("covers all 8 roles (exhaustiveness guard)", () => {
