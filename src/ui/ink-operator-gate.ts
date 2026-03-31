@@ -17,6 +17,10 @@ import { makeStreamer } from "../infrastructure/agent/streamer.js";
 import type { Hud } from "./hud.js";
 
 export class SilentOperatorGate extends OperatorGate {
+  constructor(private readonly hud?: Hud) {
+    super();
+  }
+
   async confirmPlan(_planPreview: string): Promise<GateDecision> {
     return { kind: "accept" };
   }
@@ -25,8 +29,14 @@ export class SilentOperatorGate extends OperatorGate {
     return { kind: "stop" };
   }
 
-  async creditExhausted(_label: string, _message: string): Promise<CreditDecision> {
-    return { kind: "quit" };
+  async creditExhausted(label: string, message: string): Promise<CreditDecision> {
+    if (!this.hud) return { kind: "quit" };
+    const answer = await this.hud.askUser(
+      `Credit exhaustion during ${label}:\n${message}\n\nWait for credits to reset, then (r)etry / (q)uit? `,
+    );
+    const choice = answer.trim().toLowerCase();
+    if (choice === "q") return { kind: "quit" };
+    return { kind: "retry" };
   }
 
   async askUser(_prompt: string): Promise<string> {
