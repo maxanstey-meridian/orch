@@ -560,6 +560,17 @@ describe('CodexAgentSpawner', () => {
       expect(approvalResponse!.params?.approved).toBe(true);
     });
 
+    it('resumed session passes sandbox to thread/resume', async () => {
+      fake = createFakeAppServer();
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
+      spawner.spawn('plan', { resumeSessionId: 'prev-thread' });
+
+      await tick();
+
+      const threadResume = fake.receivedRequests.find((r) => r.method === 'thread/resume');
+      expect(threadResume!.params?.sandbox).toBe('read-only');
+    });
+
     it('interactive mode does NOT auto-approve approval events', async () => {
       fake = createFakeAppServer();
       fake.setTurnScript([
@@ -575,6 +586,122 @@ describe('CodexAgentSpawner', () => {
         (n) => n.method === 'codex/approvalResponse',
       );
       expect(approvalResponse).toBeUndefined();
+    });
+  });
+
+  describe('gap coverage', () => {
+    it('sendQuiet() flushes pending guidance queue', async () => {
+      fake = createFakeAppServer();
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      await tick();
+
+      handle.inject('quiet guidance');
+
+      fake.setTurnScript([{ kind: 'turnCompleted', resultText: 'quiet done' }]);
+      const text = await handle.sendQuiet('quiet prompt');
+
+      expect(text).toBe('quiet done');
+      const turnStart = fake.receivedRequests.filter((r) => r.method === 'turn/start');
+      const prompt = turnStart[0]?.params?.prompt as string;
+      expect(prompt).toContain('quiet guidance');
+      expect(prompt).toContain('quiet prompt');
+    });
+
+    it('per-call onText overrides piped onText', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'textDelta', text: 'hello' },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      const pipedOnText = vi.fn();
+      const pipedOnToolUse = vi.fn();
+      handle.pipe(pipedOnText, pipedOnToolUse);
+
+      const perCallOnText = vi.fn();
+      await handle.send('go', perCallOnText);
+
+      expect(perCallOnText).toHaveBeenCalledWith('hello');
+      expect(pipedOnText).not.toHaveBeenCalled();
+    });
+
+    it('send() sets needsInput true when assistant text ends with a question', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'textDelta', text: 'Should I proceed?' },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      const result = await handle.send('go');
+
+      expect(result.needsInput).toBe(true);
+    });
+
+    it('send() sets needsInput false when assistant text has no question', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'textDelta', text: 'All done.' },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      const result = await handle.send('go');
+
+      expect(result.needsInput).toBe(false);
+    });
+
+    it('turnFailed sets resultText to empty string', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'turnFailed', error: { code: 'serverOverloaded', message: 'overloaded' } },
+        { kind: 'turnCompleted', resultText: '' },
+      ]);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      const result = await handle.send('go');
+
+      expect(result.exitCode).toBe(1);
+      expect(result.resultText).toBe('');
+    });
+
+    it('initialize sends initialized notification to fake', async () => {
+      const { createCodexAppServerClient } = await import('../../src/infrastructure/codex/codex-app-server-client.js');
+      const fake2 = createFakeAppServer();
+      const client = createCodexAppServerClient(fake2.proc);
+
+      await client.initialize();
+
+      const initialized = fake2.receivedNotifications.find(
+        (n) => n.method === 'initialized',
+      );
+      expect(initialized).toBeDefined();
+
+      fake2.close();
+    });
+
+    it('respondToApproval does not throw when process is already dead', async () => {
+      const { createCodexAppServerClient } = await import('../../src/infrastructure/codex/codex-app-server-client.js');
+      const fake2 = createFakeAppServer();
+      const client = createCodexAppServerClient(fake2.proc);
+      await client.initialize();
+      await client.startThread();
+
+      // Kill the process
+      client.close();
+      await tick();
+
+      // Should not throw
+      expect(() => client.respondToApproval('req-1', true)).not.toThrow();
+
+      fake2.close();
     });
   });
 });

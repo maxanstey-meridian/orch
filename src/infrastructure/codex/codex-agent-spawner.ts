@@ -109,7 +109,13 @@ export class CodexAgentSpawner extends AgentSpawner {
         try {
           await ready;
 
-          const resultText = await client.startTurn(prompt, (event) => {
+          let effectivePrompt = prompt;
+          if (pendingGuidance.length > 0) {
+            const guidance = pendingGuidance.splice(0).join('\n');
+            effectivePrompt = `[Prior operator guidance — incorporate before proceeding]\n${guidance}\n[End prior guidance]\n\n${prompt}`;
+          }
+
+          const resultText = await client.startTurn(effectivePrompt, (event) => {
             if (event.kind === 'approvalRequested' && modeConfig.approvalMode === 'auto-approve') {
               client.respondToApproval(event.request.id, true);
             }
