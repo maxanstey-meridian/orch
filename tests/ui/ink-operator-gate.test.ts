@@ -39,10 +39,10 @@ describe("SilentOperatorGate", () => {
     expect(result).toEqual({ kind: "accept" });
   });
 
-  it("verifyFailed returns retry", async () => {
+  it("verifyFailed returns skip", async () => {
     const gate = new SilentOperatorGate();
     const result = await gate.verifyFailed(3, "tests failed");
-    expect(result).toEqual({ kind: "retry" });
+    expect(result).toEqual({ kind: "skip" });
   });
 
   it("askUser returns empty string", async () => {

@@ -69,7 +69,7 @@ const makePorts = () => {
   };
   const gate = {
     confirmPlan: vi.fn().mockResolvedValue({ kind: "accept" as const }),
-    verifyFailed: vi.fn().mockResolvedValue({ kind: "retry" as const }),
+    verifyFailed: vi.fn().mockResolvedValue({ kind: "skip" as const }),
     askUser: vi.fn().mockResolvedValue(""),
     confirmNextGroup: vi.fn().mockResolvedValue(true),
   };
@@ -603,6 +603,28 @@ describe("RunOrchestration", () => {
       expect(result).toBe(false);
       expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
       expect(gate.verifyFailed).toHaveBeenCalled();
+    });
+
+    it("retries fix when operator chooses retry after a no-change fix attempt", async () => {
+      const ports = makePorts();
+      const { uc, spawner, gate, git } = makeUc(ports);
+      const verifyAgent = makeAgent({
+        assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- test broke\n",
+      });
+      spawner.spawn.mockReturnValue(verifyAgent);
+      uc.tddAgent = makeAgent();
+      uc.phase = { kind: "Verifying", sliceNumber: 1 };
+      git.hasChanges.mockResolvedValue(false);
+      gate.verifyFailed
+        .mockResolvedValueOnce({ kind: "retry" as const })
+        .mockResolvedValueOnce({ kind: "skip" as const });
+
+      const result = await uc.verify(makeSlice(), "sha0");
+
+      expect(result).toBe(false);
+      expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
+      expect(verifyAgent.send).toHaveBeenCalledTimes(1);
+      expect(gate.verifyFailed).toHaveBeenCalledTimes(2);
     });
 
     it("wraps verify and fix sends in withRetry", async () => {
@@ -1219,21 +1241,34 @@ describe("RunOrchestration", () => {
   });
 
   describe("Gap: verify retry decision", () => {
-    it("returns true when operator chooses retry after double failure", async () => {
+    it("retries fix and re-verify when operator chooses retry after re-verify failure", async () => {
       const ports = makePorts();
-      const { uc, spawner, gate } = makeUc(ports);
-      const verifyAgent = makeAgent({
-        assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n",
-      });
+      const { uc, spawner, gate, git } = makeUc(ports);
+      const verifyAgent = {
+        ...makeAgent(),
+        send: vi.fn()
+          .mockResolvedValueOnce(makeResult({
+            assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- first failure\n",
+          }))
+          .mockResolvedValueOnce(makeResult({
+            assistantText: "### VERIFY_RESULT\n**Status:** FAIL\n**New failures:**\n- still broken\n",
+          }))
+          .mockResolvedValueOnce(makeResult({
+            assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+          })),
+      } as unknown as AgentHandle;
       spawner.spawn.mockReturnValue(verifyAgent);
       uc.tddAgent = makeAgent();
       uc.phase = { kind: "Verifying", sliceNumber: 1 };
+      git.hasChanges.mockResolvedValue(true);
       gate.verifyFailed.mockResolvedValue({ kind: "retry" as const });
 
       const result = await uc.verify(makeSlice(), "sha0");
 
       expect(result).toBe(true);
-      expect(gate.verifyFailed).toHaveBeenCalled();
+      expect((uc.tddAgent!.send as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
+      expect(verifyAgent.send).toHaveBeenCalledTimes(3);
+      expect(gate.verifyFailed).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1625,7 +1660,7 @@ describe("RunOrchestration", () => {
       });
       const { uc, spawner, git } = makeUc(ports, config);
       git.captureRef.mockResolvedValue("sha1");
-      git.hasChanges.mockResolvedValue(false);
+      git.hasChanges.mockResolvedValue(true);
       git.measureDiff.mockResolvedValue({ added: 0, removed: 0, total: 0 });
 
       // Verify fails first, passes on re-verify
@@ -1665,7 +1700,7 @@ describe("RunOrchestration", () => {
       await uc.execute(groups);
 
       expect(phaseAtTddFix).toEqual({ kind: "Executing", sliceNumber: 1, planText: null });
-      expect(uc.phase).toEqual({ kind: "Idle" });
+      expect(uc.phase).toEqual({ kind: "Complete" });
     });
 
     it("gapAnalysis: phase transitions through GapAnalysis when gaps run", async () => {

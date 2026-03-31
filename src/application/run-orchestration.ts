@@ -582,7 +582,7 @@ export class RunOrchestration {
     );
     let parsed = parseVerifyResult(verifyResult.assistantText ?? "");
 
-    if (!parsed.passed) {
+    while (!parsed.passed) {
       this.phase = transition(this.phase, { kind: "VerifyFailed" });
 
       const failureContext =
@@ -616,8 +616,7 @@ export class RunOrchestration {
         if (decision.kind === "skip") {
           return false;
         }
-        // Operator chose retry — continue to review, don't loop
-        return true;
+        continue;
       }
 
       // Re-verify — tell the verifier what TDD fixed
@@ -645,8 +644,7 @@ export class RunOrchestration {
         if (decision.kind === "skip") {
           return false;
         }
-        // retry — continue to review
-        return true;
+        continue;
       }
     }
 

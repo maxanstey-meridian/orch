@@ -21,7 +21,7 @@ export class SilentOperatorGate extends OperatorGate {
   }
 
   async verifyFailed(_sliceNumber: number, _summary: string): Promise<VerifyDecision> {
-    return { kind: "retry" };
+    return { kind: "skip" };
   }
 
   async askUser(_prompt: string): Promise<string> {

@@ -736,12 +736,19 @@ describe("composition root integration", () => {
     // Replace ports with in-memory test doubles AFTER construction
     const tddAgent = makeTestAgent();
     const reviewAgent = makeTestAgent();
+    const verifyAgent = {
+      ...makeTestAgent(),
+      send: vi.fn().mockResolvedValue(makeTestResult({
+        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+      })),
+    };
     (orch as any).agents = {
       spawn: vi.fn().mockReturnValue(makeTestAgent()),
     };
     (orch as any).agents.spawn
       .mockReturnValueOnce(tddAgent)
-      .mockReturnValueOnce(reviewAgent);
+      .mockReturnValueOnce(reviewAgent)
+      .mockReturnValueOnce(verifyAgent);
     (orch as any).persistence = {
       load: vi.fn().mockResolvedValue({}),
       save: vi.fn().mockResolvedValue(undefined),
@@ -935,4 +942,3 @@ describe("composition root integration", () => {
     expect(exitCode).toBe(2);
   });
 });
-
