@@ -44,7 +44,7 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
     get alive() { return alive; },
 
     initialize: async () => {
-      await rpc.request('initialize', {});
+      await rpc.request('initialize', { clientInfo: { name: 'orch', version: '0.1.0' } });
       // Send initialized notification (no id)
       proc.stdin!.write(JSON.stringify({ jsonrpc: '2.0', method: 'initialized' }) + '\n');
     },
@@ -57,8 +57,8 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
       if (opts?.sandbox) {
         params.sandbox = opts.sandbox;
       }
-      const result = await rpc.request('thread/start', params) as { threadId: string };
-      threadId = result.threadId;
+      const result = await rpc.request('thread/start', params) as { threadId?: string; thread?: { id: string } };
+      threadId = result.thread?.id ?? result.threadId ?? '';
       return threadId;
     },
 
@@ -85,7 +85,10 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
       rpc.onNotification(turnHandler);
 
       currentTurnId = `turn-${nextTurnSeq++}`;
-      const params: Record<string, unknown> = { threadId, prompt };
+      const params: Record<string, unknown> = {
+        threadId,
+        input: [{ type: 'text', text: prompt }],
+      };
       const result = await rpc.request('turn/start', params) as { result?: string };
       currentTurnId = undefined;
       rpc.onNotification(() => {}); // clear stale handler

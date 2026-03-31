@@ -6,6 +6,11 @@ import type { RuntimeInteractionGate } from '../../src/application/ports/runtime
 
 const tick = () => new Promise((r) => setTimeout(r, 10));
 
+const extractPrompt = (params?: Record<string, unknown>): string => {
+  const input = params?.input as ReadonlyArray<{ text: string }> | undefined;
+  return input?.[0]?.text ?? '';
+};
+
 describe('CodexAgentSpawner', () => {
   let fake: FakeAppServer;
 
@@ -390,7 +395,7 @@ describe('CodexAgentSpawner', () => {
       await handle.send('do the thing');
 
       const turnStart = fake.receivedRequests.filter((r) => r.method === 'turn/start');
-      const prompt = turnStart[0]?.params?.prompt as string;
+      const prompt = extractPrompt(turnStart[0]?.params);
       expect(prompt).toContain('guidance A');
       expect(prompt).toContain('guidance B');
       expect(prompt).toContain('do the thing');
@@ -412,7 +417,7 @@ describe('CodexAgentSpawner', () => {
       await handle.send('go');
 
       const turnStart = fake.receivedRequests.filter((r) => r.method === 'turn/start');
-      const prompt = turnStart[0]?.params?.prompt as string;
+      const prompt = extractPrompt(turnStart[0]?.params);
       expect(prompt.indexOf('first')).toBeLessThan(prompt.indexOf('second'));
     });
 
@@ -432,7 +437,7 @@ describe('CodexAgentSpawner', () => {
       await handle.send('second send');
 
       const turnStarts = fake.receivedRequests.filter((r) => r.method === 'turn/start');
-      const secondPrompt = turnStarts[1]?.params?.prompt as string;
+      const secondPrompt = extractPrompt(turnStarts[1]?.params);
       expect(secondPrompt).toBe('second send');
     });
 
@@ -836,7 +841,7 @@ describe('CodexAgentSpawner', () => {
 
       expect(text).toBe('quiet done');
       const turnStart = fake.receivedRequests.filter((r) => r.method === 'turn/start');
-      const prompt = turnStart[0]?.params?.prompt as string;
+      const prompt = extractPrompt(turnStart[0]?.params);
       expect(prompt).toContain('quiet guidance');
       expect(prompt).toContain('quiet prompt');
     });
