@@ -19,6 +19,20 @@ export type CodexEvent =
   | { readonly kind: "approvalRequested"; readonly request: CodexApprovalRequest }
   | { readonly kind: "ignored" };
 
+const extractCommandSummary = (command: string): string => {
+  const shellWrapped = command.match(/^\/bin\/[^\s]+\s+-\S+\s+(.+)$/)?.[1];
+  const inner = shellWrapped ?? command;
+
+  if (
+    (inner.startsWith("'") && inner.endsWith("'")) ||
+    (inner.startsWith('"') && inner.endsWith('"'))
+  ) {
+    return inner.slice(1, -1);
+  }
+
+  return inner;
+};
+
 export const normalizeNotification = (n: JsonRpcNotification): CodexEvent => {
   const params = n.params;
 
@@ -77,7 +91,8 @@ export const normalizeNotification = (n: JsonRpcNotification): CodexEvent => {
     case "item/started": {
       const item = params?.item as Record<string, unknown> | undefined;
       if (item?.type === "commandExecution") {
-        return { kind: "toolActivity", summary: `Running: ${String(item.command ?? "unknown")}` };
+        const command = extractCommandSummary(String(item.command ?? "unknown"));
+        return { kind: "toolActivity", summary: `Running: ${command.slice(0, 80)}` };
       }
       if (item?.type === "fileChange") {
         const changes = item.changes as ReadonlyArray<{ path: string }> | undefined;

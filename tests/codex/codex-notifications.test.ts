@@ -148,6 +148,42 @@ describe('normalizeNotification', () => {
     });
   });
 
+  it('maps item/started command execution to a shell-unwrapped tool activity summary', () => {
+    expect(
+      normalizeNotification({
+        method: 'item/started',
+        params: {
+          item: {
+            type: 'commandExecution',
+            command: "/bin/zsh -lc 'git add tests/ui/ink-operator-gate.test.ts'",
+          },
+        },
+      }),
+    ).toEqual({
+      kind: 'toolActivity',
+      summary: 'Running: git add tests/ui/ink-operator-gate.test.ts',
+    });
+  });
+
+  it('truncates the unwrapped item/started command summary to 80 characters', () => {
+    const longCommand = 'x'.repeat(120);
+
+    expect(
+      normalizeNotification({
+        method: 'item/started',
+        params: {
+          item: {
+            type: 'commandExecution',
+            command: `/bin/bash -lc "${longCommand}"`,
+          },
+        },
+      }),
+    ).toEqual({
+      kind: 'toolActivity',
+      summary: `Running: ${'x'.repeat(80)}`,
+    });
+  });
+
   it('maps approval request to approvalRequested', () => {
     expect(
       normalizeNotification({
