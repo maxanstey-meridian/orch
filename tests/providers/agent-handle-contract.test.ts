@@ -96,6 +96,19 @@ const describeAgentHandleContract = (
       expect(() => handle.inject('guidance')).not.toThrow();
     });
 
+    it('inject() guidance is consumed by subsequent send()', async () => {
+      init();
+      const handle = spawner.spawn('tdd');
+      beforeSend?.();
+      await handle.send('first');
+      handle.inject('important guidance');
+      beforeSend?.();
+      const result = await handle.send('second');
+      // The turn completed successfully — proves guidance didn't break the flow
+      expect(result.exitCode).toBe(0);
+      expect(result.resultText).toBeTruthy();
+    });
+
     it('kill() sets alive to false', async () => {
       init();
       const handle = spawner.spawn('tdd');

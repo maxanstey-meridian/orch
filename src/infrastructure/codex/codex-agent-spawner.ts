@@ -56,17 +56,22 @@ export class CodexAgentSpawner extends AgentSpawner {
         client.respondToApproval(request.id, true);
       } else if (this.gate) {
         approvalChain = approvalChain.then(async () => {
-          const decision = await this.gate!.decide(mapApprovalToInteraction(request));
-          switch (decision.kind) {
-            case 'approve':
-              client.respondToApproval(request.id, true);
-              break;
-            case 'reject':
-              client.respondToApproval(request.id, false);
-              break;
-            case 'cancel':
-              client.interruptTurn().catch(() => {});
-              break;
+          try {
+            const decision = await this.gate!.decide(mapApprovalToInteraction(request));
+            switch (decision.kind) {
+              case 'approve':
+                client.respondToApproval(request.id, true);
+                break;
+              case 'reject':
+                client.respondToApproval(request.id, false);
+                break;
+              case 'cancel':
+                client.interruptTurn().catch(() => {});
+                break;
+            }
+          } catch {
+            // Gate failure (e.g. hud crash) — reject the approval as fail-safe
+            client.respondToApproval(request.id, false);
           }
         });
       }

@@ -824,6 +824,63 @@ describe('CodexAgentSpawner', () => {
         summary: 'access network',
       });
     });
+
+    it('gate.decide() rejection sends rejection as fail-safe', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'approvalRequested', request: { id: 'req-err', kind: 'command', summary: 'bad op' } },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const gate: RuntimeInteractionGate = {
+        decide: vi.fn().mockRejectedValue(new Error('hud crashed')),
+      };
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const handle = spawner.spawn('tdd');
+
+      const result = await handle.send('go');
+      await tick();
+      await tick();
+
+      // Turn should still complete (no unhandled rejection crash)
+      expect(result.resultText).toBe('done');
+      // Gate was called
+      expect(gate.decide).toHaveBeenCalledOnce();
+      // Fail-safe rejection should have been sent
+      const approvalResponse = fake.receivedNotifications.find(
+        (n) => n.method === 'codex/approvalResponse',
+      );
+      expect(approvalResponse).toBeDefined();
+      expect(approvalResponse!.params?.id).toBe('req-err');
+      expect(approvalResponse!.params?.approved).toBe(false);
+    });
+
+    it('sendQuiet() with piped callbacks suppresses text streaming but routes approvals', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'textDelta', text: 'streamed text' },
+        { kind: 'approvalRequested', request: { id: 'req-sq', kind: 'command', summary: 'npm test' } },
+        { kind: 'turnCompleted', resultText: 'quiet result' },
+      ]);
+      const gate: RuntimeInteractionGate = {
+        decide: vi.fn().mockResolvedValue({ kind: 'approve' }),
+      };
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc, gate);
+      const handle = spawner.spawn('tdd');
+
+      const pipedOnText = vi.fn();
+      const pipedOnToolUse = vi.fn();
+      handle.pipe(pipedOnText, pipedOnToolUse);
+
+      const text = await handle.sendQuiet('go');
+      await tick();
+
+      // Piped callbacks must not be called during sendQuiet
+      expect(pipedOnText).not.toHaveBeenCalled();
+      expect(pipedOnToolUse).not.toHaveBeenCalled();
+      // But gate must have been called for the approval
+      expect(gate.decide).toHaveBeenCalledOnce();
+      expect(text).toBe('quiet result');
+    });
   });
 
   describe('gap coverage', () => {
@@ -922,6 +979,22 @@ describe('CodexAgentSpawner', () => {
       expect(initialized).toBeDefined();
 
       fake2.close();
+    });
+
+    it('send() does not include toolActivity summaries in assistantText', async () => {
+      fake = createFakeAppServer();
+      fake.setTurnScript([
+        { kind: 'textDelta', text: 'hello' },
+        { kind: 'toolActivity', summary: 'command: npm test' },
+        { kind: 'turnCompleted', resultText: 'done' },
+      ]);
+      const spawner = new CodexAgentSpawner('/tmp/test', { auto: false, noInteraction: false }, () => fake.proc);
+      const handle = spawner.spawn('tdd');
+
+      const result = await handle.send('go');
+
+      expect(result.assistantText).toBe('hello');
+      expect(result.assistantText).not.toContain('npm test');
     });
 
     it('respondToApproval does not throw when process is already dead', async () => {

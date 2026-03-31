@@ -80,6 +80,13 @@ describe('InkRuntimeInteractionGate', () => {
     expect(result).toEqual({ kind: 'cancel' });
   });
 
+  it('maps yes to approve', async () => {
+    const hud = mockHud('yes');
+    const gate = new InkRuntimeInteractionGate(hud);
+    const result = await gate.decide({ kind: 'commandApproval', summary: 'run npm test' });
+    expect(result).toEqual({ kind: 'approve' });
+  });
+
   it('defaults empty input to approve', async () => {
     const hud = mockHud('');
     const gate = new InkRuntimeInteractionGate(hud);

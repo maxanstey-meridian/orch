@@ -56,21 +56,11 @@ describe.skipIf(!hasCodex)('CodexAgentSpawner integration (real codex binary)', 
     expect(typeof result).toBe('string');
   }, 60_000);
 
-  // MANUAL TEST REQUIRED: thread/resume depends on server-side rollout persistence
-  // which may not be available in all codex versions or configurations.
-  it.skip('thread/resume works within the same process', async () => {
-    proc = spawnAppServer();
-    client = createCodexAppServerClient(proc);
-    await client.initialize();
-    const threadId = await client.startThread();
-
-    // Complete a turn first to create some history
-    await client.startTurn('Say hello', () => {});
-
-    // Resume the same thread in the same client
-    const resumed = await client.resumeThread(threadId);
-    expect(resumed).toBe(threadId);
-  }, 30_000);
+  // thread/resume depends on server-side rollout persistence. The codex app-server
+  // returns "no rollout found" even within the same process — likely a timing issue
+  // where the rollout file isn't flushed before resume is called. Enable this test
+  // when codex app-server supports immediate resume after thread/start.
+  it.todo('thread/resume works within the same process');
 
   it('kill() on spawned handle does not crash the process', async () => {
     const spawner = new CodexAgentSpawner(
