@@ -12,10 +12,15 @@ export const useDashboardData = (
   registryPath: string,
   queuePath: string,
   intervalMs = 2_000,
-): { model: DashboardModel; loading: boolean; error?: string } => {
+): { model: DashboardModel; loading: boolean; error?: string; refresh: () => void } => {
   const [model, setModel] = useState<DashboardModel>(emptyModel);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [refreshToken, setRefreshToken] = useState(0);
+
+  const refresh = (): void => {
+    setRefreshToken((currentValue) => currentValue + 1);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -53,7 +58,7 @@ export const useDashboardData = (
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [intervalMs, queuePath, registryPath]);
+  }, [intervalMs, queuePath, refreshToken, registryPath]);
 
-  return { model, loading, error };
+  return { model, loading, error, refresh };
 };

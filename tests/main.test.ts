@@ -3,7 +3,7 @@ import { describe as _describe, it, expect, vi, beforeEach, afterEach } from "vi
 const describe = _describe;
 const describeIntegration = process.env.INTEGRATION ? _describe : _describe.skip;
 import { mkdtemp, rm, writeFile, readFile } from "fs/promises";
-import { join } from "path";
+import { join, resolve } from "path";
 import { tmpdir } from "os";
 import { execSync, spawnSync } from "child_process";
 import { loadState, saveState, clearState, statePathForPlan } from "#infrastructure/state/state.js";
@@ -107,6 +107,219 @@ describe("SHA-256 fallback plan ID derivation", () => {
     const id = resolvePlanId("/repo/plan.md");
     const statePath = statePathForPlan("/repo/.orch", id);
     expect(statePath).toMatch(/\.orch\/state\/plan-[0-9a-f]{6}\.json$/);
+  });
+});
+
+describe("subcommand routing", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  const loadMainWithSubcommandMocks = async () => {
+    const renderDashboard = vi.fn().mockResolvedValue(undefined);
+    const aggregateDashboard = vi.fn().mockResolvedValue({
+      active: [],
+      queued: [],
+      completed: [],
+    });
+    const addToQueue = vi.fn().mockResolvedValue(undefined);
+    const readQueue = vi.fn().mockResolvedValue([]);
+    const removeFromQueue = vi.fn().mockResolvedValue(undefined);
+    const assertGitRepo = vi.fn().mockResolvedValue(undefined);
+
+    vi.doMock("#ui/dashboard/dashboard-app.js", () => ({
+      renderDashboard,
+    }));
+    vi.doMock("#infrastructure/dashboard/data-aggregator.js", () => ({
+      aggregateDashboard,
+    }));
+    vi.doMock("#infrastructure/queue/queue-store.js", () => ({
+      defaultQueuePath: vi.fn(() => "/tmp/default-queue.json"),
+      addToQueue,
+      readQueue,
+      removeFromQueue,
+    }));
+    vi.doMock("#infrastructure/git/repo-check.js", () => ({
+      assertGitRepo,
+    }));
+
+    const mainModule = await import("../src/main.ts");
+
+    return {
+      ...mainModule,
+      mocks: {
+        renderDashboard,
+        aggregateDashboard,
+        addToQueue,
+        readQueue,
+        removeFromQueue,
+        assertGitRepo,
+      },
+    };
+  };
+
+  it("routes dash before git repo assertion", async () => {
+    const { main, mocks } = await loadMainWithSubcommandMocks();
+    const previousArgv = process.argv;
+    process.argv = ["node", "main.ts", "dash"];
+
+    try {
+      await main({
+        registryPath: "/tmp/runs.json",
+        queuePath: "/tmp/queue.json",
+        exit: vi.fn(),
+      });
+    } finally {
+      process.argv = previousArgv;
+    }
+
+    expect(mocks.renderDashboard).toHaveBeenCalledWith({
+      registryPath: "/tmp/runs.json",
+      queuePath: "/tmp/queue.json",
+    });
+    expect(mocks.assertGitRepo).not.toHaveBeenCalled();
+  });
+
+  it("queue add persists a normalized queue entry without requiring a git repo", async () => {
+    const { main, mocks } = await loadMainWithSubcommandMocks();
+    const previousArgv = process.argv;
+    const previousCwd = process.cwd();
+    process.argv = ["node", "main.ts", "queue", "add", "plans/demo.json", "--auto", "--branch", "feature/queue"];
+    process.chdir(tempDir);
+    const expectedRepo = process.cwd();
+    const expectedPlanPath = resolve("plans/demo.json");
+
+    try {
+      await main({
+        registryPath: "/tmp/runs.json",
+        queuePath: "/tmp/queue.json",
+        exit: vi.fn(),
+      });
+    } finally {
+      process.argv = previousArgv;
+      process.chdir(previousCwd);
+    }
+
+    expect(mocks.addToQueue).toHaveBeenCalledWith(
+      "/tmp/queue.json",
+      expect.objectContaining({
+        repo: expectedRepo,
+        planPath: expectedPlanPath,
+        branch: "feature/queue",
+        flags: ["--auto", "--branch", "feature/queue"],
+        id: expect.any(String),
+        addedAt: expect.any(String),
+      }),
+    );
+    expect(mocks.assertGitRepo).not.toHaveBeenCalled();
+  });
+
+  it("queue remove reports explicit command errors for malformed known subcommands", async () => {
+    const { main, mocks } = await loadMainWithSubcommandMocks();
+    const exit = vi.fn();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const previousArgv = process.argv;
+    process.argv = ["node", "main.ts", "queue", "remove"];
+
+    try {
+      await main({
+        registryPath: "/tmp/runs.json",
+        queuePath: "/tmp/queue.json",
+        exit,
+      });
+    } finally {
+      process.argv = previousArgv;
+    }
+
+    expect(errorSpy).toHaveBeenCalledWith("queue remove requires an id.");
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(mocks.assertGitRepo).not.toHaveBeenCalled();
+  });
+
+  it("status prints aggregated dashboard output without requiring a git repo", async () => {
+    const { main, mocks } = await loadMainWithSubcommandMocks();
+    mocks.aggregateDashboard.mockResolvedValue({
+      active: [
+        {
+          id: "run-active",
+          repo: "/repos/active",
+          status: "active",
+          sliceProgress: "S1/3",
+          currentPhase: "review",
+          elapsed: "5m",
+          pid: 123,
+        },
+      ],
+      queued: [
+        {
+          id: "queue-1",
+          repo: "/repos/queued",
+          planPath: "/plans/queued.json",
+          flags: ["--auto"],
+          addedAt: "2026-04-10T10:00:00.000Z",
+        },
+      ],
+      completed: [],
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const previousArgv = process.argv;
+    process.argv = ["node", "main.ts", "status"];
+
+    try {
+      await main({
+        registryPath: "/tmp/runs.json",
+        queuePath: "/tmp/queue.json",
+        exit: vi.fn(),
+      });
+    } finally {
+      process.argv = previousArgv;
+    }
+
+    const output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toContain("Active");
+    expect(output).toContain("run-active /repos/active active S1/3 review 5m");
+    expect(output).toContain("Queued");
+    expect(output).toContain("queue-1 /repos/queued /plans/queued.json --auto");
+    expect(mocks.aggregateDashboard).toHaveBeenCalledWith("/tmp/runs.json", "/tmp/queue.json");
+    expect(mocks.assertGitRepo).not.toHaveBeenCalled();
+  });
+
+  it("status follow exits non-zero when the matched run has no log path", async () => {
+    const { main, mocks } = await loadMainWithSubcommandMocks();
+    mocks.aggregateDashboard.mockResolvedValue({
+      active: [
+        {
+          id: "run-active",
+          repo: "/repos/active",
+          status: "active",
+          sliceProgress: "S1/3",
+          currentPhase: "review",
+          elapsed: "5m",
+          pid: 123,
+        },
+      ],
+      queued: [],
+      completed: [],
+    });
+    const exit = vi.fn();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const previousArgv = process.argv;
+    process.argv = ["node", "main.ts", "status", "run-active", "-f"];
+
+    try {
+      await main({
+        registryPath: "/tmp/runs.json",
+        queuePath: "/tmp/queue.json",
+        exit,
+      });
+    } finally {
+      process.argv = previousArgv;
+    }
+
+    expect(errorSpy).toHaveBeenCalledWith("Cannot follow logs for run-active.");
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(mocks.assertGitRepo).not.toHaveBeenCalled();
   });
 });
 

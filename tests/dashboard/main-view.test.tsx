@@ -445,4 +445,23 @@ describe("MainView", () => {
 
     app.unmount();
   });
+
+  it("opens the queue prompt when q is pressed, even with no rows selected", async () => {
+    const onOpenQueue = vi.fn();
+    const app = render(
+      <MainView
+        model={makeModel()}
+        onOpenDetail={vi.fn()}
+        onOpenTail={vi.fn()}
+        onOpenQueue={onOpenQueue}
+      />,
+    );
+
+    app.stdin.write("q");
+    await flushEffects();
+
+    expect(onOpenQueue).toHaveBeenCalledTimes(1);
+
+    app.unmount();
+  });
 });

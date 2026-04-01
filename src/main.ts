@@ -16,19 +16,22 @@
  */
 
 import { randomUUID } from "crypto";
-import { readFileSync, mkdirSync, writeFileSync } from "fs";
+import { readFileSync, mkdirSync, watch, writeFileSync } from "fs";
 import { mkdir, readFile, rm, stat, writeFile } from "fs/promises";
-import { homedir } from "os";
-import { dirname, join, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
+import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
+import type { QueueEntry } from "#domain/queue.js";
 import { resolveAllAgentConfigs } from "#domain/agent-config.js";
 import type { OrchestratorConfig } from "#domain/config.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
 import { parseBranchFlag, parseProviderFlag } from "#infrastructure/cli/cli-args.js";
+import { parseSubcommand } from "#infrastructure/cli/subcommands.js";
 import {
   loadAndResolveOrchrConfig,
   resolveSkillValue,
   buildOrchrSummary,
 } from "#infrastructure/config/orchrc.js";
+import { aggregateDashboard } from "#infrastructure/dashboard/data-aggregator.js";
 import { planGeneratorSpawnerFactory } from "#infrastructure/factories.js";
 import { runFingerprint } from "#infrastructure/fingerprint.js";
 import { getStatus, stashBackup } from "#infrastructure/git/git.js";
@@ -39,9 +42,20 @@ import {
   isPlanFormat,
   ensureCanonicalPlan,
   doGeneratePlan,
+  resolvePlanId,
 } from "#infrastructure/plan/plan-generator.js";
 import { parsePlan } from "#infrastructure/plan/plan-parser.js";
-import { deregisterRun, registerRun } from "#infrastructure/registry/run-registry.js";
+import {
+  defaultQueuePath,
+  addToQueue,
+  readQueue,
+  removeFromQueue,
+} from "#infrastructure/queue/queue-store.js";
+import {
+  defaultRegistryPath,
+  deregisterRun,
+  registerRun,
+} from "#infrastructure/registry/run-registry.js";
 import { logPathForPlan } from "#infrastructure/log/log-writer.js";
 import {
   loadState,
@@ -50,6 +64,7 @@ import {
   type OrchestratorState,
 } from "#infrastructure/state/state.js";
 import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "#ui/display.js";
+import { renderDashboard } from "#ui/dashboard/dashboard-app.js";
 import { createHud } from "#ui/hud.js";
 import { runInit, profileToMarkdown } from "#ui/init.js";
 import { createContainer } from "./composition-root.js";
@@ -58,6 +73,8 @@ let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...a
 
 type MainRuntime = {
   registryPath?: string;
+  queuePath?: string;
+  argv?: string[];
   onSignal?: (signal: "SIGINT" | "SIGTERM", handler: () => void) => NodeJS.Process;
   exit?: (code: number) => void;
 };
@@ -179,14 +196,252 @@ export const withRegistryLock = async <T>(
   }
 };
 
+const printLines = (lines: readonly string[]): void => {
+  for (const line of lines) {
+    console.log(line);
+  }
+};
+
+const formatStatusTable = (
+  title: string,
+  rows: readonly string[],
+): string[] => {
+  if (rows.length === 0) {
+    return [title, "  (none)"];
+  }
+
+  return [title, ...rows.map((row) => `  ${row}`)];
+};
+
+const formatRunSummaryRow = (run: DashboardRun): string =>
+  `${run.id} ${run.repo} ${run.status} ${run.sliceProgress} ${run.currentPhase ?? "-"} ${run.elapsed}`;
+
+const formatQueueSummaryRow = (entry: QueueEntry): string =>
+  `${entry.id} ${entry.repo} ${entry.planPath} ${entry.flags.join(" ") || "-"}`;
+
+const formatDashboardSummary = (model: DashboardModel): string[] => [
+  ...formatStatusTable("Active", model.active.map(formatRunSummaryRow)),
+  ...formatStatusTable("Queued", model.queued.map(formatQueueSummaryRow)),
+  ...formatStatusTable("Completed", model.completed.map(formatRunSummaryRow)),
+];
+
+const formatDetailLines = (run: DashboardRun): string[] => {
+  const lines = [
+    `Run ${run.id}`,
+    `Repo: ${run.repo}`,
+    `Status: ${run.status}`,
+    `Plan: ${run.planName ?? "-"}`,
+    `Branch: ${run.branch ?? "-"}`,
+    `Progress: ${run.sliceProgress}`,
+    `Phase: ${run.currentPhase ?? "-"}`,
+    `Elapsed: ${run.elapsed}`,
+    `Log: ${run.logPath ?? "-"}`,
+  ];
+
+  if (run.groups === undefined || run.groups.length === 0) {
+    return lines;
+  }
+
+  return [
+    ...lines,
+    ...run.groups.flatMap((group) => [
+      group.name,
+      ...group.slices.map(
+        (slice) => `  ${slice.status} S${slice.number} ${slice.title}${slice.elapsed ? ` ${slice.elapsed}` : ""}`,
+      ),
+    ]),
+  ];
+};
+
+const formatQueuedDetail = (entry: QueueEntry): string[] => [
+  `Queued ${entry.id}`,
+  `Repo: ${entry.repo}`,
+  `Plan: ${entry.planPath}`,
+  `Branch: ${entry.branch ?? "-"}`,
+  `Flags: ${entry.flags.join(" ") || "-"}`,
+  `Added: ${entry.addedAt}`,
+];
+
+const findDashboardEntry = (
+  model: DashboardModel,
+  id: string,
+):
+  | { readonly kind: "run"; readonly run: DashboardRun }
+  | { readonly kind: "queue"; readonly entry: QueueEntry }
+  | undefined => {
+  const run = [...model.active, ...model.completed].find((candidate) => candidate.id === id);
+  if (run !== undefined) {
+    return { kind: "run", run };
+  }
+
+  const entry = model.queued.find((candidate) => candidate.id === id);
+  if (entry !== undefined) {
+    return { kind: "queue", entry };
+  }
+
+  return undefined;
+};
+
+const followLogFile = async (logPath: string): Promise<never> => {
+  let offset = 0;
+
+  const flush = async (): Promise<void> => {
+    let content: Buffer;
+    try {
+      content = await readFile(logPath);
+    } catch (error) {
+      if (hasCode(error) && error.code === "ENOENT") {
+        return;
+      }
+
+      throw error;
+    }
+
+    if (content.length <= offset) {
+      return;
+    }
+
+    process.stdout.write(content.subarray(offset).toString("utf8"));
+    offset = content.length;
+  };
+
+  await flush();
+
+  return new Promise<never>((_resolve, reject) => {
+    const fileName = basename(logPath);
+    const watcher = watch(dirname(logPath), async (_eventType, changedFileName) => {
+      if (changedFileName !== null && changedFileName !== fileName) {
+        return;
+      }
+
+      try {
+        await flush();
+      } catch (error) {
+        watcher.close();
+        reject(error);
+      }
+    });
+
+    watcher.on("error", (error) => {
+      watcher.close();
+      reject(error);
+    });
+  });
+};
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 export const main = async (runtime: MainRuntime = {}) => {
   const onSignal = runtime.onSignal ?? ((signal: "SIGINT" | "SIGTERM", handler: () => void) => process.on(signal, handler));
   const exit = runtime.exit ?? process.exit;
-  await assertGitRepo(process.cwd());
+  const argv = runtime.argv ?? process.argv;
+  const queuePath = runtime.queuePath ?? defaultQueuePath();
+  const registryPath = runtime.registryPath ?? defaultRegistryPath();
+  const subcommand = parseSubcommand(argv);
+  const cwd = process.cwd();
+  let args: string[];
 
-  const args = process.argv.slice(2);
+  const exitWithError = (message: string): void => {
+    console.error(message);
+    exit(1);
+  };
+
+  if (subcommand.command === "dash") {
+    await renderDashboard({ registryPath, queuePath });
+    return;
+  }
+
+  if (subcommand.command === "queue") {
+    if ("error" in subcommand) {
+      switch (subcommand.error) {
+        case "missing-action":
+          exitWithError("queue requires an action: add, list, or remove.");
+          return;
+        case "unknown-action":
+          exitWithError(`Unsupported queue action: ${subcommand.action}`);
+          return;
+        case "missing-plan-path":
+          exitWithError("queue add requires a plan path.");
+          return;
+        case "missing-id":
+          exitWithError("queue remove requires an id.");
+          return;
+      }
+    }
+
+    if (subcommand.action === "add") {
+      const planPath = resolve(subcommand.planPath);
+      const planId = resolvePlanId(planPath);
+      const branch = parseBranchFlag(subcommand.flags, planId);
+      const entry = {
+        id: randomUUID(),
+        repo: cwd,
+        planPath,
+        ...(branch === undefined ? {} : { branch }),
+        flags: subcommand.flags,
+        addedAt: new Date().toISOString(),
+      } satisfies QueueEntry;
+
+      await addToQueue(queuePath, entry);
+      console.log(`Queued ${entry.id} ${entry.planPath}`);
+      return;
+    }
+
+    if (subcommand.action === "list") {
+      printLines(formatStatusTable("Queue", (await readQueue(queuePath)).map(formatQueueSummaryRow)));
+      return;
+    }
+
+    await removeFromQueue(queuePath, subcommand.id);
+    console.log(`Removed ${subcommand.id}`);
+    return;
+  }
+
+  if (subcommand.command === "status") {
+    const model = await aggregateDashboard(registryPath, queuePath);
+    if (subcommand.id === undefined) {
+      printLines(formatDashboardSummary(model));
+      return;
+    }
+
+    const entry = findDashboardEntry(model, subcommand.id);
+    if (entry === undefined) {
+      exitWithError(`No dashboard entry found for id ${subcommand.id}.`);
+      return;
+    }
+
+    if (subcommand.follow) {
+      if (entry.kind !== "run" || entry.run.logPath === undefined) {
+        exitWithError(`Cannot follow logs for ${subcommand.id}.`);
+        return;
+      }
+
+      await followLogFile(entry.run.logPath);
+      return;
+    }
+
+    printLines(entry.kind === "run" ? formatDetailLines(entry.run) : formatQueuedDetail(entry.entry));
+    return;
+  }
+
+  if (subcommand.command === "work") {
+    if ("error" in subcommand) {
+      exitWithError("--work requires a plan path. Usage: --work <plan.md>");
+      return;
+    }
+
+    args = ["--work", subcommand.planPath, ...subcommand.flags];
+  } else if (subcommand.command === "plan") {
+    if ("error" in subcommand) {
+      exitWithError("--plan requires an inventory path.");
+      return;
+    }
+
+    args = ["--plan", subcommand.inventoryPath, ...subcommand.flags];
+  } else {
+    args = subcommand.args;
+  }
+
   const getArg = (flag: string): string | undefined => {
     const i = args.indexOf(flag);
     return i !== -1 ? args[i + 1] : undefined;
@@ -194,14 +449,14 @@ export const main = async (runtime: MainRuntime = {}) => {
 
   const inventoryPath = getArg("--plan");
   if (args.includes("--resume")) {
-    console.error("--resume is no longer supported. Use --work <plan> instead.");
-    process.exit(1);
+    exitWithError("--resume is no longer supported. Use --work <plan> instead.");
+    return;
   }
   if (args.includes("--plan-only")) {
-    console.error(
+    exitWithError(
       "--plan-only is no longer supported. Use --plan instead (it generates and exits by default).",
     );
-    process.exit(1);
+    return;
   }
   const workMode = args.includes("--work");
   const workRaw = getArg("--work");
@@ -216,45 +471,45 @@ export const main = async (runtime: MainRuntime = {}) => {
   const rawThreshold = getArg("--review-threshold");
   const reviewThreshold = rawThreshold !== undefined ? Number(rawThreshold) : 30;
   if (Number.isNaN(reviewThreshold)) {
-    console.error(`Invalid --review-threshold value: ${rawThreshold}`);
-    process.exit(1);
+    exitWithError(`Invalid --review-threshold value: ${rawThreshold}`);
+    return;
   }
   if (initMode && groupFilter) {
-    console.error("--init and --group are mutually exclusive.");
-    process.exit(1);
+    exitWithError("--init and --group are mutually exclusive.");
+    return;
   }
   if (inventoryPath && workMode) {
-    console.error(
+    exitWithError(
       "--plan and --work are mutually exclusive. Use --plan to generate, then --work to execute.",
     );
-    process.exit(1);
+    return;
   }
   if (workMode && !workPath) {
-    console.error("--work requires a plan path. Usage: --work <plan.md>");
-    process.exit(1);
+    exitWithError("--work requires a plan path. Usage: --work <plan.md>");
+    return;
   }
   if (cleanupMode && !workMode) {
-    console.error("--cleanup requires --work <plan>.");
-    process.exit(1);
+    exitWithError("--cleanup requires --work <plan>.");
+    return;
   }
   if (showPlan && !workMode) {
-    console.error("--show-plan requires --work <plan>.");
-    process.exit(1);
+    exitWithError("--show-plan requires --work <plan>.");
+    return;
   }
   if (!inventoryPath && !workMode) {
-    console.error(
+    exitWithError(
       "Provide --plan <inventory> to generate a plan, or --work <plan> to execute an existing one.",
     );
-    process.exit(1);
+    return;
   }
+
+  await assertGitRepo(cwd);
 
   // 1. Load skill prompts
   const skillsDir = resolve(import.meta.dirname, "..", "skills");
   const builtInTdd = readFileSync(resolve(skillsDir, "tdd.md"), "utf-8");
   const builtInReview = readFileSync(resolve(skillsDir, "deep-review.md"), "utf-8");
   const builtInVerify = readFileSync(resolve(skillsDir, "verify.md"), "utf-8");
-
-  const cwd = process.cwd();
   const orchrc = loadAndResolveOrchrConfig(cwd);
   const tddSkill = resolveSkillValue(orchrc.skills.tdd, builtInTdd);
   const reviewSkill = resolveSkillValue(orchrc.skills.review, builtInReview);
@@ -325,7 +580,8 @@ export const main = async (runtime: MainRuntime = {}) => {
       origLog(line);
     }
     origLog(message);
-    process.exit(0);
+    exit(0);
+    return;
   }
 
   // Generate-only mode: --plan without --work
@@ -335,7 +591,8 @@ export const main = async (runtime: MainRuntime = {}) => {
       origLog(line);
     }
     origLog(`Plan written to ${planPath} — review and run with --work`);
-    process.exit(0);
+    exit(0);
+    return;
   }
 
   // 5. Parse plan + HUD
@@ -346,7 +603,8 @@ export const main = async (runtime: MainRuntime = {}) => {
       origLog(line);
     }
     formatPlanSummary(origLog, groups);
-    process.exit(0);
+    exit(0);
+    return;
   }
 
   const totalSlices = groups.reduce((n, g) => n + g.slices.length, 0);
@@ -363,7 +621,8 @@ export const main = async (runtime: MainRuntime = {}) => {
   const resumeCheck = await checkWorktreeResume(branchName, state);
   if (!resumeCheck.ok) {
     origLog(resumeCheck.message);
-    process.exit(1);
+    exit(1);
+    return;
   }
   // resolveWorktree persists worktree state to disk before returning,
   // so RunOrchestration.execute() will pick it up via persistence.load().
@@ -381,7 +640,6 @@ export const main = async (runtime: MainRuntime = {}) => {
   });
   const interactive = !auto && isTTY;
 
-  const registryPath = runtime.registryPath ?? join(homedir(), ".orch", "runs.json");
   const runId = randomUUID();
   let registered = false;
   await withRegistryLock(registryPath, async () => {

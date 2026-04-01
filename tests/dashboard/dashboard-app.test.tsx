@@ -22,6 +22,12 @@ const tailViewState = vi.hoisted(() => ({
     | undefined,
 }));
 
+const queuePromptState = vi.hoisted(() => ({
+  latestProps: undefined as
+    | { readonly queuePath: string; readonly onDone: () => void; readonly onCancel: () => void }
+    | undefined,
+}));
+
 vi.mock("#ui/dashboard/tail-view.js", () => ({
   TailView: ({
     runId,
@@ -34,6 +40,21 @@ vi.mock("#ui/dashboard/tail-view.js", () => ({
   }) => {
     tailViewState.latestProps = { runId, logPath, onBack };
     return <Text>{`Tail view: ${runId} ${logPath ?? "-"}`}</Text>;
+  },
+}));
+
+vi.mock("#ui/dashboard/queue-prompt.js", () => ({
+  QueuePrompt: ({
+    queuePath,
+    onDone,
+    onCancel,
+  }: {
+    readonly queuePath: string;
+    readonly onDone: () => void;
+    readonly onCancel: () => void;
+  }) => {
+    queuePromptState.latestProps = { queuePath, onDone, onCancel };
+    return <Text>{`Queue prompt: ${queuePath}`}</Text>;
   },
 }));
 
@@ -80,6 +101,16 @@ const makeQueueEntry = (overrides: Partial<QueueEntry> = {}): QueueEntry => ({
   ...overrides,
 });
 
+const makeHookResult = (
+  overrides: Partial<ReturnType<typeof useDashboardData>> = {},
+): ReturnType<typeof useDashboardData> => ({
+  model: makeModel(),
+  loading: false,
+  error: undefined,
+  refresh: vi.fn(),
+  ...overrides,
+});
+
 const flushEffects = async (): Promise<void> =>
   new Promise((resolvePromise) => {
     setTimeout(resolvePromise, 0);
@@ -109,14 +140,11 @@ describe("DashboardApp", () => {
     vi.useRealTimers();
     vi.clearAllMocks();
     tailViewState.latestProps = undefined;
+    queuePromptState.latestProps = undefined;
   });
 
   it("renders a loading state while the dashboard hook is loading", () => {
-    useDashboardDataMock.mockReturnValue({
-      model: makeModel(),
-      loading: true,
-      error: undefined,
-    });
+    useDashboardDataMock.mockReturnValue(makeHookResult({ loading: true }));
 
     const app = render(
       <DashboardApp
@@ -131,11 +159,7 @@ describe("DashboardApp", () => {
   });
 
   it("renders an error state when the dashboard hook fails", () => {
-    useDashboardDataMock.mockReturnValue({
-      model: makeModel(),
-      loading: false,
-      error: "boom",
-    });
+    useDashboardDataMock.mockReturnValue(makeHookResult({ error: "boom" }));
 
     const app = render(
       <DashboardApp
@@ -150,13 +174,13 @@ describe("DashboardApp", () => {
   });
 
   it("renders the main dashboard view from the polled model", () => {
-    useDashboardDataMock.mockReturnValue({
-      model: makeModel({
-        active: [makeRun({ id: "run-active" })],
+    useDashboardDataMock.mockReturnValue(
+      makeHookResult({
+        model: makeModel({
+          active: [makeRun({ id: "run-active" })],
+        }),
       }),
-      loading: false,
-      error: undefined,
-    });
+    );
 
     const app = render(
       <DashboardApp
@@ -172,13 +196,13 @@ describe("DashboardApp", () => {
   });
 
   it("switches to the detail view when enter is pressed on an active run", async () => {
-    useDashboardDataMock.mockReturnValue({
-      model: makeModel({
-        active: [makeRun({ id: "run-active" })],
+    useDashboardDataMock.mockReturnValue(
+      makeHookResult({
+        model: makeModel({
+          active: [makeRun({ id: "run-active" })],
+        }),
       }),
-      loading: false,
-      error: undefined,
-    });
+    );
 
     const app = render(
       <DashboardApp
@@ -197,14 +221,14 @@ describe("DashboardApp", () => {
   });
 
   it("switches to the detail view for a completed run", async () => {
-    useDashboardDataMock.mockReturnValue({
-      model: makeModel({
-        active: [makeRun({ id: "run-active" })],
-        completed: [makeRun({ id: "run-done", status: "completed" })],
+    useDashboardDataMock.mockReturnValue(
+      makeHookResult({
+        model: makeModel({
+          active: [makeRun({ id: "run-active" })],
+          completed: [makeRun({ id: "run-done", status: "completed" })],
+        }),
       }),
-      loading: false,
-      error: undefined,
-    });
+    );
 
     const app = render(
       <DashboardApp
@@ -225,18 +249,18 @@ describe("DashboardApp", () => {
   });
 
   it("switches to the tail view when f is pressed on a run and routes back to main", async () => {
-    useDashboardDataMock.mockReturnValue({
-      model: makeModel({
-        active: [
-          makeRun({
-            id: "run-active",
-            logPath: "/tmp/.orch/logs/plan-abc123.log",
-          }),
-        ],
+    useDashboardDataMock.mockReturnValue(
+      makeHookResult({
+        model: makeModel({
+          active: [
+            makeRun({
+              id: "run-active",
+              logPath: "/tmp/.orch/logs/plan-abc123.log",
+            }),
+          ],
+        }),
       }),
-      loading: false,
-      error: undefined,
-    });
+    );
 
     const app = render(
       <DashboardApp
@@ -260,18 +284,18 @@ describe("DashboardApp", () => {
   });
 
   it("routes tail from detail and returns to detail", async () => {
-    useDashboardDataMock.mockReturnValue({
-      model: makeModel({
-        active: [
-          makeRun({
-            id: "run-active",
-            logPath: "/tmp/.orch/logs/plan-abc123.log",
-          }),
-        ],
+    useDashboardDataMock.mockReturnValue(
+      makeHookResult({
+        model: makeModel({
+          active: [
+            makeRun({
+              id: "run-active",
+              logPath: "/tmp/.orch/logs/plan-abc123.log",
+            }),
+          ],
+        }),
       }),
-      loading: false,
-      error: undefined,
-    });
+    );
 
     const app = render(
       <DashboardApp
@@ -298,7 +322,7 @@ describe("DashboardApp", () => {
   });
 
   it("keeps the captured logPath while tail is open after the run disappears from the model", async () => {
-    let hookState = {
+    let hookState = makeHookResult({
       model: makeModel({
         active: [
           makeRun({
@@ -307,9 +331,7 @@ describe("DashboardApp", () => {
           }),
         ],
       }),
-      loading: false,
-      error: undefined as string | undefined,
-    };
+    });
     useDashboardDataMock.mockImplementation(() => hookState);
 
     const app = render(
@@ -324,11 +346,10 @@ describe("DashboardApp", () => {
 
     expect(app.lastFrame()).toContain("Tail view: run-active /tmp/.orch/logs/plan-abc123.log");
 
-    hookState = {
+    hookState = makeHookResult({
       model: makeModel(),
-      loading: false,
-      error: undefined,
-    };
+      refresh: hookState.refresh,
+    });
     app.rerender(
       <DashboardApp
         registryPath="/tmp/runs.json"
@@ -345,13 +366,11 @@ describe("DashboardApp", () => {
 
   it("shows a run ended message and returns to the main view when the selected run disappears", async () => {
     vi.useFakeTimers();
-    let hookState = {
+    let hookState = makeHookResult({
       model: makeModel({
         active: [makeRun({ id: "run-active" })],
       }),
-      loading: false,
-      error: undefined as string | undefined,
-    };
+    });
     useDashboardDataMock.mockImplementation(() => hookState);
 
     const app = render(
@@ -365,11 +384,10 @@ describe("DashboardApp", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(app.lastFrame()).toContain("Plan: Dashboard");
 
-    hookState = {
+    hookState = makeHookResult({
       model: makeModel(),
-      loading: false,
-      error: undefined,
-    };
+      refresh: hookState.refresh,
+    });
     app.rerender(
       <DashboardApp
         registryPath="/tmp/runs.json"
@@ -400,13 +418,13 @@ describe("DashboardApp", () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
       throw killError;
     });
-    useDashboardDataMock.mockReturnValue({
-      model: makeModel({
-        active: [makeRun({ id: "run-active" })],
+    useDashboardDataMock.mockReturnValue(
+      makeHookResult({
+        model: makeModel({
+          active: [makeRun({ id: "run-active" })],
+        }),
       }),
-      loading: false,
-      error: undefined,
-    });
+    );
 
     const app = render(
       <DashboardApp
@@ -432,13 +450,13 @@ describe("DashboardApp", () => {
 
   it("keeps a deleted queued row hidden and removes it from the queue store", async () => {
     removeFromQueueMock.mockResolvedValue(undefined);
-    useDashboardDataMock.mockReturnValue({
-      model: makeModel({
-        queued: [makeQueueEntry({ id: "queue-entry-456" })],
+    useDashboardDataMock.mockReturnValue(
+      makeHookResult({
+        model: makeModel({
+          queued: [makeQueueEntry({ id: "queue-entry-456" })],
+        }),
       }),
-      loading: false,
-      error: undefined,
-    });
+    );
 
     const app = render(
       <DashboardApp
@@ -459,14 +477,14 @@ describe("DashboardApp", () => {
   });
 
   it("keeps a deleted completed row hidden without touching the queue store", async () => {
-    useDashboardDataMock.mockReturnValue({
-      model: makeModel({
-        active: [makeRun({ id: "run-active" })],
-        completed: [makeRun({ id: "run-done-789", status: "completed" })],
+    useDashboardDataMock.mockReturnValue(
+      makeHookResult({
+        model: makeModel({
+          active: [makeRun({ id: "run-active" })],
+          completed: [makeRun({ id: "run-done-789", status: "completed" })],
+        }),
       }),
-      loading: false,
-      error: undefined,
-    });
+    );
 
     const app = render(
       <DashboardApp
@@ -484,6 +502,64 @@ describe("DashboardApp", () => {
 
     expect(removeFromQueueMock).not.toHaveBeenCalled();
     expect(app.lastFrame()).not.toContain("run-do");
+
+    app.unmount();
+  });
+
+  it("opens the queue prompt from q and returns to main on cancel", async () => {
+    useDashboardDataMock.mockReturnValue(
+      makeHookResult({
+        model: makeModel({
+          active: [makeRun({ id: "run-active" })],
+        }),
+      }),
+    );
+
+    const app = render(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+
+    app.stdin.write("q");
+    await flushEffects();
+
+    expect(app.lastFrame()).toContain("Queue prompt: /tmp/queue.json");
+
+    queuePromptState.latestProps?.onCancel();
+    const mainFrame = await waitForFrame(app, (frame) => frame.includes("Active"));
+
+    expect(mainFrame).toContain("run-ac");
+
+    app.unmount();
+  });
+
+  it("refreshes dashboard data after queue prompt completion", async () => {
+    const refresh = vi.fn();
+    useDashboardDataMock.mockReturnValue(
+      makeHookResult({
+        model: makeModel({
+          active: [makeRun({ id: "run-active" })],
+        }),
+        refresh,
+      }),
+    );
+
+    const app = render(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+
+    app.stdin.write("q");
+    await flushEffects();
+    queuePromptState.latestProps?.onDone();
+    await flushEffects();
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(app.lastFrame()).toContain("Active");
 
     app.unmount();
   });

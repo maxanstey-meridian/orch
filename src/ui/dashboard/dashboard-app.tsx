@@ -1,14 +1,17 @@
-import { removeFromQueue } from "#infrastructure/queue/queue-store.js";
-import { Text } from "ink";
+import { defaultQueuePath, removeFromQueue } from "#infrastructure/queue/queue-store.js";
+import { defaultRegistryPath } from "#infrastructure/registry/run-registry.js";
+import { render, Text } from "ink";
 import React, { useEffect, useMemo, useState } from "react";
 import type { DashboardRun } from "#domain/dashboard.js";
 import { DetailView } from "#ui/dashboard/detail-view.js";
 import { MainView } from "#ui/dashboard/main-view.js";
+import { QueuePrompt } from "#ui/dashboard/queue-prompt.js";
 import { TailView } from "#ui/dashboard/tail-view.js";
 import { useDashboardData } from "#ui/dashboard/use-dashboard-data.js";
 
 export type ViewState =
   | { readonly view: "main" }
+  | { readonly view: "queue" }
   | { readonly view: "detail"; readonly runId: string }
   | { readonly view: "tail"; readonly runId: string; readonly returnTo: "main" | "detail" };
 
@@ -51,7 +54,7 @@ export const DashboardApp = ({
   const [viewState, setViewState] = useState<ViewState>({ view: "main" });
   const [tailLogPath, setTailLogPath] = useState<string | undefined>(undefined);
   const [dismissedRowIds, setDismissedRowIds] = useState<string[]>([]);
-  const { model, loading, error } = useDashboardData(registryPath, queuePath, intervalMs);
+  const { model, loading, error, refresh } = useDashboardData(registryPath, queuePath, intervalMs);
   const visibleModel = useMemo(
     () => ({
       active: model.active,
@@ -67,6 +70,21 @@ export const DashboardApp = ({
 
   if (error !== undefined) {
     return <Text>{`Dashboard error: ${error}`}</Text>;
+  }
+
+  if (viewState.view === "queue") {
+    return (
+      <QueuePrompt
+        queuePath={queuePath}
+        onCancel={() => {
+          setViewState({ view: "main" });
+        }}
+        onDone={() => {
+          refresh();
+          setViewState({ view: "main" });
+        }}
+      />
+    );
   }
 
   if (viewState.view === "detail") {
@@ -121,6 +139,9 @@ export const DashboardApp = ({
         setTailLogPath(findTailRun(visibleModel, runId)?.logPath);
         setViewState({ view: "tail", runId, returnTo: "main" });
       }}
+      onOpenQueue={() => {
+        setViewState({ view: "queue" });
+      }}
       onDelete={(rowId) => {
         setDismissedRowIds((currentIds) =>
           currentIds.includes(rowId) ? currentIds : [...currentIds, rowId],
@@ -132,4 +153,18 @@ export const DashboardApp = ({
       }}
     />
   );
+};
+
+export const renderDashboard = async (
+  props: Partial<DashboardAppProps> = {},
+): Promise<void> => {
+  const instance = render(
+    <DashboardApp
+      registryPath={props.registryPath ?? defaultRegistryPath()}
+      queuePath={props.queuePath ?? defaultQueuePath()}
+      intervalMs={props.intervalMs}
+    />,
+  );
+
+  await instance.waitUntilExit();
 };

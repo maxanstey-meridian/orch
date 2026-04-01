@@ -11,6 +11,7 @@ export type MainViewProps = {
   readonly model: DashboardModel;
   readonly onOpenDetail: (runId: string) => void;
   readonly onOpenTail: (runId: string) => void;
+  readonly onOpenQueue?: () => void;
   readonly onDelete?: (rowId: string) => void;
 };
 
@@ -106,7 +107,13 @@ const buildSections = (model: DashboardModel): SectionRows[] => [
   },
 ];
 
-export const MainView = ({ model, onOpenDetail, onOpenTail, onDelete }: MainViewProps) => {
+export const MainView = ({
+  model,
+  onOpenDetail,
+  onOpenTail,
+  onOpenQueue,
+  onDelete,
+}: MainViewProps) => {
   const sections = useMemo(() => buildSections(model), [model]);
   const rows = useMemo(() => sections.flatMap((section) => section.rows), [sections]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -127,6 +134,11 @@ export const MainView = ({ model, onOpenDetail, onOpenTail, onDelete }: MainView
   }, [rows.length]);
 
   useInput((input, key) => {
+    if (input === "q") {
+      onOpenQueue?.();
+      return;
+    }
+
     if (rows.length === 0) {
       return;
     }

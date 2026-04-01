@@ -1,6 +1,6 @@
 import { Text } from "ink";
 import { render } from "ink-testing-library";
-import React from "react";
+import React, { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardModel } from "#domain/dashboard.js";
 import { aggregateDashboard } from "#infrastructure/dashboard/data-aggregator.js";
@@ -45,6 +45,24 @@ const HookProbe = ({
   intervalMs?: number;
 }) => {
   const { model, loading, error } = useDashboardData(registryPath, queuePath, intervalMs);
+
+  return <Text>{JSON.stringify({ model, loading, error })}</Text>;
+};
+
+const RefreshProbe = ({
+  registryPath,
+  queuePath,
+  onRefreshReady,
+}: {
+  registryPath: string;
+  queuePath: string;
+  onRefreshReady: (refresh: () => void) => void;
+}) => {
+  const { model, loading, error, refresh } = useDashboardData(registryPath, queuePath);
+
+  useEffect(() => {
+    onRefreshReady(refresh);
+  }, [onRefreshReady, refresh]);
 
   return <Text>{JSON.stringify({ model, loading, error })}</Text>;
 };
@@ -223,6 +241,46 @@ describe("useDashboardData", () => {
 
     expect(app.lastFrame()).toContain('"id":"run-new"');
     expect(app.lastFrame()).not.toContain('"id":"run-old"');
+
+    app.unmount();
+  });
+
+  it("refreshes immediately when refresh is called", async () => {
+    aggregateDashboardMock
+      .mockResolvedValueOnce(emptyModel)
+      .mockResolvedValueOnce({
+        active: [
+          {
+            id: "run-refresh",
+            repo: "/repos/orch",
+            status: "active",
+            sliceProgress: "S3/3",
+            elapsed: "12m",
+            pid: 789,
+          },
+        ],
+        queued: [],
+        completed: [],
+      });
+
+    let refreshDashboard!: () => void;
+    const app = render(
+      <RefreshProbe
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+        onRefreshReady={(refresh) => {
+          refreshDashboard = refresh;
+        }}
+      />,
+    );
+
+    await flushEffects();
+    refreshDashboard();
+    await flushEffects();
+    await flushEffects();
+
+    expect(aggregateDashboardMock).toHaveBeenCalledTimes(2);
+    expect(app.lastFrame()).toContain('"id":"run-refresh"');
 
     app.unmount();
   });
