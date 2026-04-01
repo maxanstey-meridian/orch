@@ -1,20 +1,3 @@
-#!/usr/bin/env npx ts-node
-/**
- * main.ts — TDD orchestrator CLI
- *
- * Wires tested leaf modules into a procedural pipeline.
- * No dep injection, no framework — reads top-to-bottom.
- *
- * Usage:
- *   npx ts-node src/main.ts --plan inventory.md               # generate plan and exit
- *   npx ts-node src/main.ts --work plan.md                    # execute a plan
- *   npx ts-node src/main.ts --work plan.md --group Auth       # start from group
- *   npx ts-node src/main.ts --work plan.md --auto             # auto-accept all prompts (--no-interaction is an alias)
- *   npx ts-node src/main.ts --work plan.json --show-plan      # inspect plan structure
- *   npx ts-node src/main.ts --work plan.md --reset            # clear state and re-run
- *   npx ts-node src/main.ts --init --plan inventory.md        # interactive project init
- */
-
 import { readFileSync, mkdirSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { resolve } from "path";
