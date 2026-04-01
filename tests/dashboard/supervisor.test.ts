@@ -190,6 +190,28 @@ describe("createSupervisor", () => {
     ]);
   });
 
+  it("does not over-dequeue on an interval tick while a spawned child is not yet in the registry", async () => {
+    vi.useFakeTimers({
+      toFake: ["setInterval", "clearInterval"],
+    });
+    await addToQueue(queuePath, makeQueueEntry({ id: "queue-1", planPath: "/plans/one.json" }));
+    await addToQueue(queuePath, makeQueueEntry({ id: "queue-2", planPath: "/plans/two.json" }));
+
+    const supervisor = createTestSupervisor();
+
+    supervisor.start();
+    await waitForExpectation(() => {
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+    });
+
+    await vi.advanceTimersByTimeAsync(supervisorPollIntervalMs);
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(await readQueue(queuePath)).toEqual([
+      makeQueueEntry({ id: "queue-2", planPath: "/plans/two.json" }),
+    ]);
+  });
+
   it("stop clears the polling interval", async () => {
     vi.useFakeTimers({
       toFake: ["setInterval", "clearInterval"],

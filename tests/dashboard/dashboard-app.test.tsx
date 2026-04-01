@@ -263,6 +263,37 @@ describe("DashboardApp", () => {
     app.unmount();
   });
 
+  it("recreates the supervisor when the dashboard paths change", () => {
+    useDashboardDataMock.mockReturnValue(makeHookResult());
+
+    const app = render(
+      <DashboardApp
+        registryPath="/tmp/runs-a.json"
+        queuePath="/tmp/queue-a.json"
+      />,
+    );
+
+    const firstSupervisor = supervisorState.latest;
+
+    app.rerender(
+      <DashboardApp
+        registryPath="/tmp/runs-b.json"
+        queuePath="/tmp/queue-b.json"
+      />,
+    );
+
+    expect(firstSupervisor?.stop).toHaveBeenCalledTimes(1);
+    expect(createSupervisorMock).toHaveBeenCalledTimes(2);
+    expect(createSupervisorMock).toHaveBeenLastCalledWith({
+      registryPath: "/tmp/runs-b.json",
+      queuePath: "/tmp/queue-b.json",
+      orchBin: expect.stringContaining("/dist/main.js"),
+    });
+    expect(supervisorState.latest?.start).toHaveBeenCalledTimes(1);
+
+    app.unmount();
+  });
+
   it("switches to the detail view when enter is pressed on an active run", async () => {
     useDashboardDataMock.mockReturnValue(
       makeHookResult({
