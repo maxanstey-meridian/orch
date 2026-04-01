@@ -14,6 +14,7 @@ export const spawnClaudeAgent = (
   systemPrompt?: string,
   resumeSessionId?: string,
   cwd?: string,
+  model?: string,
 ): ClaudeAgentProcess =>
   createClaudeAgent({
     command: "claude",
@@ -25,6 +26,7 @@ export const spawnClaudeAgent = (
       "--output-format",
       "stream-json",
       "--verbose",
+      ...(model ? ["--model", model] : []),
       ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
     ],
     style,
@@ -70,14 +72,14 @@ const gapSkillContent = readFileSync(
   "utf-8",
 );
 
-export const spawnClaudeGapAgent = (cwd?: string): ClaudeAgentProcess =>
-  spawnClaudeAgent(BOT_GAP, gapSkillContent, undefined, cwd);
+export const spawnClaudeGapAgent = (cwd?: string, model?: string): ClaudeAgentProcess =>
+  spawnClaudeAgent(BOT_GAP, gapSkillContent, undefined, cwd, model);
 
 export const spawnClaudePlanAgentWithSkill = (cwd?: string): ClaudeAgentProcess =>
   spawnClaudePlanAgent(BOT_PLAN, planSkillContent, cwd);
 
-export const spawnClaudeGeneratePlanAgent = (cwd?: string): ClaudeAgentProcess =>
-  spawnClaudeAgent(BOT_PLAN, generatePlanSkillContent, undefined, cwd);
+export const spawnClaudeGeneratePlanAgent = (cwd?: string, model?: string): ClaudeAgentProcess =>
+  spawnClaudeAgent(BOT_PLAN, generatePlanSkillContent, undefined, cwd, model);
 
 export const buildRulesReminder = (baseRules: string, extraRules?: string): string =>
   !extraRules

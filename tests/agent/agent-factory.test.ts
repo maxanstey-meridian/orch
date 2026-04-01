@@ -146,6 +146,27 @@ describe("spawnClaudePlanAgentWithSkill", () => {
   });
 });
 
+describe("spawnClaudeAgent model override", () => {
+  beforeEach(() => {
+    mockedCreateAgent.mockClear();
+  });
+
+  it("passes --model when model provided", async () => {
+    const { spawnClaudeAgent } = await loadModule();
+    spawnClaudeAgent({ label: "TDD", color: "", badge: "" }, undefined, undefined, undefined, "claude-sonnet-4-20250514");
+    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
+    expect(args).toContain("--model");
+    expect(args[args.indexOf("--model") + 1]).toBe("claude-sonnet-4-20250514");
+  });
+
+  it("omits --model when no model provided", async () => {
+    const { spawnClaudeAgent } = await loadModule();
+    spawnClaudeAgent({ label: "TDD", color: "", badge: "" });
+    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
+    expect(args).not.toContain("--model");
+  });
+});
+
 describe("spawnClaudeAgent resume mode", () => {
   beforeEach(() => {
     mockedCreateAgent.mockClear();
@@ -184,6 +205,34 @@ describe("spawnClaudeAgent resume mode", () => {
 
     expect(args).toContain("-p");
     expect(args).not.toContain("--resume");
+  });
+});
+
+describe("spawnClaudeGapAgent model override", () => {
+  beforeEach(() => {
+    mockedCreateAgent.mockClear();
+  });
+
+  it("passes model through to spawnClaudeAgent", async () => {
+    const { spawnClaudeGapAgent } = await loadModule();
+    spawnClaudeGapAgent(undefined, "claude-sonnet-4-20250514");
+    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
+    expect(args).toContain("--model");
+    expect(args[args.indexOf("--model") + 1]).toBe("claude-sonnet-4-20250514");
+  });
+});
+
+describe("spawnClaudeGeneratePlanAgent model override", () => {
+  beforeEach(() => {
+    mockedCreateAgent.mockClear();
+  });
+
+  it("passes model through to spawnClaudeAgent", async () => {
+    const { spawnClaudeGeneratePlanAgent } = await loadModule();
+    spawnClaudeGeneratePlanAgent(undefined, "claude-sonnet-4-20250514");
+    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
+    expect(args).toContain("--model");
+    expect(args[args.indexOf("--model") + 1]).toBe("claude-sonnet-4-20250514");
   });
 });
 
