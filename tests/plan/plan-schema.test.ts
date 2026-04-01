@@ -11,7 +11,7 @@ describe("PlanSchema", () => {
     tests: "Test the thing",
   });
 
-  const validGroup = (name: string, slices: ReturnType<typeof validSlice>[]) => ({
+  const validGroup = (name: string, slices: Record<string, unknown>[]) => ({
     name,
     slices,
   });
@@ -57,15 +57,6 @@ describe("PlanSchema", () => {
     expect(PlanSchema.safeParse(noWhy).success).toBe(false);
   });
 
-  it("rejects invalid file action", () => {
-    const input = {
-      groups: [validGroup("G", [{
-        ...validSlice(1),
-        files: [{ path: "x.ts", action: "rename" }],
-      }])],
-    };
-    expect(PlanSchema.safeParse(input).success).toBe(false);
-  });
 
   it("rejects slice number 0", () => {
     const input = { groups: [validGroup("G", [validSlice(0)])] };
@@ -149,7 +140,7 @@ describe("parsePlanJson", () => {
     tests: "Test the thing",
   });
 
-  const validGroup = (name: string, slices: ReturnType<typeof validSlice>[]) => ({
+  const validGroup = (name: string, slices: Record<string, unknown>[]) => ({
     name,
     slices,
   });

@@ -7,7 +7,7 @@ import { styleForRole } from "#ui/ink-operator-gate.js";
 
 class TestProgressSink extends ProgressSink {
   registerInterrupts(): InterruptHandler {
-    return { onGuide: () => {}, onInterrupt: () => {}, onSkip: () => {} };
+    return { onGuide: () => {}, onInterrupt: () => {}, onSkip: () => {}, onQuit: () => {} };
   }
   updateProgress(_update: ProgressUpdate): void {}
   setActivity(_summary: string): void {}
@@ -17,6 +17,7 @@ class TestProgressSink extends ProgressSink {
   }
   logSliceIntro(_slice: Slice): void {}
   logBadge(_role: AgentRole, _phase: string): void {}
+  clearSkipping(): void {}
   teardown(): void {}
 }
 

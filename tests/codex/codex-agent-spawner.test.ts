@@ -66,7 +66,7 @@ describe('CodexAgentSpawner', () => {
 
     await handle.send('go', onText);
 
-    const allText = onText.mock.calls.map((c: [string]) => c[0]).join('');
+    const allText = onText.mock.calls.map((c) => c[0]).join('');
     expect(allText).toContain('line one');
     expect(allText).toContain('line two');
   });
@@ -120,7 +120,7 @@ describe('CodexAgentSpawner', () => {
 
     await handle.send('go');
 
-    const allText = onText.mock.calls.map((c: [string]) => c[0]).join('');
+    const allText = onText.mock.calls.map((c) => c[0]).join('');
     expect(allText).toContain('streamed');
     expect(onToolUse).toHaveBeenCalledWith('command: test');
   });
@@ -931,7 +931,7 @@ describe('CodexAgentSpawner', () => {
       const perCallOnText = vi.fn();
       await handle.send('go', perCallOnText);
 
-      const allText = perCallOnText.mock.calls.map((c: [string]) => c[0]).join('');
+      const allText = perCallOnText.mock.calls.map((c) => c[0]).join('');
       expect(allText).toContain('hello');
       expect(pipedOnText).not.toHaveBeenCalled();
     });

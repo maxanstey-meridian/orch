@@ -82,10 +82,10 @@ describe("ChildProcessGitOps", () => {
 
 describe("shouldReview compatibility with port diff shape", () => {
   it("accepts port measureDiff shape at threshold", () => {
-    expect(shouldReview({ added: 5, removed: 5, total: 10 }, 10)).toBe(true);
+    expect(shouldReview({ total: 10 }, 10)).toBe(true);
   });
 
   it("accepts port measureDiff shape below threshold", () => {
-    expect(shouldReview({ added: 2, removed: 1, total: 3 }, 10)).toBe(false);
+    expect(shouldReview({ total: 3 }, 10)).toBe(false);
   });
 });
