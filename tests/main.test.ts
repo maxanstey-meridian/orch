@@ -225,7 +225,10 @@ describe("subcommand routing", () => {
     expect(mocks.renderDashboard).toHaveBeenCalledWith({
       registryPath: "/tmp/runs.json",
       queuePath: "/tmp/queue.json",
-      orchBin: expect.stringContaining("/dist/src/main.js"),
+      launchCommand: process.execPath,
+      launchArgs: expect.arrayContaining([
+        expect.stringMatching(/main\.ts$/),
+      ]),
     });
     expect(mocks.assertGitRepo).not.toHaveBeenCalled();
   });

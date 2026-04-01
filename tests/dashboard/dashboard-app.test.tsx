@@ -87,7 +87,8 @@ const createSupervisorMock = vi.mocked(createSupervisor);
 const defaultDashboardAppProps: DashboardAppProps = {
   registryPath: "/tmp/runs.json",
   queuePath: "/tmp/queue.json",
-  orchBin: "/tmp/orch-bin.js",
+  launchCommand: "node",
+  launchArgs: ["/tmp/orch-bin.js"],
 };
 
 const makeRun = (overrides: Partial<DashboardRun> = {}): DashboardRun => ({
@@ -228,7 +229,8 @@ describe("DashboardApp", () => {
     expect(createSupervisorMock).toHaveBeenCalledWith({
       registryPath: "/tmp/runs.json",
       queuePath: "/tmp/queue.json",
-      orchBin: "/tmp/orch-bin.js",
+      launchCommand: "node",
+      launchArgs: ["/tmp/orch-bin.js"],
     });
     expect(supervisorState.latest?.start).toHaveBeenCalledTimes(1);
 
@@ -267,7 +269,8 @@ describe("DashboardApp", () => {
       <DashboardApp
         registryPath="/tmp/runs-b.json"
         queuePath="/tmp/queue-b.json"
-        orchBin="/tmp/orch-bin.js"
+        launchCommand="node"
+        launchArgs={["/tmp/orch-bin.js"]}
       />,
     );
 
@@ -276,18 +279,20 @@ describe("DashboardApp", () => {
     expect(createSupervisorMock).toHaveBeenLastCalledWith({
       registryPath: "/tmp/runs-b.json",
       queuePath: "/tmp/queue-b.json",
-      orchBin: "/tmp/orch-bin.js",
+      launchCommand: "node",
+      launchArgs: ["/tmp/orch-bin.js"],
     });
     expect(supervisorState.latest?.start).toHaveBeenCalledTimes(1);
 
     app.unmount();
   });
 
-  it("recreates the supervisor when the orchBin changes", () => {
+  it("recreates the supervisor when the launch command changes", () => {
     useDashboardDataMock.mockReturnValue(makeHookResult());
 
     const app = renderDashboardApp({
-      orchBin: "/tmp/orch-a.js",
+      launchCommand: "node-a",
+      launchArgs: ["/tmp/orch-a.js"],
     });
 
     const firstSupervisor = supervisorState.latest;
@@ -296,7 +301,8 @@ describe("DashboardApp", () => {
       <DashboardApp
         registryPath="/tmp/runs.json"
         queuePath="/tmp/queue.json"
-        orchBin="/tmp/orch-b.js"
+        launchCommand="node-b"
+        launchArgs={["/tmp/orch-b.js"]}
       />,
     );
 
@@ -305,7 +311,8 @@ describe("DashboardApp", () => {
     expect(createSupervisorMock).toHaveBeenLastCalledWith({
       registryPath: "/tmp/runs.json",
       queuePath: "/tmp/queue.json",
-      orchBin: "/tmp/orch-b.js",
+      launchCommand: "node-b",
+      launchArgs: ["/tmp/orch-b.js"],
     });
 
     app.unmount();
@@ -445,7 +452,8 @@ describe("DashboardApp", () => {
       <DashboardApp
         registryPath="/tmp/runs.json"
         queuePath="/tmp/queue.json"
-        orchBin="/tmp/orch-bin.js"
+        launchCommand="node"
+        launchArgs={["/tmp/orch-bin.js"]}
       />,
     );
     await flushEffects();
@@ -479,7 +487,8 @@ describe("DashboardApp", () => {
       <DashboardApp
         registryPath="/tmp/runs.json"
         queuePath="/tmp/queue.json"
-        orchBin="/tmp/orch-bin.js"
+        launchCommand="node"
+        launchArgs={["/tmp/orch-bin.js"]}
       />,
     );
     await vi.advanceTimersByTimeAsync(0);

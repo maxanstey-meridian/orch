@@ -15,6 +15,7 @@
  *   npx ts-node src/main.ts --init --plan inventory.md        # interactive project init
  */
 
+import { randomUUID } from "crypto";
 import { readFileSync, mkdirSync, watch, writeFileSync, existsSync } from "fs";
 import { mkdir, readFile, rm, stat, writeFile } from "fs/promises";
 import { basename, dirname, join, resolve } from "path";
@@ -74,6 +75,10 @@ type MainRuntime = {
   registryPath?: string;
   queuePath?: string;
   argv?: string[];
+  dashboardLaunch?: {
+    readonly launchCommand: string;
+    readonly launchArgs: readonly string[];
+  };
   onSignal?: (signal: "SIGINT" | "SIGTERM", handler: () => void) => NodeJS.Process;
   exit?: (code: number) => void;
 };
@@ -98,14 +103,30 @@ const dashboardBuiltEntryPath = resolve(import.meta.dirname, "..", "dist", "src"
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
-const resolveDashboardOrchBin = (argv: readonly string[]): string => {
+const resolveDashboardLaunch = (
+  argv: readonly string[],
+  runtimeLaunch?: {
+    readonly launchCommand: string;
+    readonly launchArgs: readonly string[];
+  },
+): { readonly launchCommand: string; readonly launchArgs: readonly string[] } => {
+  if (runtimeLaunch !== undefined) {
+    return runtimeLaunch;
+  }
+
   const currentEntry = argv[1];
-  if (typeof currentEntry === "string" && currentEntry.endsWith(".js")) {
-    return resolve(currentEntry);
+  if (typeof currentEntry === "string" && currentEntry.length > 0) {
+    return {
+      launchCommand: process.execPath,
+      launchArgs: [...process.execArgv, resolve(currentEntry)],
+    };
   }
 
   if (existsSync(dashboardBuiltEntryPath)) {
-    return dashboardBuiltEntryPath;
+    return {
+      launchCommand: process.execPath,
+      launchArgs: [...process.execArgv, dashboardBuiltEntryPath],
+    };
   }
 
   throw new Error(
@@ -362,10 +383,12 @@ export const main = async (runtime: MainRuntime = {}) => {
   };
 
   if (subcommand.command === "dash") {
+    const dashboardLaunch = resolveDashboardLaunch(argv, runtime.dashboardLaunch);
     await renderDashboard({
       registryPath,
       queuePath,
-      orchBin: resolveDashboardOrchBin(argv),
+      launchCommand: dashboardLaunch.launchCommand,
+      launchArgs: dashboardLaunch.launchArgs,
     });
     return;
   }
@@ -659,7 +682,7 @@ export const main = async (runtime: MainRuntime = {}) => {
   });
   const interactive = !auto && isTTY;
 
-  const runId = activePlanId;
+  const runId = randomUUID();
   let registered = false;
   await withRegistryLock(registryPath, async () => {
     await registerRun(registryPath, {

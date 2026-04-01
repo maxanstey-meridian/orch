@@ -99,10 +99,6 @@ vi.mock("../../src/composition-root.js", () => ({
   createContainer: mocks.createContainer,
 }));
 
-vi.mock("../../src/composition-root.ts", () => ({
-  createContainer: mocks.createContainer,
-}));
-
 type Deferred<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -240,7 +236,7 @@ describe("registry lifecycle", () => {
       resolve: vi.fn(() => orch),
     });
 
-    const { main } = await import("../../src/main.ts");
+    const { main } = await import("../../src/main.js");
     const mainPromise = main({
       onSignal: () => process,
       registryPath,
@@ -251,7 +247,7 @@ describe("registry lifecycle", () => {
     const entries = await readRegistry(registryPath);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toEqual({
-      id: "abc123",
+      id: expect.any(String),
       pid: process.pid,
       repo: process.cwd(),
       planPath,
@@ -275,7 +271,7 @@ describe("registry lifecycle", () => {
       resolve: vi.fn(() => orch),
     });
 
-    const { main } = await import("../../src/main.ts");
+    const { main } = await import("../../src/main.js");
     await main({
       onSignal: () => process,
       registryPath,
@@ -302,7 +298,7 @@ describe("registry lifecycle", () => {
       resolve: vi.fn(() => orch),
     });
 
-    const mainModule = await import("../../src/main.ts");
+    const mainModule = await import("../../src/main.js");
     const main = mainModule.main as (runtime?: MainTestRuntime) => Promise<void>;
     const mainPromise = main({
       registryPath,
@@ -347,7 +343,7 @@ describe("registry lifecycle", () => {
       resolve: vi.fn(() => orch),
     });
 
-    const mainModule = await import("../../src/main.ts");
+    const mainModule = await import("../../src/main.js");
     const main = mainModule.main as (runtime?: MainTestRuntime) => Promise<void>;
     const mainPromise = main({
       registryPath,
@@ -376,7 +372,7 @@ describe("registry lifecycle", () => {
   });
 
   it("registry entry is removed when orchestration exits through the error catch path", async () => {
-    const { IncompleteRunError } = await import("../../src/domain/errors.ts");
+    const { IncompleteRunError } = await import("../../src/domain/errors.js");
     const exit = vi.fn();
     const orch = {
       dispose: vi.fn(),
@@ -389,7 +385,7 @@ describe("registry lifecycle", () => {
       resolve: vi.fn(() => orch),
     });
 
-    const mainModule = await import("../../src/main.ts");
+    const mainModule = await import("../../src/main.js");
     const main = mainModule.main as (runtime?: MainTestRuntime) => Promise<void>;
 
     await expect(main({ registryPath, onSignal: () => process, exit })).resolves.toBeUndefined();
@@ -404,7 +400,7 @@ describe("registry lifecycle", () => {
       throw new Error("container failed");
     });
 
-    const { main } = await import("../../src/main.ts");
+    const { main } = await import("../../src/main.js");
 
     await expect(main({
       onSignal: () => process,
@@ -415,12 +411,68 @@ describe("registry lifecycle", () => {
     expect(entries).toEqual([]);
   });
 
+  it("concurrent runs of the same plan keep distinct registry identities", async () => {
+    const startedFirst = createDeferred<void>();
+    const releaseFirst = createDeferred<void>();
+    const startedSecond = createDeferred<void>();
+    const releaseSecond = createDeferred<void>();
+    const firstOrch = {
+      dispose: vi.fn(),
+      execute: vi.fn(async (_groups: unknown, opts: { onReady: (info: { tddSessionId: string; reviewSessionId: string }) => void }) => {
+        opts.onReady({ reviewSessionId: "review-session-1", tddSessionId: "tdd-session-1" });
+        startedFirst.resolve();
+        await releaseFirst.promise;
+      }),
+    };
+    const secondOrch = {
+      dispose: vi.fn(),
+      execute: vi.fn(async (_groups: unknown, opts: { onReady: (info: { tddSessionId: string; reviewSessionId: string }) => void }) => {
+        opts.onReady({ reviewSessionId: "review-session-2", tddSessionId: "tdd-session-2" });
+        startedSecond.resolve();
+        await releaseSecond.promise;
+      }),
+    };
+    mocks.createContainer.mockReturnValueOnce({
+      resolve: vi.fn(() => firstOrch),
+    }).mockReturnValueOnce({
+      resolve: vi.fn(() => secondOrch),
+    });
+
+    const { main } = await import("../../src/main.js");
+    const firstMain = main({
+      onSignal: () => process,
+      registryPath,
+    });
+
+    await startedFirst.promise;
+
+    const secondMain = main({
+      onSignal: () => process,
+      registryPath,
+    });
+
+    await startedSecond.promise;
+
+    const entriesDuringBothRuns = await readRegistry(registryPath);
+    expect(entriesDuringBothRuns).toHaveLength(2);
+    expect(new Set(entriesDuringBothRuns.map((entry) => entry.id)).size).toBe(2);
+
+    releaseFirst.resolve();
+    await firstMain;
+
+    const entriesAfterFirstCleanup = await readRegistry(registryPath);
+    expect(entriesAfterFirstCleanup).toHaveLength(1);
+
+    releaseSecond.resolve();
+    await secondMain;
+  });
+
   it("serializes registry mutations for a shared registry path", async () => {
     const startedFirst = createDeferred<void>();
     const releaseFirst = createDeferred<void>();
     let secondEntered = false;
 
-    const mainModule = await import("../../src/main.ts");
+    const mainModule = await import("../../src/main.js");
     const withRegistryLock = (mainModule as { withRegistryLock?: (path: string, work: () => Promise<void>) => Promise<void> }).withRegistryLock;
 
     expect(withRegistryLock).toBeTypeOf("function");
@@ -446,7 +498,7 @@ describe("registry lifecycle", () => {
   });
 
   it("releases the registry lock when the callback throws", async () => {
-    const mainModule = await import("../../src/main.ts");
+    const mainModule = await import("../../src/main.js");
     const withRegistryLock = (mainModule as {
       withRegistryLock?: (path: string, work: () => Promise<void>) => Promise<void>;
     }).withRegistryLock;
@@ -466,7 +518,7 @@ describe("registry lifecycle", () => {
   });
 
   it("creates the registry parent directory before acquiring the lock", async () => {
-    const mainModule = await import("../../src/main.ts");
+    const mainModule = await import("../../src/main.js");
     const withRegistryLock = (mainModule as {
       withRegistryLock?: (path: string, work: () => Promise<void>) => Promise<void>;
     }).withRegistryLock;
@@ -481,7 +533,7 @@ describe("registry lifecycle", () => {
   });
 
   it("recovers a stale dead-owner lock directory", async () => {
-    const mainModule = await import("../../src/main.ts");
+    const mainModule = await import("../../src/main.js");
     const withRegistryLock = (mainModule as {
       withRegistryLock?: (path: string, work: () => Promise<void>) => Promise<void>;
     }).withRegistryLock;
@@ -516,7 +568,7 @@ describe("registry lifecycle", () => {
   });
 
   it("recovers a stale lock directory without owner metadata", async () => {
-    const mainModule = await import("../../src/main.ts");
+    const mainModule = await import("../../src/main.js");
     const withRegistryLock = (mainModule as {
       withRegistryLock?: (path: string, work: () => Promise<void>) => Promise<void>;
     }).withRegistryLock;

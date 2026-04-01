@@ -8,7 +8,7 @@ import type { QueueEntry } from "#domain/queue.js";
 import { addToQueue, readQueue } from "#infrastructure/queue/queue-store.js";
 import type { Supervisor } from "#infrastructure/dashboard/supervisor.js";
 import { createSupervisor, supervisorPollIntervalMs } from "#infrastructure/dashboard/supervisor.js";
-import { pruneDeadEntries } from "#infrastructure/registry/run-registry.js";
+import { pruneDeadEntries, writeRegistry } from "#infrastructure/registry/run-registry.js";
 import type { RunEntry } from "#domain/registry.js";
 import { spawn } from "node:child_process";
 
@@ -129,7 +129,8 @@ const createTestSupervisor = (): Supervisor => {
   const supervisor = createSupervisor({
     registryPath,
     queuePath,
-    orchBin: "/dist/main.js",
+    launchCommand: "node",
+    launchArgs: ["/dist/main.js"],
   });
   activeSupervisors.push(supervisor);
   return supervisor;
@@ -272,6 +273,48 @@ describe("createSupervisor", () => {
     await waitForQueueEntries([makeQueueEntry()]);
   });
 
+  it("children are spawned detached and unrefed", async () => {
+    await addToQueue(queuePath, makeQueueEntry());
+
+    const supervisor = createTestSupervisor();
+
+    supervisor.start();
+    await waitForExpectation(() => {
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+    });
+
+    const firstChild = spawnMock.mock.results[0]?.value as unknown as FakeChildProcess;
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      "node",
+      ["/dist/main.js", "work", "/plans/demo.json", "--auto"],
+      expect.objectContaining({ detached: true, stdio: "ignore" }),
+    );
+    expect(firstChild.unref).toHaveBeenCalledTimes(1);
+  });
+
+  it("start is idempotent and does not create duplicate polling loops", async () => {
+    vi.useFakeTimers({
+      toFake: ["setInterval", "clearInterval"],
+    });
+    await addToQueue(queuePath, makeQueueEntry());
+
+    const supervisor = createTestSupervisor();
+
+    supervisor.start();
+    supervisor.start();
+    await waitForExpectation(() => {
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+    });
+    const firstChild = spawnMock.mock.results[0]?.value as unknown as FakeChildProcess;
+    await vi.advanceTimersByTimeAsync(supervisorPollIntervalMs);
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(supervisor.isRunning).toBe(true);
+
+    firstChild.emit("exit", 0);
+  });
+
   it("does not over-dequeue on an interval tick while a spawned child is not yet in the registry", async () => {
     vi.useFakeTimers({
       toFake: ["setInterval", "clearInterval"],
@@ -285,8 +328,62 @@ describe("createSupervisor", () => {
     await waitForExpectation(() => {
       expect(spawnMock).toHaveBeenCalledTimes(1);
     });
+    const firstChild = spawnMock.mock.results[0]?.value as unknown as FakeChildProcess;
 
     await vi.advanceTimersByTimeAsync(supervisorPollIntervalMs);
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(await readQueue(queuePath)).toEqual([
+      makeQueueEntry({ id: "queue-2", planPath: "/plans/two.json" }),
+    ]);
+
+    firstChild.emit("exit", 0);
+  });
+
+  it("does not oversubscribe the concurrency limit across two dashboard supervisors", async () => {
+    await addToQueue(queuePath, makeQueueEntry({ id: "queue-1", planPath: "/plans/one.json" }));
+    await addToQueue(queuePath, makeQueueEntry({ id: "queue-2", planPath: "/plans/two.json" }));
+
+    const firstSupervisor = createTestSupervisor();
+    const secondSupervisor = createTestSupervisor();
+
+    firstSupervisor.start();
+    await waitForExpectation(() => {
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+    });
+
+    secondSupervisor.start();
+    await new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, 25);
+    });
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+
+    const firstChild = spawnMock.mock.results[0]?.value as unknown as FakeChildProcess;
+    await writeRegistry(registryPath, [
+      {
+        id: "run-1",
+        pid: firstChild.pid,
+        repo: "/repos/orch",
+        planPath: "/plans/one.json",
+        statePath: "/state/plan-1.json",
+        startedAt: "2026-04-10T10:00:00.000Z",
+      },
+    ]);
+    aliveEntries = [
+      {
+        id: "run-1",
+        pid: firstChild.pid,
+        repo: "/repos/orch",
+        planPath: "/plans/one.json",
+        statePath: "/state/plan-1.json",
+        startedAt: "2026-04-10T10:00:00.000Z",
+      },
+    ];
+
+    await new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, 50);
+    });
 
     expect(spawnMock).toHaveBeenCalledTimes(1);
     expect(await readQueue(queuePath)).toEqual([
@@ -335,42 +432,4 @@ describe("createSupervisor", () => {
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
-  it("children are spawned detached and unrefed", async () => {
-    await addToQueue(queuePath, makeQueueEntry());
-
-    const supervisor = createTestSupervisor();
-
-    supervisor.start();
-    await waitForExpectation(() => {
-      expect(spawnMock).toHaveBeenCalledTimes(1);
-    });
-
-    const firstChild = spawnMock.mock.results[0]?.value as unknown as FakeChildProcess;
-
-    expect(spawnMock).toHaveBeenCalledWith(
-      "node",
-      ["/dist/main.js", "work", "/plans/demo.json", "--auto"],
-      expect.objectContaining({ detached: true, stdio: "ignore" }),
-    );
-    expect(firstChild.unref).toHaveBeenCalledTimes(1);
-  });
-
-  it("start is idempotent and does not create duplicate polling loops", async () => {
-    vi.useFakeTimers({
-      toFake: ["setInterval", "clearInterval"],
-    });
-    await addToQueue(queuePath, makeQueueEntry());
-
-    const supervisor = createTestSupervisor();
-
-    supervisor.start();
-    supervisor.start();
-    await waitForExpectation(() => {
-      expect(spawnMock).toHaveBeenCalledTimes(1);
-    });
-    await vi.advanceTimersByTimeAsync(supervisorPollIntervalMs);
-
-    expect(spawnMock).toHaveBeenCalledTimes(1);
-    expect(supervisor.isRunning).toBe(true);
-  });
 });

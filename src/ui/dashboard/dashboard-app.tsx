@@ -19,14 +19,16 @@ export type ViewState =
 export type DashboardAppProps = {
   readonly registryPath: string;
   readonly queuePath: string;
-  readonly orchBin: string;
+  readonly launchCommand: string;
+  readonly launchArgs: readonly string[];
   readonly intervalMs?: number;
 };
 
 type RenderDashboardOptions = {
   readonly registryPath?: string;
   readonly queuePath?: string;
-  readonly orchBin: string;
+  readonly launchCommand: string;
+  readonly launchArgs: readonly string[];
   readonly intervalMs?: number;
 };
 
@@ -58,7 +60,8 @@ const RunEndedView = ({ onReturn }: { readonly onReturn: () => void }) => {
 export const DashboardApp = ({
   registryPath,
   queuePath,
-  orchBin,
+  launchCommand,
+  launchArgs,
   intervalMs,
 }: DashboardAppProps) => {
   const [viewState, setViewState] = useState<ViewState>({ view: "main" });
@@ -78,14 +81,15 @@ export const DashboardApp = ({
     const supervisor = createSupervisor({
       registryPath,
       queuePath,
-      orchBin,
+      launchCommand,
+      launchArgs,
     });
     supervisor.start();
 
     return () => {
       supervisor.stop();
     };
-  }, [orchBin, queuePath, registryPath]);
+  }, [launchArgs, launchCommand, queuePath, registryPath]);
 
   if (loading) {
     return <Text>Loading dashboard…</Text>;
@@ -185,7 +189,8 @@ export const renderDashboard = async (
     <DashboardApp
       registryPath={props.registryPath ?? defaultRegistryPath()}
       queuePath={props.queuePath ?? defaultQueuePath()}
-      orchBin={props.orchBin}
+      launchCommand={props.launchCommand}
+      launchArgs={props.launchArgs}
       intervalMs={props.intervalMs}
     />,
   );
