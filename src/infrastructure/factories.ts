@@ -25,6 +25,12 @@ export const agentSpawnerFactory = (
 ): AgentSpawner => {
   let claudeSpawner: ClaudeAgentSpawner | undefined;
   let codexSpawner: CodexAgentSpawner | undefined;
+  let codexTriageSpawner: CodexAgentSpawner | undefined;
+
+  const CODEX_TRIAGE_MODEL = "gpt-5.4-mini";
+
+  const spawnCodex = (...extraArgs: string[]) =>
+    spawn("codex", ["app-server", ...extraArgs], { cwd: config.cwd, stdio: ["pipe", "pipe", "pipe"] });
 
   const getClaudeSpawner = () =>
     (claudeSpawner ??= new ClaudeAgentSpawner(
@@ -36,7 +42,15 @@ export const agentSpawnerFactory = (
     (codexSpawner ??= new CodexAgentSpawner(
       config.cwd,
       { auto: config.auto },
-      () => spawn("codex", ["app-server"], { cwd: config.cwd, stdio: ["pipe", "pipe", "pipe"] }),
+      () => spawnCodex(),
+      runtimeInteractionGate,
+    ));
+
+  const getCodexTriageSpawner = () =>
+    (codexTriageSpawner ??= new CodexAgentSpawner(
+      config.cwd,
+      { auto: config.auto },
+      () => spawnCodex("-c", `model="${CODEX_TRIAGE_MODEL}"`),
       runtimeInteractionGate,
     ));
 
@@ -47,6 +61,9 @@ export const agentSpawnerFactory = (
         case "claude":
           return getClaudeSpawner().spawn(role, { ...opts, model: model ?? opts?.model });
         case "codex":
+          if (role === "triage") {
+            return getCodexTriageSpawner().spawn(role, opts);
+          }
           return getCodexSpawner().spawn(role, opts);
         default: {
           const _exhaustive: never = provider;
