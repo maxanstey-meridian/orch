@@ -200,7 +200,6 @@ export class RunOrchestration {
       const groupBaseSha = await this.git.captureRef();
       let reviewBase = groupBaseSha;
       let groupCompleted = 0;
-      const groupTriageResults: TriageResult[] = [];
 
       for (const slice of group.slices) {
         // Reset skip state from previous slice
@@ -278,7 +277,6 @@ export class RunOrchestration {
 
         // Triage: classify the diff to decide which pipeline phases to run
         const triage = await this.triageDiff(verifyBaseSha);
-        groupTriageResults.push(triage);
 
         // Completeness check
         if (triage.runCompleteness) {
@@ -310,7 +308,7 @@ export class RunOrchestration {
       }
 
       // Gap analysis
-      await this.gapAnalysis(group, groupBaseSha, groupTriageResults);
+      await this.gapAnalysis(group, groupBaseSha);
 
       // Commit sweep
       await this.commitSweep(group.name);
@@ -790,7 +788,6 @@ export class RunOrchestration {
   async gapAnalysis(
     group: Group,
     groupBaseSha: string,
-    triageResults: readonly TriageResult[] = [],
   ): Promise<void> {
     if (!(await this.git.hasChanges(groupBaseSha))) {
       return;
