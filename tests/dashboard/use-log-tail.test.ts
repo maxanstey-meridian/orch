@@ -72,6 +72,17 @@ describe("useLogTail", () => {
     app.unmount();
   });
 
+  it("reports that the log is unavailable when no logPath is provided", async () => {
+    const app = render(React.createElement(HookProbe, { logPath: undefined }));
+
+    await waitFor(() => {
+      const frame = app.lastFrame() ?? "";
+      return frame.includes('"count":0') && frame.includes('"error":"Log file not available"');
+    });
+
+    app.unmount();
+  });
+
   it("observes appended log content through fs.watch", async () => {
     const logPath = join(tempDir, "plan.log");
     await writeFile(logPath, "[ORCH] first\n");
