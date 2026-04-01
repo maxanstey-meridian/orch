@@ -65,6 +65,7 @@ const flushEffects = async (): Promise<void> =>
 
 describe("DashboardApp", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
   });
 
@@ -235,6 +236,7 @@ describe("DashboardApp", () => {
   });
 
   it("shows a run ended message and returns to the main view when the selected run disappears", async () => {
+    vi.useFakeTimers();
     let hookState = {
       model: makeModel({
         active: [makeRun({ id: "run-active" })],
@@ -252,7 +254,7 @@ describe("DashboardApp", () => {
     );
 
     app.stdin.write("\r");
-    await flushEffects();
+    await vi.advanceTimersByTimeAsync(0);
     expect(app.lastFrame()).toContain("Plan: Dashboard");
 
     hookState = {
@@ -266,14 +268,56 @@ describe("DashboardApp", () => {
         queuePath="/tmp/queue.json"
       />,
     );
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(app.lastFrame()).toContain("Run ended");
 
-    await flushEffects();
-    await flushEffects();
+    await vi.advanceTimersByTimeAsync(1499);
+
+    expect(app.lastFrame()).toContain("Run ended");
+
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(app.lastFrame()).toContain("Active");
     expect(app.lastFrame()).not.toContain("Run ended");
+
+    app.unmount();
+  });
+
+  it("returns to the main view when kill finds the run already exited", async () => {
+    const killError = Object.assign(new Error("missing process"), {
+      code: "ESRCH",
+    });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw killError;
+    });
+    useDashboardDataMock.mockReturnValue({
+      model: makeModel({
+        active: [makeRun({ id: "run-active" })],
+      }),
+      loading: false,
+      error: undefined,
+    });
+
+    const app = render(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+
+    app.stdin.write("\r");
+    await flushEffects();
+    await flushEffects();
+    expect(app.lastFrame()).toContain("Plan: Dashboard");
+
+    app.stdin.write("k");
+    await flushEffects();
+
+    expect(killSpy).toHaveBeenCalledWith(123, "SIGTERM");
+    expect(app.lastFrame()).toContain("Active");
+    expect(app.lastFrame()).not.toContain("Plan: Dashboard");
 
     app.unmount();
   });

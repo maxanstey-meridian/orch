@@ -12,6 +12,12 @@ type SliceStatus = NonNullable<DashboardRun["groups"]>[number]["slices"][number]
 
 const formatHeaderValue = (value: string | undefined): string => value ?? "-";
 
+const isErrorWithCode = (value: unknown): value is { readonly code: string } =>
+  typeof value === "object" &&
+  value !== null &&
+  "code" in value &&
+  typeof value.code === "string";
+
 const getStatusPresentation = (
   status: SliceStatus,
 ): { readonly symbol: string; readonly color?: string; readonly dimColor?: boolean } => {
@@ -39,8 +45,17 @@ export const DetailView = ({ run, onBack, onTail }: DetailViewProps) => {
       return;
     }
 
-    if (input === "k" && run.pid > 0) {
-      process.kill(run.pid, "SIGTERM");
+    if (input === "k" && run.status === "active" && run.pid > 0) {
+      try {
+        process.kill(run.pid, "SIGTERM");
+      } catch (error) {
+        if (isErrorWithCode(error) && error.code === "ESRCH") {
+          onBack();
+          return;
+        }
+
+        throw error;
+      }
     }
   });
 

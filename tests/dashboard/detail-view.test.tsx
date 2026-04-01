@@ -185,4 +185,23 @@ describe("DetailView", () => {
 
     app.unmount();
   });
+
+  it("does not try to kill completed runs", async () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const app = render(
+      <DetailView
+        run={makeRun({ status: "completed", pid: 321 })}
+        onBack={vi.fn()}
+        onTail={vi.fn()}
+      />,
+    );
+
+    app.stdin.write("k");
+    await flushEffects();
+
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(app.lastFrame()).toContain("Plan: Dashboard");
+
+    app.unmount();
+  });
 });

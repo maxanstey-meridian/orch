@@ -17,6 +17,8 @@ export type DashboardAppProps = {
   readonly intervalMs?: number;
 };
 
+const runEndedDwellMs = 1_500;
+
 const findDetailRun = (runs: readonly DashboardRun[], runId: string): DashboardRun | undefined =>
   runs.find((run) => run.id === runId);
 
@@ -24,7 +26,7 @@ const RunEndedView = ({ onReturn }: { readonly onReturn: () => void }) => {
   useEffect(() => {
     const timeoutId = setTimeout(() => {
       onReturn();
-    }, 0);
+    }, runEndedDwellMs);
 
     return () => {
       clearTimeout(timeoutId);

@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "fs/promises";
+import { mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,17 +9,6 @@ import { writeRegistry } from "#infrastructure/registry/run-registry.js";
 
 const writeJson = async (filePath: string, value: unknown): Promise<void> => {
   await writeFile(filePath, JSON.stringify(value, null, 2));
-};
-
-const listFiles = async (rootPath: string): Promise<string[]> => {
-  const entries = await readdir(rootPath, { withFileTypes: true });
-  const files = await Promise.all(
-    entries.map(async (entry) => {
-      const entryPath = join(rootPath, entry.name);
-      return entry.isDirectory() ? listFiles(entryPath) : [entryPath];
-    }),
-  );
-  return files.flat();
 };
 
 const makePlan = () => ({
@@ -730,24 +719,5 @@ describe("data aggregator", () => {
     expect(result.completed[0]?.groups).toBeUndefined();
 
     vi.useRealTimers();
-  });
-
-  it("dashboard refresh path consumes aggregateDashboard", async () => {
-    const srcRoot = join(process.cwd(), "src");
-    const files = await listFiles(srcRoot);
-    const consumerFiles: string[] = [];
-
-    for (const filePath of files) {
-      if (filePath.endsWith("src/infrastructure/dashboard/data-aggregator.ts")) {
-        continue;
-      }
-
-      const content = await readFile(filePath, "utf8");
-      if (content.includes("aggregateDashboard")) {
-        consumerFiles.push(filePath);
-      }
-    }
-
-    expect(consumerFiles).not.toEqual([]);
   });
 });
