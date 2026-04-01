@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import React from "react";
+import { KeyBar } from "#ui/dashboard/key-bar.js";
 import { useLogTail } from "#ui/dashboard/use-log-tail.js";
 
 type TailViewProps = {
@@ -13,12 +14,12 @@ const headerRows = 3;
 
 export const TailView = ({ logPath, runId, onBack }: TailViewProps) => {
   const { lines, error } = useLogTail(logPath);
-  const visibleLineCount = Math.max((process.stdout.rows ?? fallbackTerminalRows) - headerRows, 1);
+  const visibleLineCount = Math.max((process.stdout.rows ?? fallbackTerminalRows) - headerRows - 1, 1);
   const visibleLines = lines.slice(-visibleLineCount);
   const fillerLineCount = Math.max(visibleLineCount - visibleLines.length, 0);
 
   useInput((_input, key) => {
-    if (key.escape) {
+    if (key.escape || key.leftArrow) {
       onBack();
     }
   });
@@ -46,6 +47,7 @@ export const TailView = ({ logPath, runId, onBack }: TailViewProps) => {
           </>
         )}
       </Box>
+      <KeyBar text="←/Esc back" />
     </Box>
   );
 };

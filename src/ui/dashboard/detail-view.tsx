@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import React from "react";
 import type { DashboardRun } from "#domain/dashboard.js";
+import { KeyBar } from "#ui/dashboard/key-bar.js";
 
 type DetailViewProps = {
   readonly run: DashboardRun;
@@ -35,7 +36,7 @@ const getStatusPresentation = (
 
 export const DetailView = ({ run, onBack, onTail }: DetailViewProps) => {
   useInput((input, key) => {
-    if (key.escape) {
+    if (key.escape || key.leftArrow) {
       onBack();
       return;
     }
@@ -93,6 +94,7 @@ export const DetailView = ({ run, onBack, onTail }: DetailViewProps) => {
           </Box>
         ))
       )}
+      <KeyBar text="←/Esc back  f tail  k kill" />
     </Box>
   );
 };

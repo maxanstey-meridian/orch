@@ -1,8 +1,14 @@
 import { Box, Text } from "ink";
 import React from "react";
 
-export const KeyBar = () => (
+export type KeyBarProps = {
+  readonly text?: string;
+};
+
+const defaultKeyBarText = "↑↓ navigate  ⏎ detail  f tail  q queue  k kill  ? help";
+
+export const KeyBar = ({ text = defaultKeyBarText }: KeyBarProps) => (
   <Box marginTop={1}>
-    <Text dimColor>↑↓ navigate  ⏎ detail  f tail  q queue  k kill  ? help</Text>
+    <Text dimColor>{text}</Text>
   </Box>
 );

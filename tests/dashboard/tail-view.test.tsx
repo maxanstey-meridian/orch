@@ -50,10 +50,11 @@ describe("TailView", () => {
     const frame = app.lastFrame() ?? "";
 
     expect(frame).toContain("Tail: run-1");
-    expect(frame).toContain("line 3");
     expect(frame).toContain("line 4");
     expect(frame).toContain("line 5");
+    expect(frame).not.toContain("line 3");
     expect(frame).not.toContain("line 1");
+    expect(frame).toContain("←/Esc back");
 
     app.unmount();
   });
@@ -74,6 +75,29 @@ describe("TailView", () => {
     );
 
     app.stdin.write("\u001B");
+    await flushEffects();
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+
+    app.unmount();
+  });
+
+  it("returns to the previous view when left arrow is pressed", async () => {
+    const onBack = vi.fn();
+    useLogTailMock.mockReturnValue({
+      lines: ["line 1"],
+      error: undefined,
+    });
+
+    const app = render(
+      <TailView
+        runId="run-1"
+        logPath="/tmp/.orch/logs/plan-abc123.log"
+        onBack={onBack}
+      />,
+    );
+
+    app.stdin.write("\u001B[D");
     await flushEffects();
 
     expect(onBack).toHaveBeenCalledTimes(1);

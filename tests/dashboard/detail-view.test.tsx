@@ -58,6 +58,8 @@ describe("DetailView", () => {
     expect(frame).toContain("Registry");
     expect(frame).toContain("Aggregator");
     expect(frame).toContain("10m");
+    expect(frame).toContain("←/Esc back");
+    expect(frame).toContain("f tail");
 
     app.unmount();
   });
@@ -143,6 +145,24 @@ describe("DetailView", () => {
     );
 
     app.stdin.write("\u001B");
+    await flushEffects();
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+
+    app.unmount();
+  });
+
+  it("returns to the previous view when left arrow is pressed", async () => {
+    const onBack = vi.fn();
+    const app = render(
+      <DetailView
+        run={makeRun()}
+        onBack={onBack}
+        onTail={vi.fn()}
+      />,
+    );
+
+    app.stdin.write("\u001B[D");
     await flushEffects();
 
     expect(onBack).toHaveBeenCalledTimes(1);
