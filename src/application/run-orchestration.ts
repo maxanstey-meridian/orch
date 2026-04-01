@@ -211,6 +211,7 @@ export class RunOrchestration {
           return;
         }
 
+
         if (
           this.state.lastCompletedSlice !== undefined &&
           slice.number <= this.state.lastCompletedSlice

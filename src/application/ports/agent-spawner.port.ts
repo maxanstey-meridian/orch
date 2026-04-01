@@ -26,6 +26,7 @@ export abstract class AgentSpawner {
       readonly systemPrompt?: string;
       readonly cwd?: string;
       readonly planMode?: boolean;
+      readonly model?: string;
     },
   ): AgentHandle;
 }

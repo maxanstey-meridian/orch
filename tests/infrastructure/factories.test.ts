@@ -81,6 +81,7 @@ describe("agentSpawnerFactory", () => {
       "my-tdd-skill",         // systemPrompt from skills.tdd
       undefined,              // resumeSessionId
       "/custom/cwd",          // cwd from config
+      undefined,              // model
     );
   });
 

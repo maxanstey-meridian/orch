@@ -24,18 +24,20 @@ export class ClaudeAgentSpawner implements AgentSpawner {
       readonly systemPrompt?: string;
       readonly cwd?: string;
       readonly planMode?: boolean;
+      readonly model?: string;
     },
   ): AgentHandle {
     const style = ROLE_STYLES[role];
     const systemPrompt = opts?.systemPrompt ?? this.skills[role] ?? undefined;
     const cwd = opts?.cwd ?? this.defaultCwd;
+    const model = opts?.model;
     const usePlanAgent = opts?.planMode || PLAN_ROLES.has(role);
 
     const process = usePlanAgent
       ? role === "triage"
-        ? spawnClaudePlanAgent(style, systemPrompt, cwd, TRIAGE_MODEL)
-        : spawnClaudePlanAgent(style, systemPrompt, cwd)
-      : spawnClaudeAgent(style, systemPrompt, opts?.resumeSessionId, cwd);
+        ? spawnClaudePlanAgent(style, systemPrompt, cwd, model ?? TRIAGE_MODEL)
+        : spawnClaudePlanAgent(style, systemPrompt, cwd, model)
+      : spawnClaudeAgent(style, systemPrompt, opts?.resumeSessionId, cwd, model);
 
     return process;
   }
