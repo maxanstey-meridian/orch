@@ -58,6 +58,7 @@ describe("Happy path lifecycle", () => {
 
     // State advanced
     expect(persistence.current.lastCompletedSlice).toBe(1);
+    expect(persistence.current.currentPhase).toBeUndefined();
     expect(persistence.saveHistory.some((state) => state.currentPhase === "plan")).toBe(true);
     expect(persistence.saveHistory.some((state) => state.currentPhase === "tdd")).toBe(true);
     expect(persistence.saveHistory.some((state) => state.currentPhase === "verify")).toBe(true);
@@ -147,6 +148,7 @@ describe("Happy path lifecycle", () => {
 
     expect(persistence.saveHistory.some((state) => state.currentPhase === "gap")).toBe(true);
     expect(persistence.saveHistory.some((state) => state.currentPhase === "final")).toBe(true);
+    expect(persistence.current.currentPhase).toBeUndefined();
   });
 
   it("two groups with inter-group confirmation and agent respawn", async () => {

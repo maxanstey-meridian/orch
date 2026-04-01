@@ -58,6 +58,7 @@ export const advanceState = (state: OrchestratorState, event: StateEvent): Orche
       const completedAt = new Date().toISOString();
       return {
         ...state,
+        currentPhase: undefined,
         lastCompletedSlice: event.sliceNumber,
         lastSliceImplemented: event.sliceNumber,
         sliceTimings: state.sliceTimings?.map((timing) =>
@@ -68,7 +69,7 @@ export const advanceState = (state: OrchestratorState, event: StateEvent): Orche
       };
     }
     case "groupDone":
-      return { ...state, lastCompletedGroup: event.groupName };
+      return { ...state, currentPhase: undefined, lastCompletedGroup: event.groupName };
     case "agentSpawned":
       return event.role === "tdd"
         ? { ...state, tddSessionId: event.sessionId }

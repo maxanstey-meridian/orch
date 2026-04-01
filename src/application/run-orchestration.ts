@@ -88,6 +88,14 @@ export class RunOrchestration {
     await this.persistStateEvent({ kind: "phaseEntered", phase, sliceNumber });
   }
 
+  private async clearPersistedPhase(): Promise<void> {
+    if (this.state.currentPhase === undefined) {
+      return;
+    }
+    this.state = { ...this.state, currentPhase: undefined };
+    await this.persistence.save(this.state);
+  }
+
   private currentSliceNumber(defaultSliceNumber = 0): number {
     return this.state.currentSlice ?? this.state.lastCompletedSlice ?? defaultSliceNumber;
   }
@@ -816,6 +824,7 @@ export class RunOrchestration {
     }
 
     this.phase = transition(this.phase, { kind: "AllPassesDone" });
+    await this.clearPersistedPhase();
   }
 
   async gapAnalysis(group: Group, groupBaseSha: string): Promise<void> {

@@ -119,6 +119,7 @@ describe("advanceState", () => {
 
     const state: OrchestratorState = {
       startedAt: "2026-04-02T10:00:00.000Z",
+      currentPhase: "tdd",
       sliceTimings: [
         { number: 1, startedAt: "2026-04-02T09:00:00.000Z", completedAt: "2026-04-02T09:30:00.000Z" },
         { number: 2, startedAt: "2026-04-02T10:00:00.000Z" },
@@ -135,6 +136,22 @@ describe("advanceState", () => {
         { number: 1, startedAt: "2026-04-02T09:00:00.000Z", completedAt: "2026-04-02T09:30:00.000Z" },
         { number: 2, startedAt: "2026-04-02T10:00:00.000Z", completedAt: "2026-04-02T10:05:00.000Z" },
       ],
+    });
+  });
+
+  it("groupDone clears currentPhase after group work finishes", () => {
+    const state: OrchestratorState = {
+      currentPhase: "gap",
+      currentGroup: "G1",
+      lastCompletedSlice: 2,
+    };
+
+    const next = advanceState(state, { kind: "groupDone", groupName: "G1" });
+
+    expect(next).toEqual({
+      currentGroup: "G1",
+      lastCompletedSlice: 2,
+      lastCompletedGroup: "G1",
     });
   });
 
