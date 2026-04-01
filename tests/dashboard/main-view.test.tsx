@@ -4,21 +4,7 @@ import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
 import type { QueueEntry } from "#domain/queue.js";
-import { removeFromQueue } from "#infrastructure/queue/queue-store.js";
-import { DashboardApp } from "#ui/dashboard/dashboard-app.js";
 import { MainView } from "#ui/dashboard/main-view.js";
-import { useDashboardData } from "#ui/dashboard/use-dashboard-data.js";
-
-vi.mock("#ui/dashboard/use-dashboard-data.js", () => ({
-  useDashboardData: vi.fn(),
-}));
-
-vi.mock("#infrastructure/queue/queue-store.js", () => ({
-  removeFromQueue: vi.fn(),
-}));
-
-const useDashboardDataMock = vi.mocked(useDashboardData);
-const removeFromQueueMock = vi.mocked(removeFromQueue);
 
 const makeRun = (overrides: Partial<DashboardRun> = {}): DashboardRun => ({
   id: "run-1",
@@ -55,24 +41,8 @@ const flushEffects = async (): Promise<void> =>
     setTimeout(resolvePromise, 0);
   });
 
-const renderDashboard = (model: DashboardModel) => {
-  useDashboardDataMock.mockReturnValue({
-    model,
-    loading: false,
-    error: undefined,
-  });
-
-  return render(
-    <DashboardApp
-      registryPath="/tmp/runs.json"
-      queuePath="/tmp/queue.json"
-    />,
-  );
-};
-
 describe("MainView", () => {
   afterEach(() => {
-    vi.clearAllMocks();
     vi.restoreAllMocks();
   });
 
@@ -267,15 +237,19 @@ describe("MainView", () => {
   });
 
   it("renders the fixed key hint row from the slice contract", () => {
-    const app = renderDashboard(
-      makeModel({
-        active: [
-          makeRun({
-            id: "run-active",
-            repo: `${homedir()}/repos/orch`,
-          }),
-        ],
-      }),
+    const app = render(
+      <MainView
+        model={makeModel({
+          active: [
+            makeRun({
+              id: "run-active",
+              repo: `${homedir()}/repos/orch`,
+            }),
+          ],
+        })}
+        onOpenDetail={vi.fn()}
+        onOpenTail={vi.fn()}
+      />,
     );
 
     expect(app.lastFrame()).toContain("↑↓ navigate  ⏎ detail  f tail  q queue  k kill  ? help");
@@ -284,34 +258,38 @@ describe("MainView", () => {
   });
 
   it("renders rows with 6-char ids and home-relative repo columns", () => {
-    const app = renderDashboard(
-      makeModel({
-        active: [
-          makeRun({
-            id: "run-active-123",
-            repo: `${homedir()}/repos/active`,
-            branch: "feature/dashboard",
-          }),
-        ],
-        queued: [
-          makeQueueEntry({
-            id: "queue-entry-456",
-            repo: `${homedir()}/repos/queued`,
-            branch: undefined,
-            planPath: "/plans/queued-plan.json",
-          }),
-        ],
-        completed: [
-          makeRun({
-            id: "run-done-789",
-            repo: `${homedir()}/repos/completed`,
-            branch: undefined,
-            planName: "Completed Plan",
-            status: "completed",
-            currentPhase: undefined,
-          }),
-        ],
-      }),
+    const app = render(
+      <MainView
+        model={makeModel({
+          active: [
+            makeRun({
+              id: "run-active-123",
+              repo: `${homedir()}/repos/active`,
+              branch: "feature/dashboard",
+            }),
+          ],
+          queued: [
+            makeQueueEntry({
+              id: "queue-entry-456",
+              repo: `${homedir()}/repos/queued`,
+              branch: undefined,
+              planPath: "/plans/queued-plan.json",
+            }),
+          ],
+          completed: [
+            makeRun({
+              id: "run-done-789",
+              repo: `${homedir()}/repos/completed`,
+              branch: undefined,
+              planName: "Completed Plan",
+              status: "completed",
+              currentPhase: undefined,
+            }),
+          ],
+        })}
+        onOpenDetail={vi.fn()}
+        onOpenTail={vi.fn()}
+      />,
     );
 
     const frame = app.lastFrame() ?? "";
@@ -325,10 +303,14 @@ describe("MainView", () => {
 
   it("sends SIGTERM to the selected run pid when k is pressed", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
-    const app = renderDashboard(
-      makeModel({
-        active: [makeRun({ id: "run-active", pid: 321 })],
-      }),
+    const app = render(
+      <MainView
+        model={makeModel({
+          active: [makeRun({ id: "run-active", pid: 321 })],
+        })}
+        onOpenDetail={vi.fn()}
+        onOpenTail={vi.fn()}
+      />,
     );
 
     app.stdin.write("k");
@@ -339,13 +321,18 @@ describe("MainView", () => {
     app.unmount();
   });
 
-  it("removes the selected queued row when d is pressed", async () => {
-    removeFromQueueMock.mockResolvedValue(undefined);
-    const app = renderDashboard(
-      makeModel({
-        active: [makeRun({ id: "run-active" })],
-        queued: [makeQueueEntry({ id: "queue-entry-456" })],
-      }),
+  it("invokes deletion for the selected queued row when d is pressed", async () => {
+    const onDelete = vi.fn();
+    const app = render(
+      <MainView
+        model={makeModel({
+          active: [makeRun({ id: "run-active" })],
+          queued: [makeQueueEntry({ id: "queue-entry-456" })],
+        })}
+        onOpenDetail={vi.fn()}
+        onOpenTail={vi.fn()}
+        onDelete={onDelete}
+      />,
     );
 
     app.stdin.write("\u001B[B");
@@ -355,18 +342,23 @@ describe("MainView", () => {
     app.stdin.write("d");
     await flushEffects();
 
-    expect(removeFromQueueMock).toHaveBeenCalledWith("/tmp/queue.json", "queue-entry-456");
-    expect(app.lastFrame()).not.toContain("queue-");
+    expect(onDelete).toHaveBeenCalledWith("queue-entry-456");
 
     app.unmount();
   });
 
-  it("removes the selected completed row when d is pressed", async () => {
-    const app = renderDashboard(
-      makeModel({
-        active: [makeRun({ id: "run-active" })],
-        completed: [makeRun({ id: "run-done-789", status: "completed" })],
-      }),
+  it("invokes deletion for the selected completed row when d is pressed", async () => {
+    const onDelete = vi.fn();
+    const app = render(
+      <MainView
+        model={makeModel({
+          active: [makeRun({ id: "run-active" })],
+          completed: [makeRun({ id: "run-done-789", status: "completed" })],
+        })}
+        onOpenDetail={vi.fn()}
+        onOpenTail={vi.fn()}
+        onDelete={onDelete}
+      />,
     );
 
     app.stdin.write("\u001B[B");
@@ -376,8 +368,28 @@ describe("MainView", () => {
     app.stdin.write("d");
     await flushEffects();
 
-    expect(removeFromQueueMock).not.toHaveBeenCalled();
-    expect(app.lastFrame()).not.toContain("run-do");
+    expect(onDelete).toHaveBeenCalledWith("run-done-789");
+
+    app.unmount();
+  });
+
+  it("does not invoke deletion for the selected active row when d is pressed", async () => {
+    const onDelete = vi.fn();
+    const app = render(
+      <MainView
+        model={makeModel({
+          active: [makeRun({ id: "run-active" })],
+        })}
+        onOpenDetail={vi.fn()}
+        onOpenTail={vi.fn()}
+        onDelete={onDelete}
+      />,
+    );
+
+    app.stdin.write("d");
+    await flushEffects();
+
+    expect(onDelete).not.toHaveBeenCalled();
 
     app.unmount();
   });
