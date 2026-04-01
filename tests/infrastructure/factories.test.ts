@@ -140,6 +140,102 @@ describe("agentSpawnerFactory", () => {
     expect(CodexCtor).not.toHaveBeenCalled();
   });
 
+  it("dispatches mixed providers through a single factory instance", async () => {
+    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
+    const spawnClaudeAgent = vi.mocked(mockModule.spawnClaudeAgent);
+    spawnClaudeAgent.mockClear();
+    mockCodexSpawn.mockClear();
+
+    const { agentSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const config = makeConfig({
+      agentConfig: {
+        ...AGENT_DEFAULTS,
+        tdd: { provider: "claude" },
+        review: { provider: "codex" },
+      },
+    });
+    const spawner = agentSpawnerFactory(config, dummyGate);
+    spawner.spawn("tdd");
+    spawner.spawn("review");
+
+    expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
+    expect(mockCodexSpawn).toHaveBeenCalledTimes(1);
+    expect(mockCodexSpawn).toHaveBeenCalledWith("review", undefined);
+  });
+
+  it("reuses ClaudeAgentSpawner instance across multiple spawns", async () => {
+    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
+    const spawnClaudeAgent = vi.mocked(mockModule.spawnClaudeAgent);
+    spawnClaudeAgent.mockClear();
+
+    const { agentSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const config = makeConfig();
+    const spawner = agentSpawnerFactory(config, dummyGate);
+    spawner.spawn("tdd");
+    spawner.spawn("review");
+
+    // Both spawns should route through the same ClaudeAgentSpawner, verified
+    // by both calls using the same skills/cwd config
+    expect(spawnClaudeAgent).toHaveBeenCalledTimes(2);
+    expect(spawnClaudeAgent).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      "tdd-skill",
+      undefined,
+      "/tmp/test",
+      undefined,
+    );
+    expect(spawnClaudeAgent).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      "review-skill",
+      undefined,
+      "/tmp/test",
+      undefined,
+    );
+  });
+
+  it("forwards caller opts to codex spawner", async () => {
+    mockCodexSpawn.mockClear();
+
+    const { agentSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const config = makeConfig({
+      agentConfig: {
+        ...AGENT_DEFAULTS,
+        tdd: { provider: "codex" },
+      },
+    });
+    const spawner = agentSpawnerFactory(config, dummyGate);
+    const callerOpts = { resumeSessionId: "sess-123", cwd: "/other" };
+    spawner.spawn("tdd", callerOpts);
+
+    expect(mockCodexSpawn).toHaveBeenCalledWith("tdd", callerOpts);
+  });
+
+  it("config model overrides caller opts.model", async () => {
+    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
+    const spawnClaudeAgent = vi.mocked(mockModule.spawnClaudeAgent);
+    spawnClaudeAgent.mockClear();
+
+    const { agentSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const config = makeConfig({
+      agentConfig: {
+        ...AGENT_DEFAULTS,
+        tdd: { provider: "claude", model: "claude-opus-4-20250514" },
+      },
+    });
+    const spawner = agentSpawnerFactory(config, dummyGate);
+    spawner.spawn("tdd", { model: "caller-model-should-be-overridden" });
+
+    expect(spawnClaudeAgent).toHaveBeenCalledWith(
+      expect.anything(),
+      "tdd-skill",
+      undefined,
+      "/tmp/test",
+      "claude-opus-4-20250514",
+    );
+  });
+
   it("passes model override for claude roles", async () => {
     const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
     const spawnClaudeAgent = vi.mocked(mockModule.spawnClaudeAgent);

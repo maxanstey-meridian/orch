@@ -289,6 +289,11 @@ describe("resolveOrchrConfig", () => {
     expect(summary).toBe("review: custom, maxReplans: 1");
   });
 
+  it("buildOrchrSummary returns undefined for empty agents object", () => {
+    const config = resolveOrchrConfig({ agents: {} }, "/fake");
+    expect(buildOrchrSummary(config)).toBeUndefined();
+  });
+
   it("buildOrchrSummary omits default agent values", () => {
     const config = resolveOrchrConfig({ agents: { tdd: "claude", plan: "claude" } }, "/fake");
     expect(buildOrchrSummary(config)).toBeUndefined();
