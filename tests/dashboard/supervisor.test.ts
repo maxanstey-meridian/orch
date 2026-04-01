@@ -83,6 +83,26 @@ const waitForExpectation = async (
   expectation();
 };
 
+const waitForQueueEntries = async (
+  expectedEntries: QueueEntry[],
+  timeoutMs = 500,
+): Promise<void> => {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const currentEntries = await readQueue(queuePath);
+    if (JSON.stringify(currentEntries) === JSON.stringify(expectedEntries)) {
+      return;
+    }
+
+    await new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, 0);
+    });
+  }
+
+  expect(await readQueue(queuePath)).toEqual(expectedEntries);
+};
+
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "orch-supervisor-test-"));
   queuePath = join(tempDir, "queue.json");
@@ -229,6 +249,7 @@ describe("createSupervisor", () => {
   });
 
   it("requeues the entry when the spawned child emits an error", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await addToQueue(queuePath, makeQueueEntry());
 
     const supervisor = createTestSupervisor();
@@ -247,7 +268,8 @@ describe("createSupervisor", () => {
     }
 
     expect(emittedError).toBeUndefined();
-    expect(await readQueue(queuePath)).toEqual([makeQueueEntry()]);
+    expect(errorSpy).toHaveBeenCalled();
+    await waitForQueueEntries([makeQueueEntry()]);
   });
 
   it("does not over-dequeue on an interval tick while a spawned child is not yet in the registry", async () => {

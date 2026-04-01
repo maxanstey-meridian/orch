@@ -1,36 +1,15 @@
 import { describe as _describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { EventEmitter } from "node:events";
 
 const describe = _describe;
 const describeIntegration = process.env.INTEGRATION ? _describe : _describe.skip;
-import { mkdtemp, rm, writeFile, readFile } from "fs/promises";
+import { mkdir, mkdtemp, rm, writeFile, readFile } from "fs/promises";
 import { join, resolve } from "path";
 import { tmpdir } from "os";
 import { execSync, spawnSync } from "child_process";
 import { loadState, saveState, clearState, statePathForPlan } from "#infrastructure/state/state.js";
 import { resolvePlanId } from "#infrastructure/plan/plan-generator.js";
 import { logPathForPlan } from "#infrastructure/log/log-writer.js";
-
-const fsPromisesMockState = vi.hoisted(() => ({
-  readFileImpl: undefined as typeof import("fs/promises").readFile | undefined,
-}));
-
-async function mockFsPromisesModule() {
-  const actual = await vi.importActual<typeof import("fs/promises")>("fs/promises");
-
-  return {
-    ...actual,
-    readFile: ((...args: Parameters<typeof actual.readFile>) => {
-      if (fsPromisesMockState.readFileImpl !== undefined) {
-        return fsPromisesMockState.readFileImpl(...args);
-      }
-
-      return actual.readFile(...args);
-    }) satisfies typeof actual.readFile,
-  };
-}
-
-vi.mock("fs/promises", mockFsPromisesModule);
-vi.mock("node:fs/promises", mockFsPromisesModule);
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
@@ -48,7 +27,6 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  fsPromisesMockState.readFileImpl = undefined;
   await rm(tempDir, { recursive: true });
 });
 
@@ -136,10 +114,22 @@ describe("SHA-256 fallback plan ID derivation", () => {
 describe("subcommand routing", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.doUnmock("fs");
+    vi.doUnmock("node:fs");
+    vi.doUnmock("fs/promises");
+    vi.doUnmock("node:fs/promises");
     vi.resetModules();
   });
 
-  const loadMainWithSubcommandMocks = async () => {
+  const loadMainWithSubcommandMocks = async (
+    options: {
+      watchFactory?: (
+        path: string,
+        listener: (eventType: string, changedFileName: string | Buffer | null) => void,
+      ) => import("fs").FSWatcher;
+      onReadFilePath?: (path: string) => void;
+    } = {},
+  ) => {
     const renderDashboard = vi.fn().mockResolvedValue(undefined);
     const aggregateDashboard = vi.fn().mockResolvedValue({
       active: [],
@@ -166,8 +156,43 @@ describe("subcommand routing", () => {
     vi.doMock("#infrastructure/git/repo-check.js", () => ({
       assertGitRepo,
     }));
+    if (options.watchFactory !== undefined) {
+      const watchFactory = options.watchFactory;
+      vi.doMock("fs", async () => {
+        const actual = await vi.importActual<typeof import("fs")>("fs");
+        return {
+          ...actual,
+          watch: watchFactory,
+        };
+      });
+      vi.doMock("node:fs", async () => {
+        const actual = await vi.importActual<typeof import("fs")>("fs");
+        return {
+          ...actual,
+          watch: watchFactory,
+        };
+      });
+    }
+    if (options.onReadFilePath !== undefined) {
+      const onReadFilePath = options.onReadFilePath;
+      const mockFsPromises = async () => {
+        const actual =
+          await vi.importActual<typeof import("fs/promises")>("fs/promises");
 
-    const mainModule = await import("../src/main.ts");
+        return {
+          ...actual,
+          // Test-only boundary wrapper around the overloaded Node API.
+          readFile: ((path: Parameters<typeof actual.readFile>[0], ...rest: unknown[]) => {
+            onReadFilePath(String(path));
+            return Reflect.apply(actual.readFile, actual, [path, ...rest]);
+          }) as typeof actual.readFile,
+        };
+      };
+      vi.doMock("fs/promises", mockFsPromises);
+      vi.doMock("node:fs/promises", mockFsPromises);
+    }
+
+    const mainModule = await import("../src/main.js");
 
     return {
       ...mainModule,
@@ -453,12 +478,32 @@ describe("subcommand routing", () => {
     expect(mocks.assertGitRepo).not.toHaveBeenCalled();
   });
 
-  // MANUAL TEST REQUIRED: verify `orch status <id> -f` prints existing log lines,
-  // streams appended output live, and exits cleanly on interrupt in a real terminal.
+  // MANUAL TEST REQUIRED: verify `orch status <id> -f` streams appended output live
+  // and exits cleanly on interrupt in a real terminal.
   it("status follow prints the current log output before entering follow mode", async () => {
-    fsPromisesMockState.readFileImpl = vi.fn().mockResolvedValue(Buffer.from("line 1\n", "utf8"));
-
-    const { main, mocks } = await loadMainWithSubcommandMocks();
+    const logDir = join(tempDir, "logs");
+    await mkdir(logDir, { recursive: true });
+    const logPath = join(logDir, "run-active.log");
+    await writeFile(logPath, "line 1\n");
+    const watcherError = Object.assign(new Error("stop following"), {
+      code: "EPIPE",
+    });
+    const readFilePaths: string[] = [];
+    const { main, mocks } = await loadMainWithSubcommandMocks({
+      watchFactory: (_path, _listener) => {
+        const watcher = new EventEmitter() as EventEmitter & {
+          close: () => void;
+        };
+        watcher.close = vi.fn();
+        setTimeout(() => {
+          watcher.emit("error", watcherError);
+        }, 0);
+        return watcher as unknown as import("fs").FSWatcher;
+      },
+      onReadFilePath: (path) => {
+        readFilePaths.push(path);
+      },
+    });
     mocks.aggregateDashboard.mockResolvedValue({
       active: [
         {
@@ -469,14 +514,13 @@ describe("subcommand routing", () => {
           currentPhase: "review",
           elapsed: "5m",
           pid: 123,
-          logPath: "/logs/run-active.log",
+          logPath,
         },
       ],
       queued: [],
       completed: [],
     });
     const exit = vi.fn();
-    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const previousArgv = process.argv;
     process.argv = ["node", "main.ts", "status", "run-active", "-f"];
 
@@ -486,12 +530,16 @@ describe("subcommand routing", () => {
         queuePath: "/tmp/queue.json",
         exit,
       });
+      const settledMain = pendingMain.then(
+        () => undefined,
+        (error: unknown) => error,
+      );
       await Promise.resolve();
       await Promise.resolve();
 
-      expect(writeSpy).toHaveBeenCalledWith("line 1\n");
-      await expect(pendingMain).rejects.toMatchObject({
-        code: "ENOENT",
+      expect(readFilePaths).toContain(logPath);
+      await expect(settledMain).resolves.toMatchObject({
+        code: "EPIPE",
       });
     } finally {
       process.argv = previousArgv;
@@ -1261,7 +1309,7 @@ describe("main log path wiring", () => {
     process.chdir(tempDir);
 
     try {
-      const { main } = await import("../src/main.ts");
+      const { main } = await import("../src/main.js");
       await main({
         registryPath: join(tempDir, "registry", "runs.json"),
         onSignal: vi.fn(() => process),
