@@ -36,24 +36,6 @@ export type Hud = {
   askUser: (prompt: string) => Promise<string>;
 };
 
-export const HUD_MAX_LINES = 400;
-
-export const appendHudLines = (
-  lines: string[],
-  entries: string | readonly string[],
-  maxLines = HUD_MAX_LINES,
-): void => {
-  if (typeof entries === "string") {
-    lines.push(entries);
-  } else {
-    lines.push(...entries);
-  }
-  const overflow = lines.length - maxLines;
-  if (overflow > 0) {
-    lines.splice(0, overflow);
-  }
-};
-
 const formatElapsed = (ms: number): string => {
   const totalSec = Math.floor(ms / 1000);
   const h = String(Math.floor(totalSec / 3600)).padStart(2, "0");
@@ -353,7 +335,7 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
       }
       tornDown = true;
       if (writerBuffer.trim()) {
-        appendHudLines(_lines, writerBuffer);
+        _lines.push(writerBuffer);
       }
       writerBuffer = "";
       _notify = null;
@@ -370,7 +352,7 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
           return;
         }
         const text = args.map((a) => (typeof a === "string" ? a : String(a))).join(" ");
-        appendHudLines(_lines, text);
+        _lines.push(text);
         notify();
       },
     createWriter: () => (text: string) => {
@@ -380,7 +362,9 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
       writerBuffer += text;
       const parts = writerBuffer.split("\n");
       writerBuffer = parts.pop() ?? "";
-      appendHudLines(_lines, parts);
+      for (const line of parts) {
+        _lines.push(line);
+      }
       if (parts.length > 0) {
         notify();
       }
