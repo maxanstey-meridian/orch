@@ -116,6 +116,13 @@ describe("run registry", () => {
     await expect(readRegistry(registryPath)).resolves.toEqual([]);
   });
 
+  it("readRegistry returns empty array when file contains a non-positive pid", async () => {
+    const registryPath = join(tempDir, "runs.json");
+    await writeFile(registryPath, JSON.stringify([makeEntry({ pid: 0 })]));
+
+    await expect(readRegistry(registryPath)).resolves.toEqual([]);
+  });
+
   it("readRegistry returns empty array when file contains a non-array JSON value", async () => {
     const registryPath = join(tempDir, "runs.json");
     await writeFile(registryPath, JSON.stringify({ id: "not-an-array" }));

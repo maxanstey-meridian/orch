@@ -18,7 +18,7 @@ const isRunEntry = (value: unknown): value is RunEntry => {
   if (typeof id !== "string") {
     return false;
   }
-  if (typeof pid !== "number" || !Number.isInteger(pid)) {
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) {
     return false;
   }
   if (typeof repo !== "string") {
