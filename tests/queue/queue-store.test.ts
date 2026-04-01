@@ -105,6 +105,20 @@ describe("queue store", () => {
     await expect(readQueue(queuePath)).resolves.toEqual([entry]);
   });
 
+  it("concurrent addToQueue calls do not lose queued entries", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const entries = Array.from({ length: 25 }, (_, index) =>
+      makeEntry({
+        id: `queue-${index + 1}`,
+        flags: [`--flag-${index + 1}`],
+      }),
+    );
+
+    await Promise.all(entries.map((entry) => addToQueue(queuePath, entry)));
+
+    await expect(readQueue(queuePath)).resolves.toEqual(entries);
+  });
+
   it("removeFromQueue removes only matching entry", async () => {
     const queuePath = join(tempDir, "queue.json");
     const first = makeEntry({ id: "queue-1" });
@@ -183,5 +197,26 @@ describe("queue store", () => {
     await writeFile(queuePath, JSON.stringify([{ id: "queue-1", repo: "/repo", planPath: "/plan", flags: "oops", addedAt: "2026-04-03T12:00:00.000Z" }]));
 
     await expect(readQueue(queuePath)).resolves.toEqual([]);
+  });
+
+  it("addToQueue throws and preserves the file when the queue contains malformed entries", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const validEntry = makeEntry({ id: "queue-1" });
+    const malformedFile = JSON.stringify([
+      validEntry,
+      {
+        id: "broken",
+        repo: "/repo",
+        planPath: "/plan",
+        flags: "oops",
+        addedAt: "2026-04-03T12:00:00.000Z",
+      },
+    ]);
+    await writeFile(queuePath, malformedFile);
+
+    await expect(addToQueue(queuePath, makeEntry({ id: "queue-2" }))).rejects.toThrow(
+      `Queue file is corrupt: ${queuePath}`,
+    );
+    await expect(readFile(queuePath, "utf8")).resolves.toBe(malformedFile);
   });
 });
