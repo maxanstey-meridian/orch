@@ -6,6 +6,7 @@ export type DashboardRun = {
   readonly repo: string;
   readonly branch?: string;
   readonly planName?: string;
+  readonly startedAt?: string;
   readonly status: "active" | "dead" | "completed" | "failed";
   readonly sliceProgress: string;
   readonly currentPhase?: PersistedPhase;

@@ -23,11 +23,21 @@ const makeRun = (overrides: Partial<DashboardRun> = {}): DashboardRun => ({
   repo: "/repos/orch",
   branch: "feature/dashboard",
   planName: "Dashboard",
+  startedAt: "2026-04-10T10:00:00.000Z",
   status: "active",
   sliceProgress: "S1/3",
   currentPhase: "review",
   elapsed: "5m",
   pid: 123,
+  groups: [
+    {
+      name: "Foundation",
+      slices: [
+        { number: 1, title: "Registry", status: "done", elapsed: "10m" },
+        { number: 2, title: "Aggregator", status: "active", elapsed: "5m" },
+      ],
+    },
+  ],
   ...overrides,
 });
 
@@ -118,7 +128,7 @@ describe("DashboardApp", () => {
     app.unmount();
   });
 
-  it("switches to the detail placeholder when enter is pressed on a run", async () => {
+  it("switches to the detail view when enter is pressed on an active run", async () => {
     useDashboardDataMock.mockReturnValue({
       model: makeModel({
         active: [makeRun({ id: "run-active" })],
@@ -137,7 +147,36 @@ describe("DashboardApp", () => {
     app.stdin.write("\r");
     await flushEffects();
 
-    expect(app.lastFrame()).toContain("Detail placeholder: run-active");
+    expect(app.lastFrame()).toContain("Plan: Dashboard");
+    expect(app.lastFrame()).toContain("Registry");
+
+    app.unmount();
+  });
+
+  it("switches to the detail view for a completed run", async () => {
+    useDashboardDataMock.mockReturnValue({
+      model: makeModel({
+        active: [makeRun({ id: "run-active" })],
+        completed: [makeRun({ id: "run-done", status: "completed" })],
+      }),
+      loading: false,
+      error: undefined,
+    });
+
+    const app = render(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+
+    app.stdin.write("\u001B[B");
+    await flushEffects();
+    app.stdin.write("\r");
+    await flushEffects();
+
+    expect(app.lastFrame()).toContain("Plan: Dashboard");
+    expect(app.lastFrame()).toContain("Elapsed: 5m");
 
     app.unmount();
   });
@@ -166,11 +205,83 @@ describe("DashboardApp", () => {
     app.unmount();
   });
 
+  it("routes tail from detail with returnTo detail", async () => {
+    useDashboardDataMock.mockReturnValue({
+      model: makeModel({
+        active: [makeRun({ id: "run-active" })],
+      }),
+      loading: false,
+      error: undefined,
+    });
+
+    const app = render(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+
+    app.stdin.write("\r");
+    await flushEffects();
+    await flushEffects();
+    expect(app.lastFrame()).toContain("Plan: Dashboard");
+    app.stdin.write("f");
+    await flushEffects();
+
+    expect(app.lastFrame()).toContain("Tail placeholder: run-active");
+    expect(app.lastFrame()).toContain("Return to: detail");
+
+    app.unmount();
+  });
+
+  it("shows a run ended message and returns to the main view when the selected run disappears", async () => {
+    let hookState = {
+      model: makeModel({
+        active: [makeRun({ id: "run-active" })],
+      }),
+      loading: false,
+      error: undefined as string | undefined,
+    };
+    useDashboardDataMock.mockImplementation(() => hookState);
+
+    const app = render(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+
+    app.stdin.write("\r");
+    await flushEffects();
+    expect(app.lastFrame()).toContain("Plan: Dashboard");
+
+    hookState = {
+      model: makeModel(),
+      loading: false,
+      error: undefined,
+    };
+    app.rerender(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+
+    expect(app.lastFrame()).toContain("Run ended");
+
+    await flushEffects();
+    await flushEffects();
+
+    expect(app.lastFrame()).toContain("Active");
+    expect(app.lastFrame()).not.toContain("Run ended");
+
+    app.unmount();
+  });
+
   it("keeps a deleted queued row hidden and removes it from the queue store", async () => {
     removeFromQueueMock.mockResolvedValue(undefined);
     useDashboardDataMock.mockReturnValue({
       model: makeModel({
-        active: [makeRun({ id: "run-active" })],
         queued: [makeQueueEntry({ id: "queue-entry-456" })],
       }),
       loading: false,
@@ -184,8 +295,6 @@ describe("DashboardApp", () => {
       />,
     );
 
-    app.stdin.write("\u001B[B");
-    await flushEffects();
     expect(app.lastFrame()).toContain("> ○ queue-");
 
     app.stdin.write("d");

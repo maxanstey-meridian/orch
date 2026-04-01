@@ -151,6 +151,7 @@ describe("data aggregator", () => {
       repo: "/repos/active",
       branch: "feature/dashboard",
       planName: "Dashboard",
+      startedAt: "2026-04-10T10:00:00.000Z",
       status: "active",
       sliceProgress: "S1/2",
       currentPhase: "review",
@@ -237,7 +238,39 @@ describe("data aggregator", () => {
     const result = await aggregateDashboard(registryPath, queuePath);
 
     expect(result.active).toHaveLength(1);
+    expect(result.active[0]?.startedAt).toBe("2026-04-10T11:00:00.000Z");
     expect(result.active[0]?.elapsed).toBe("1h");
+
+    vi.useRealTimers();
+  });
+
+  it("run startedAt falls back to the registry value when state startedAt is missing", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
+
+    const registryPath = join(tempDir, "runs.json");
+    const queuePath = join(tempDir, "queue.json");
+    const planPath = join(tempDir, "plan.json");
+    const statePath = join(tempDir, "state.json");
+
+    await writeJson(planPath, makePlan());
+    await writeJson(statePath, {
+      lastCompletedSlice: 1,
+    });
+    await writeRegistry(registryPath, [
+      makeRunEntry({
+        id: "run-registry-started-at",
+        planPath,
+        statePath,
+        startedAt: "2026-04-10T09:30:00.000Z",
+      }),
+    ]);
+
+    const result = await aggregateDashboard(registryPath, queuePath);
+
+    expect(result.active).toHaveLength(1);
+    expect(result.active[0]?.startedAt).toBe("2026-04-10T09:30:00.000Z");
+    expect(result.active[0]?.elapsed).toBe("2h 30m");
 
     vi.useRealTimers();
   });

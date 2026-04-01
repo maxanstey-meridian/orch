@@ -1,6 +1,8 @@
 import { removeFromQueue } from "#infrastructure/queue/queue-store.js";
 import { Box, Text } from "ink";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import type { DashboardRun } from "#domain/dashboard.js";
+import { DetailView } from "#ui/dashboard/detail-view.js";
 import { MainView } from "#ui/dashboard/main-view.js";
 import { useDashboardData } from "#ui/dashboard/use-dashboard-data.js";
 
@@ -13,6 +15,23 @@ export type DashboardAppProps = {
   readonly registryPath: string;
   readonly queuePath: string;
   readonly intervalMs?: number;
+};
+
+const findDetailRun = (runs: readonly DashboardRun[], runId: string): DashboardRun | undefined =>
+  runs.find((run) => run.id === runId);
+
+const RunEndedView = ({ onReturn }: { readonly onReturn: () => void }) => {
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      onReturn();
+    }, 0);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [onReturn]);
+
+  return <Text>Run ended</Text>;
 };
 
 export const DashboardApp = ({
@@ -41,10 +60,24 @@ export const DashboardApp = ({
   }
 
   if (viewState.view === "detail") {
+    const selectedRun = findDetailRun(
+      [...visibleModel.active, ...visibleModel.completed],
+      viewState.runId,
+    );
+    if (selectedRun === undefined) {
+      return <RunEndedView onReturn={() => setViewState({ view: "main" })} />;
+    }
+
     return (
-      <Box flexDirection="column">
-        <Text>{`Detail placeholder: ${viewState.runId}`}</Text>
-      </Box>
+      <DetailView
+        run={selectedRun}
+        onBack={() => {
+          setViewState({ view: "main" });
+        }}
+        onTail={() => {
+          setViewState({ view: "tail", runId: selectedRun.id, returnTo: "detail" });
+        }}
+      />
     );
   }
 
@@ -52,6 +85,7 @@ export const DashboardApp = ({
     return (
       <Box flexDirection="column">
         <Text>{`Tail placeholder: ${viewState.runId}`}</Text>
+        <Text>{`Return to: ${viewState.returnTo}`}</Text>
       </Box>
     );
   }
