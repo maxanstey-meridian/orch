@@ -2,15 +2,25 @@ export type SubcommandResult =
   | { command: "work"; planPath: string; flags: string[] }
   | { command: "dash" }
   | { command: "status"; id?: string; follow?: boolean }
-  | { command: "queue"; action: "add" | "list" | "remove"; planPath?: string; id?: string; flags?: string[] }
+  | { command: "queue"; action: "add"; planPath: string; flags: string[] }
+  | { command: "queue"; action: "list" }
+  | { command: "queue"; action: "remove"; id: string }
   | { command: "plan"; inventoryPath: string; flags: string[] }
   | { command: "legacy"; args: string[] };
 
 export const parseSubcommand = (argv: string[]): SubcommandResult => {
   if (argv[2] === "work") {
+    const planPath = argv[3];
+    if (!planPath || planPath.startsWith("-")) {
+      return {
+        command: "legacy",
+        args: argv.slice(2),
+      };
+    }
+
     return {
       command: "work",
-      planPath: argv[3] ?? "",
+      planPath,
       flags: argv.slice(4),
     };
   }
@@ -33,10 +43,18 @@ export const parseSubcommand = (argv: string[]): SubcommandResult => {
   }
 
   if (argv[2] === "queue" && argv[3] === "add") {
+    const planPath = argv[4];
+    if (!planPath || planPath.startsWith("-")) {
+      return {
+        command: "legacy",
+        args: argv.slice(2),
+      };
+    }
+
     return {
       command: "queue",
       action: "add",
-      planPath: argv[4],
+      planPath,
       flags: argv.slice(5),
     };
   }
@@ -49,17 +67,33 @@ export const parseSubcommand = (argv: string[]): SubcommandResult => {
   }
 
   if (argv[2] === "queue" && argv[3] === "remove") {
+    const id = argv[4];
+    if (!id || id.startsWith("-")) {
+      return {
+        command: "legacy",
+        args: argv.slice(2),
+      };
+    }
+
     return {
       command: "queue",
       action: "remove",
-      id: argv[4],
+      id,
     };
   }
 
   if (argv[2] === "plan") {
+    const inventoryPath = argv[3];
+    if (!inventoryPath || inventoryPath.startsWith("-")) {
+      return {
+        command: "legacy",
+        args: argv.slice(2),
+      };
+    }
+
     return {
       command: "plan",
-      inventoryPath: argv[3] ?? "",
+      inventoryPath,
       flags: argv.slice(4),
     };
   }

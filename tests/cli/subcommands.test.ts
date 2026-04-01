@@ -10,6 +10,13 @@ describe("parseSubcommand", () => {
     });
   });
 
+  it("falls through to legacy for orch work without a plan path", () => {
+    expect(parseSubcommand(["node", "orch", "work"])).toEqual({
+      command: "legacy",
+      args: ["work"],
+    });
+  });
+
   it("parses orch dash as dash command", () => {
     expect(parseSubcommand(["node", "orch", "dash"])).toEqual({
       command: "dash",
@@ -46,6 +53,13 @@ describe("parseSubcommand", () => {
     });
   });
 
+  it("falls through to legacy for orch queue add without a plan path", () => {
+    expect(parseSubcommand(["node", "orch", "queue", "add"])).toEqual({
+      command: "legacy",
+      args: ["queue", "add"],
+    });
+  });
+
   it("parses orch queue list", () => {
     expect(parseSubcommand(["node", "orch", "queue", "list"])).toEqual({
       command: "queue",
@@ -61,11 +75,25 @@ describe("parseSubcommand", () => {
     });
   });
 
+  it("falls through to legacy for orch queue remove without an id", () => {
+    expect(parseSubcommand(["node", "orch", "queue", "remove"])).toEqual({
+      command: "legacy",
+      args: ["queue", "remove"],
+    });
+  });
+
   it("parses orch plan inventory.md --auto", () => {
     expect(parseSubcommand(["node", "orch", "plan", "inventory.md", "--auto"])).toEqual({
       command: "plan",
       inventoryPath: "inventory.md",
       flags: ["--auto"],
+    });
+  });
+
+  it("falls through to legacy for orch plan without an inventory path", () => {
+    expect(parseSubcommand(["node", "orch", "plan"])).toEqual({
+      command: "legacy",
+      args: ["plan"],
     });
   });
 
