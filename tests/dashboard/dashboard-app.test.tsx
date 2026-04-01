@@ -4,6 +4,7 @@ import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
 import type { QueueEntry } from "#domain/queue.js";
+import { createSupervisor } from "#infrastructure/dashboard/supervisor.js";
 import { removeFromQueue } from "#infrastructure/queue/queue-store.js";
 import { DashboardApp } from "#ui/dashboard/dashboard-app.js";
 import { useDashboardData } from "#ui/dashboard/use-dashboard-data.js";
@@ -14,6 +15,27 @@ vi.mock("#ui/dashboard/use-dashboard-data.js", () => ({
 
 vi.mock("#infrastructure/queue/queue-store.js", () => ({
   removeFromQueue: vi.fn(),
+}));
+
+const supervisorState = vi.hoisted(() => ({
+  latest: undefined as
+    | {
+        readonly start: ReturnType<typeof vi.fn>;
+        readonly stop: ReturnType<typeof vi.fn>;
+      }
+    | undefined,
+}));
+
+vi.mock("#infrastructure/dashboard/supervisor.js", () => ({
+  createSupervisor: vi.fn(() => {
+    const supervisor = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      isRunning: false,
+    };
+    supervisorState.latest = supervisor;
+    return supervisor;
+  }),
 }));
 
 const tailViewState = vi.hoisted(() => ({
@@ -60,6 +82,7 @@ vi.mock("#ui/dashboard/queue-prompt.js", () => ({
 
 const useDashboardDataMock = vi.mocked(useDashboardData);
 const removeFromQueueMock = vi.mocked(removeFromQueue);
+const createSupervisorMock = vi.mocked(createSupervisor);
 
 const makeRun = (overrides: Partial<DashboardRun> = {}): DashboardRun => ({
   id: "run-1",
@@ -141,6 +164,7 @@ describe("DashboardApp", () => {
     vi.clearAllMocks();
     tailViewState.latestProps = undefined;
     queuePromptState.latestProps = undefined;
+    supervisorState.latest = undefined;
   });
 
   it("renders a loading state while the dashboard hook is loading", () => {
@@ -191,6 +215,50 @@ describe("DashboardApp", () => {
 
     expect(app.lastFrame()).toContain("Active");
     expect(app.lastFrame()).toContain("run-ac");
+
+    app.unmount();
+  });
+
+  it("starts the supervisor on mount and stops it on unmount", () => {
+    useDashboardDataMock.mockReturnValue(makeHookResult());
+
+    const app = render(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+
+    expect(createSupervisorMock).toHaveBeenCalledWith({
+      registryPath: "/tmp/runs.json",
+      queuePath: "/tmp/queue.json",
+      orchBin: expect.stringContaining("/dist/main.js"),
+    });
+    expect(supervisorState.latest?.start).toHaveBeenCalledTimes(1);
+
+    app.unmount();
+
+    expect(supervisorState.latest?.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not recreate the supervisor on a rerender with the same paths", () => {
+    useDashboardDataMock.mockReturnValue(makeHookResult());
+
+    const app = render(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+
+    app.rerender(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+
+    expect(createSupervisorMock).toHaveBeenCalledTimes(1);
 
     app.unmount();
   });
