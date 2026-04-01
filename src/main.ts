@@ -17,7 +17,8 @@
 
 import { readFileSync, mkdirSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
-import { resolve } from "path";
+import { homedir } from "os";
+import { join, resolve } from "path";
 import { resolveAllAgentConfigs } from "#domain/agent-config.js";
 import type { OrchestratorConfig } from "#domain/config.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
@@ -39,6 +40,7 @@ import {
   doGeneratePlan,
 } from "#infrastructure/plan/plan-generator.js";
 import { parsePlan } from "#infrastructure/plan/plan-parser.js";
+import { deregisterRun, registerRun } from "#infrastructure/registry/run-registry.js";
 import {
   loadState,
   clearState,
@@ -51,6 +53,46 @@ import { runInit, profileToMarkdown } from "#ui/init.js";
 import { createContainer } from "./composition-root.js";
 
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
+
+type RegisterRunLifecycleOptions = {
+  registryPath?: string;
+  planId: string;
+  cwd: string;
+  planPath: string;
+  statePath: string;
+  branch?: string;
+};
+
+export const registerRunLifecycle = async ({
+  registryPath = join(homedir(), ".orch", "runs.json"),
+  planId,
+  cwd,
+  planPath,
+  statePath,
+  branch,
+}: RegisterRunLifecycleOptions): Promise<() => Promise<void>> => {
+  let registered = false;
+
+  await registerRun(registryPath, {
+    id: planId,
+    pid: process.pid,
+    repo: cwd,
+    planPath,
+    statePath,
+    branch,
+    startedAt: new Date().toISOString(),
+  });
+  registered = true;
+
+  return async () => {
+    if (!registered) {
+      return;
+    }
+
+    await deregisterRun(registryPath, planId);
+    registered = false;
+  };
+};
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
@@ -252,105 +294,122 @@ const main = async () => {
   });
   const interactive = !auto && isTTY;
 
+  const registryPath = join(homedir(), ".orch", "runs.json");
+  const deregisterSelf = await registerRunLifecycle({
+    registryPath,
+    planId: activePlanId,
+    cwd,
+    planPath,
+    statePath: stateFile,
+    branch: branchName,
+  });
+
   // 7. Signal handlers + cleanup
   // cleanup is set to hud.teardown initially, then upgraded to orch.dispose()
   // after the container is created (kills agents + tears down HUD).
   let cleanup = () => hud.teardown();
-  process.on("SIGINT", () => {
+  const exitWithCleanup = async (code: number): Promise<never> => {
     cleanup();
-    process.exit(130);
+    await deregisterSelf();
+    process.exit(code);
+  };
+  process.on("SIGINT", () => {
+    void exitWithCleanup(130);
   });
   process.on("SIGTERM", () => {
-    cleanup();
-    process.exit(143);
+    void exitWithCleanup(143);
   });
 
-  // 8. Validate group filter
-  const startIdx = groupFilter
-    ? groups.findIndex((g) => g.name.toLowerCase() === groupFilter.toLowerCase())
-    : 0;
-
-  if (groupFilter && startIdx === -1) {
-    console.error(`No group "${groupFilter}". Available: ${groups.map((g) => g.name).join(", ")}`);
-    cleanup();
-    process.exit(1);
-  }
-
-  // Stash unrelated working tree changes (skip if using worktree — it's clean by definition)
-  const didStash = skipStash ? false : await stashBackup(cwd);
-  if (didStash) {
-    log(`${ts()} ${a.dim}Backed up working tree to git stash${a.reset}`);
-  }
-  log(`${ts()} ${a.dim}Initialising agents — this may take a few minutes...${a.reset}`);
-
-  const planContent = await readFile(planPath, "utf-8");
-
-  // 9. Composition root — wire all ports + use case
-  const orchestratorConfig = {
-    cwd: effectiveCwd,
-    planPath,
-    planContent,
-    brief,
-    auto,
-    reviewThreshold:
-      rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),
-    maxReviewCycles: orchrc.config.maxReviewCycles ?? 3,
-    maxReplans: orchrc.config.maxReplans ?? 2,
-    stateFile,
-    tddSkill,
-    reviewSkill,
-    verifySkill,
-    gapDisabled,
-    planDisabled,
-    tddRules: orchrc.rules.tdd,
-    defaultProvider: provider,
-    agentConfig,
-    reviewRules: orchrc.rules.review,
-  } satisfies OrchestratorConfig;
-
-  const container = createContainer(orchestratorConfig, hud);
-  const orch = container.resolve("runOrchestration");
-  cleanup = () => orch.dispose();
-
-  // 10. Banner + run
-  const remaining = groups.slice(startIdx);
-
   try {
-    await orch.execute(remaining, {
-      onReady: (info) =>
-        printStartupBanner(log, {
-          planPath,
-          brief,
-          auto,
-          interactive,
-          groupFilter,
-          worktree: worktreeInfo,
-          orchrcSummary,
-          tddSessionId: info.tddSessionId,
-          reviewSessionId: info.reviewSessionId,
-          groups: remaining,
-        }),
-    });
+    // 8. Validate group filter
+    const startIdx = groupFilter
+      ? groups.findIndex((g) => g.name.toLowerCase() === groupFilter.toLowerCase())
+      : 0;
+
+    if (groupFilter && startIdx === -1) {
+      console.error(`No group "${groupFilter}". Available: ${groups.map((g) => g.name).join(", ")}`);
+      await exitWithCleanup(1);
+    }
+
+    // Stash unrelated working tree changes (skip if using worktree — it's clean by definition)
+    const didStash = skipStash ? false : await stashBackup(cwd);
+    if (didStash) {
+      log(`${ts()} ${a.dim}Backed up working tree to git stash${a.reset}`);
+    }
+    log(`${ts()} ${a.dim}Initialising agents — this may take a few minutes...${a.reset}`);
+
+    const planContent = await readFile(planPath, "utf-8");
+
+    // 9. Composition root — wire all ports + use case
+    const orchestratorConfig = {
+      cwd: effectiveCwd,
+      planPath,
+      planContent,
+      brief,
+      auto,
+      reviewThreshold:
+        rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),
+      maxReviewCycles: orchrc.config.maxReviewCycles ?? 3,
+      maxReplans: orchrc.config.maxReplans ?? 2,
+      stateFile,
+      tddSkill,
+      reviewSkill,
+      verifySkill,
+      gapDisabled,
+      planDisabled,
+      tddRules: orchrc.rules.tdd,
+      defaultProvider: provider,
+      agentConfig,
+      reviewRules: orchrc.rules.review,
+    } satisfies OrchestratorConfig;
+
+    const container = createContainer(orchestratorConfig, hud);
+    const orch = container.resolve("runOrchestration");
+    cleanup = () => orch.dispose();
+
+    // 10. Banner + run
+    const remaining = groups.slice(startIdx);
+
+    try {
+      await orch.execute(remaining, {
+        onReady: (info) =>
+          printStartupBanner(log, {
+            planPath,
+            brief,
+            auto,
+            interactive,
+            groupFilter,
+            worktree: worktreeInfo,
+            orchrcSummary,
+            tddSessionId: info.tddSessionId,
+            reviewSessionId: info.reviewSessionId,
+            groups: remaining,
+          }),
+      });
+    } catch (err) {
+      if (err instanceof CreditExhaustedError) {
+        log(`\n${ts()} ${a.red}Credit exhaustion detected: ${err.message}${a.reset}`);
+        await exitWithCleanup(2);
+      }
+      if (err instanceof IncompleteRunError) {
+        log(`\n${ts()} ${a.red}${err.message}${a.reset}`);
+        await exitWithCleanup(1);
+      }
+      throw err;
+    }
+
+    // 11. Cleanup
+    logSection(log, `${a.green}✅ All groups complete + final review done${a.reset}`);
+    const status = await getStatus(effectiveCwd);
+    log(`\n${status}`);
+    cleanup();
+    await deregisterSelf();
+    await clearState(stateFile);
   } catch (err) {
-    if (err instanceof CreditExhaustedError) {
-      log(`\n${ts()} ${a.red}Credit exhaustion detected: ${err.message}${a.reset}`);
-      cleanup();
-      process.exit(2);
-    }
-    if (err instanceof IncompleteRunError) {
-      log(`\n${ts()} ${a.red}${err.message}${a.reset}`);
-      cleanup();
-      process.exit(1);
-    }
+    cleanup();
+    await deregisterSelf();
     throw err;
   }
-
-  // 11. Cleanup
-  logSection(log, `${a.green}✅ All groups complete + final review done${a.reset}`);
-  const status = await getStatus(effectiveCwd);
-  log(`\n${status}`);
-  cleanup();
-  await clearState(stateFile);
 };
 
 const isEntrypoint =
