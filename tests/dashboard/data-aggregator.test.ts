@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +9,17 @@ import { writeRegistry } from "#infrastructure/registry/run-registry.js";
 
 const writeJson = async (filePath: string, value: unknown): Promise<void> => {
   await writeFile(filePath, JSON.stringify(value, null, 2));
+};
+
+const listFiles = async (rootPath: string): Promise<string[]> => {
+  const entries = await readdir(rootPath, { withFileTypes: true });
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const entryPath = join(rootPath, entry.name);
+      return entry.isDirectory() ? listFiles(entryPath) : [entryPath];
+    }),
+  );
+  return files.flat();
 };
 
 const makePlan = () => ({
@@ -85,6 +96,8 @@ describe("data aggregator", () => {
     expect(formatElapsed("2026-04-10T11:59:30.000Z")).toBe("<1m");
     expect(formatElapsed("2026-04-10T11:58:30.000Z")).toBe("1m");
     expect(formatElapsed("2026-04-10T10:58:59.000Z")).toBe("1h 1m");
+    expect(formatElapsed("2026-04-09T12:00:00.000Z")).toBe("1d");
+    expect(formatElapsed("2026-04-08T07:00:00.000Z")).toBe("2d 5h");
 
     vi.useRealTimers();
   });
@@ -194,6 +207,37 @@ describe("data aggregator", () => {
         ],
       },
     ]);
+
+    vi.useRealTimers();
+  });
+
+  it("active run elapsed prefers state startedAt over registry startedAt", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
+
+    const registryPath = join(tempDir, "runs.json");
+    const queuePath = join(tempDir, "queue.json");
+    const planPath = join(tempDir, "plan.json");
+    const statePath = join(tempDir, "state.json");
+
+    await writeJson(planPath, makePlan());
+    await writeJson(statePath, {
+      startedAt: "2026-04-10T11:00:00.000Z",
+      lastCompletedSlice: 1,
+    });
+    await writeRegistry(registryPath, [
+      makeRunEntry({
+        id: "run-state-started-at-active",
+        planPath,
+        statePath,
+        startedAt: "2026-04-10T08:00:00.000Z",
+      }),
+    ]);
+
+    const result = await aggregateDashboard(registryPath, queuePath);
+
+    expect(result.active).toHaveLength(1);
+    expect(result.active[0]?.elapsed).toBe("1h");
 
     vi.useRealTimers();
   });
@@ -314,6 +358,42 @@ describe("data aggregator", () => {
     vi.useRealTimers();
   });
 
+  it("completed run elapsed prefers state startedAt over registry startedAt", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
+
+    const registryPath = join(tempDir, "runs.json");
+    const queuePath = join(tempDir, "queue.json");
+    const planPath = join(tempDir, "plan.json");
+    const statePath = join(tempDir, "state.json");
+
+    await writeJson(planPath, makePlan());
+    await writeJson(statePath, {
+      startedAt: "2026-04-10T11:00:00.000Z",
+      lastCompletedSlice: 2,
+    });
+    await writeRegistry(registryPath, [
+      makeRunEntry({
+        id: "run-state-started-at-completed",
+        pid: 999999,
+        planPath,
+        statePath,
+        startedAt: "2026-04-10T07:00:00.000Z",
+      }),
+    ]);
+
+    const result = await aggregateDashboard(registryPath, queuePath);
+
+    expect(result.completed).toHaveLength(1);
+    expect(result.completed[0]).toMatchObject({
+      id: "run-state-started-at-completed",
+      status: "completed",
+      elapsed: "1h",
+    });
+
+    vi.useRealTimers();
+  });
+
   it("dead PID is classified as failed when completed slice count exceeds plan total", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
@@ -423,6 +503,38 @@ describe("data aggregator", () => {
 
     expect(result.active.map((run) => run.id)).toEqual(["active-1", "active-2"]);
     expect(result.completed.map((run) => run.id)).toEqual(["dead-2", "dead-1"]);
+
+    vi.useRealTimers();
+  });
+
+  it("completed run remains visible on the second poll", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
+
+    const registryPath = join(tempDir, "runs.json");
+    const queuePath = join(tempDir, "queue.json");
+    const planPath = join(tempDir, "plan.json");
+    const statePath = join(tempDir, "state.json");
+
+    await writeJson(planPath, makePlan());
+    await writeJson(statePath, {
+      startedAt: "2026-04-10T10:00:00.000Z",
+      lastCompletedSlice: 2,
+    });
+    await writeRegistry(registryPath, [
+      makeRunEntry({
+        id: "run-second-poll",
+        pid: 999999,
+        planPath,
+        statePath,
+      }),
+    ]);
+
+    const firstResult = await aggregateDashboard(registryPath, queuePath);
+    const secondResult = await aggregateDashboard(registryPath, queuePath);
+
+    expect(firstResult.completed.map((run) => run.id)).toEqual(["run-second-poll"]);
+    expect(secondResult.completed.map((run) => run.id)).toEqual(["run-second-poll"]);
 
     vi.useRealTimers();
   });
@@ -585,5 +697,24 @@ describe("data aggregator", () => {
     expect(result.completed[0]?.groups).toBeUndefined();
 
     vi.useRealTimers();
+  });
+
+  it("dashboard refresh path consumes aggregateDashboard", async () => {
+    const srcRoot = join(process.cwd(), "src");
+    const files = await listFiles(srcRoot);
+    const consumerFiles: string[] = [];
+
+    for (const filePath of files) {
+      if (filePath.endsWith("src/infrastructure/dashboard/data-aggregator.ts")) {
+        continue;
+      }
+
+      const content = await readFile(filePath, "utf8");
+      if (content.includes("aggregateDashboard")) {
+        consumerFiles.push(filePath);
+      }
+    }
+
+    expect(consumerFiles).not.toEqual([]);
   });
 });
