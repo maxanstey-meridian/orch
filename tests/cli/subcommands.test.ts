@@ -141,4 +141,52 @@ describe("parseSubcommand", () => {
       action: "promote",
     });
   });
+
+  it("treats dash-prefixed operands as missing for work, queue add, queue remove, and plan", () => {
+    expect(parseSubcommand(["node", "orch", "work", "--auto"])).toEqual({
+      command: "work",
+      error: "missing-plan-path",
+    });
+    expect(parseSubcommand(["node", "orch", "queue", "add", "--auto"])).toEqual({
+      command: "queue",
+      action: "add",
+      error: "missing-plan-path",
+    });
+    expect(parseSubcommand(["node", "orch", "queue", "remove", "-f"])).toEqual({
+      command: "queue",
+      action: "remove",
+      error: "missing-id",
+    });
+    expect(parseSubcommand(["node", "orch", "plan", "--auto"])).toEqual({
+      command: "plan",
+      error: "missing-inventory-path",
+    });
+  });
+
+  it("preserves all trailing flags for work, queue add, and plan in argv order", () => {
+    expect(
+      parseSubcommand(["node", "orch", "work", "plan.json", "--auto", "--group", "Auth"]),
+    ).toEqual({
+      command: "work",
+      planPath: "plan.json",
+      flags: ["--auto", "--group", "Auth"],
+    });
+
+    expect(
+      parseSubcommand(["node", "orch", "queue", "add", "plan.json", "--auto", "--branch", "feat"]),
+    ).toEqual({
+      command: "queue",
+      action: "add",
+      planPath: "plan.json",
+      flags: ["--auto", "--branch", "feat"],
+    });
+
+    expect(
+      parseSubcommand(["node", "orch", "plan", "inventory.md", "--provider", "codex", "--auto"]),
+    ).toEqual({
+      command: "plan",
+      inventoryPath: "inventory.md",
+      flags: ["--provider", "codex", "--auto"],
+    });
+  });
 });

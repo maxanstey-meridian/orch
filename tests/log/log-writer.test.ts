@@ -20,6 +20,8 @@ describe("log writer", () => {
     const logPath = join(tempDir, "plan.log");
     const writer = new FsLogWriter(logPath);
 
+    expect(existsSync(logPath)).toBe(false);
+
     writer.write("ORCH", "starting");
     await writer.close();
 
@@ -62,6 +64,23 @@ describe("log writer", () => {
     expect(content).toContain("[ORCH] slice 1\n");
     expect(content).toContain("[TDD] slice 2\n");
     expect(content.indexOf("[ORCH] slice 1\n")).toBeLessThan(content.indexOf("[TDD] slice 2\n"));
+  });
+
+  it("reopens an existing log file and appends instead of truncating it", async () => {
+    const logPath = join(tempDir, "plan.log");
+    const firstWriter = new FsLogWriter(logPath);
+
+    firstWriter.write("ORCH", "first");
+    await firstWriter.close();
+
+    const secondWriter = new FsLogWriter(logPath);
+    secondWriter.write("REVIEW", "second");
+    await secondWriter.close();
+
+    const content = await readFile(logPath, "utf8");
+    expect(content).toContain("[ORCH] first\n");
+    expect(content).toContain("[REVIEW] second\n");
+    expect(content.indexOf("[ORCH] first\n")).toBeLessThan(content.indexOf("[REVIEW] second\n"));
   });
 
   it("close flushes and ends stream", async () => {
