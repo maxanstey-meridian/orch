@@ -19,6 +19,7 @@
 import { readFileSync, mkdirSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { resolve } from "path";
+import { resolveAllAgentConfigs } from "#domain/agent-config.js";
 import type { OrchestratorConfig } from "#domain/config.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
 import { parseBranchFlag, parseProviderFlag } from "#infrastructure/cli/cli-args.js";
@@ -302,7 +303,8 @@ const main = async () => {
     gapDisabled,
     planDisabled,
     tddRules: orchrc.rules.tdd,
-    provider,
+    defaultProvider: provider,
+    agentConfig: resolveAllAgentConfigs(orchrc.agents, provider),
     reviewRules: orchrc.rules.review,
   } satisfies OrchestratorConfig;
 

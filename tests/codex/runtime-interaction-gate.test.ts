@@ -8,6 +8,7 @@ import {
   InkRuntimeInteractionGate,
 } from '../../src/ui/ink-runtime-interaction-gate.js';
 import { runtimeInteractionGateFactory } from '../../src/infrastructure/factories.js';
+import { AGENT_DEFAULTS } from '../../src/domain/agent-config.js';
 import type { OrchestratorConfig } from '../../src/domain/config.js';
 import type { Hud } from '../../src/ui/hud.js';
 
@@ -118,7 +119,8 @@ describe('runtimeInteractionGateFactory', () => {
     gapDisabled: false,
     planDisabled: false,
     maxReplans: 0,
-    provider: 'claude' as const,
+    defaultProvider: 'claude' as const,
+    agentConfig: AGENT_DEFAULTS,
   } satisfies OrchestratorConfig;
 
   it('returns SilentRuntimeInteractionGate when auto is true', () => {

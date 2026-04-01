@@ -20,7 +20,7 @@ export const agentSpawnerFactory = (
   config: OrchestratorConfig,
   runtimeInteractionGate: RuntimeInteractionGate,
 ) => {
-  switch (config.provider) {
+  switch (config.defaultProvider) {
     case "claude":
       return new ClaudeAgentSpawner(
         { tdd: config.tddSkill, review: config.reviewSkill, verify: config.verifySkill },

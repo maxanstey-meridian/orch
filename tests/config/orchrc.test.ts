@@ -118,6 +118,31 @@ describe("loadOrchrConfig", () => {
 
     expect(() => loadOrchrConfig("/fake")).toThrow("maxReplans");
   });
+
+  it("accepts valid agents config", () => {
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({ agents: { tdd: "codex", plan: "claude:opus" } }),
+    );
+
+    const result = loadOrchrConfig("/fake");
+    expect(result.agents).toEqual({ tdd: "codex", plan: "claude:opus" });
+  });
+
+  it("rejects invalid agent config value", () => {
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({ agents: { tdd: "invalid" } }),
+    );
+
+    expect(() => loadOrchrConfig("/fake")).toThrow("Invalid .orchrc.json");
+  });
+
+  it("rejects unknown role in agents", () => {
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({ agents: { unknown: "claude" } }),
+    );
+
+    expect(() => loadOrchrConfig("/fake")).toThrow("Invalid .orchrc.json");
+  });
 });
 
 describe("resolveOrchrConfig", () => {
@@ -249,6 +274,13 @@ describe("resolveOrchrConfig", () => {
     config.config = { maxReplans: 1 };
     const summary = buildOrchrSummary(config);
     expect(summary).toBe("review: custom, maxReplans: 1");
+  });
+
+  it("buildOrchrSummary includes agent overrides", () => {
+    const config = resolveOrchrConfig({ agents: { tdd: "codex", plan: "claude:opus" } }, "/fake");
+    const summary = buildOrchrSummary(config);
+    expect(summary).toContain("tdd: codex");
+    expect(summary).toContain("plan: claude:opus");
   });
 
   it("resolveSkillValue returns built-in for default, null for disabled, custom content for content", () => {

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { AGENT_DEFAULTS } from "#domain/agent-config.js";
 import type { OrchestratorConfig } from "#domain/config.js";
 
 describe("OrchestratorConfig", () => {
@@ -18,7 +19,8 @@ describe("OrchestratorConfig", () => {
       gapDisabled: false,
       planDisabled: false,
       maxReplans: 2,
-      provider: "claude",
+      defaultProvider: "claude",
+      agentConfig: AGENT_DEFAULTS,
     };
     expect(config.cwd).toBe("/tmp");
   });
@@ -39,7 +41,8 @@ describe("OrchestratorConfig", () => {
       gapDisabled: true,
       planDisabled: true,
       maxReplans: 5,
-      provider: "claude",
+      defaultProvider: "claude",
+      agentConfig: AGENT_DEFAULTS,
       tddRules: "custom rules",
       reviewRules: "custom review rules",
     };

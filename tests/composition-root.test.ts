@@ -11,6 +11,7 @@ vi.mock("../src/infrastructure/claude/claude-agent-factory.js", () => ({
   ),
 }));
 
+import { AGENT_DEFAULTS } from "#domain/agent-config.js";
 import type { OrchestratorConfig } from "#domain/config.js";
 import { RunOrchestration } from "#application/run-orchestration.js";
 
@@ -29,7 +30,8 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   gapDisabled: false,
   planDisabled: false,
   maxReplans: 2,
-  provider: "claude",
+  defaultProvider: "claude",
+  agentConfig: AGENT_DEFAULTS,
   tddRules: "custom tdd",
   reviewRules: "custom review",
 });

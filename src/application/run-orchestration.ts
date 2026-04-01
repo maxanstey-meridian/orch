@@ -847,7 +847,7 @@ export class RunOrchestration {
     if (!diff) {
       return FULL_TRIAGE;
     }
-    if (this.config.provider === "codex") {
+    if (this.config.defaultProvider === "codex") {
       return FULL_TRIAGE;
     }
 

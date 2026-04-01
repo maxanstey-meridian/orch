@@ -1,3 +1,6 @@
+import type { AgentRole } from "./agent-types.js";
+import type { ResolvedAgentConfig } from "./agent-config.js";
+
 export type Provider = "claude" | "codex";
 
 export type OrchestratorConfig = {
@@ -15,7 +18,8 @@ export type OrchestratorConfig = {
   readonly gapDisabled: boolean;
   readonly planDisabled: boolean;
   readonly maxReplans: number;
-  readonly provider: Provider;
+  readonly defaultProvider: Provider;
+  readonly agentConfig: Record<AgentRole, ResolvedAgentConfig>;
   readonly tddRules?: string;
   readonly reviewRules?: string;
 };

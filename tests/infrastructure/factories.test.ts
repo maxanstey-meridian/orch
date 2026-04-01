@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { AGENT_DEFAULTS } from "#domain/agent-config.js";
 import type { OrchestratorConfig } from "#domain/config.js";
 import type { Hud } from "#ui/hud.js";
 
@@ -45,7 +46,8 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   gapDisabled: false,
   planDisabled: false,
   maxReplans: 2,
-  provider: "claude",
+  defaultProvider: "claude",
+  agentConfig: AGENT_DEFAULTS,
   tddRules: "custom tdd",
   reviewRules: "custom review",
   ...overrides,
@@ -90,7 +92,7 @@ describe("agentSpawnerFactory", () => {
     const { CodexAgentSpawner } = await import(
       "../../src/infrastructure/codex/codex-agent-spawner.js"
     );
-    const config = makeConfig({ provider: "codex" });
+    const config = makeConfig({ defaultProvider: "codex" });
     const result = agentSpawnerFactory(config, dummyGate);
     expect(result).toBeInstanceOf(CodexAgentSpawner);
   });
