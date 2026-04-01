@@ -440,8 +440,6 @@ export const main = async (runtime: MainRuntime = {}) => {
     if (didStash) {
       log(`${ts()} ${a.dim}Backed up working tree to git stash${a.reset}`);
     }
-    const planLogPath = logPathForPlan(orchDir, activePlanId);
-    log(`${ts()} ${a.dim}Log file: ${planLogPath}${a.reset}`);
     log(`${ts()} ${a.dim}Initialising agents — this may take a few minutes...${a.reset}`);
 
     const planContent = await readFile(planPath, "utf-8");
@@ -458,7 +456,7 @@ export const main = async (runtime: MainRuntime = {}) => {
       maxReviewCycles: orchrc.config.maxReviewCycles ?? 3,
       maxReplans: orchrc.config.maxReplans ?? 2,
       stateFile,
-      logPath: planLogPath,
+      logPath: logPathForPlan(orchDir, activePlanId),
       tddSkill,
       reviewSkill,
       verifySkill,
