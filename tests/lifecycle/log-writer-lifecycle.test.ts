@@ -37,6 +37,27 @@ describe("log writer lifecycle", () => {
     expect(logWriter.lines).toContainEqual({ badge: "ORCH", text: "Completed slice 1" });
   });
 
+  it("phase changes are written to log writer", async () => {
+    const { uc, hud, spawner, git, logWriter } = createTestHarness({
+      config: { gapDisabled: true },
+    });
+
+    git.setHasChanges(true);
+    spawner.onNextSpawn("plan", okResult({ assistantText: "plan", planText: "plan" }));
+    hud.queueAskAnswer("y");
+    spawner.onNextSpawn("tdd",
+      okResult({ assistantText: "implemented slice 1" }),
+      okResult({ assistantText: "summary done" }),
+    );
+    spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
+    spawner.onNextSpawn("verify", okResult({ assistantText: "### VERIFY_RESULT\n**Status:** PASS\n" }));
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+
+    await uc.execute([makeGroup("G1", [makeSlice(1)])]);
+
+    expect(logWriter.lines).toContainEqual({ badge: "ORCH", text: "Entered phase tdd for slice 1" });
+  });
+
   it("log writer is closed after execute completes", async () => {
     const { uc, hud, spawner, git, logWriter } = createTestHarness({
       config: { gapDisabled: true },
@@ -77,5 +98,23 @@ describe("log writer lifecycle", () => {
     await uc.execute([makeGroup("G1", [makeSlice(1)])]);
 
     expect(logWriter.lines).toContainEqual({ badge: "tdd", text: "streamed tdd output" });
+  });
+
+  it("errors are written to log writer", async () => {
+    const { uc, git, logWriter } = createTestHarness({
+      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      auto: true,
+    });
+
+    git.captureRef = async () => {
+      throw new Error("capture failed");
+    };
+
+    await expect(uc.execute([makeGroup("G1", [makeSlice(1)])])).rejects.toThrow("capture failed");
+
+    expect(logWriter.lines).toContainEqual({
+      badge: "ORCH",
+      text: "Execution failed: capture failed",
+    });
   });
 });
