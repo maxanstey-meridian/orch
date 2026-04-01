@@ -116,6 +116,27 @@ const createTestSupervisor = (): Supervisor => {
 };
 
 describe("createSupervisor", () => {
+  it("passes a queued branch through to the spawned work command", async () => {
+    await addToQueue(
+      queuePath,
+      makeQueueEntry({
+        branch: "feature/dashboard",
+        flags: [],
+      }),
+    );
+
+    const supervisor = createTestSupervisor();
+
+    supervisor.start();
+    await waitForExpectation(() => {
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+    });
+
+    const spawnedArgs = spawnMock.mock.calls[0]?.[1] ?? [];
+    expect(spawnedArgs).toContain("--branch");
+    expect(spawnedArgs).toContain("feature/dashboard");
+  });
+
   it("dequeues and spawns a child process when below the concurrency limit", async () => {
     await addToQueue(queuePath, makeQueueEntry());
 
@@ -190,6 +211,45 @@ describe("createSupervisor", () => {
     ]);
   });
 
+  it("leaves the queued entry in place when spawning the child throws", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await addToQueue(queuePath, makeQueueEntry());
+    spawnMock.mockImplementationOnce(() => {
+      throw new Error("spawn failed");
+    });
+
+    const supervisor = createTestSupervisor();
+
+    supervisor.start();
+    await waitForExpectation(() => {
+      expect(errorSpy).toHaveBeenCalled();
+    });
+
+    expect(await readQueue(queuePath)).toEqual([makeQueueEntry()]);
+  });
+
+  it("requeues the entry when the spawned child emits an error", async () => {
+    await addToQueue(queuePath, makeQueueEntry());
+
+    const supervisor = createTestSupervisor();
+
+    supervisor.start();
+    await waitForExpectation(() => {
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+    });
+    const firstChild = spawnMock.mock.results[0]?.value as unknown as FakeChildProcess;
+
+    let emittedError: unknown;
+    try {
+      firstChild.emit("error", new Error("child failed to launch"));
+    } catch (error) {
+      emittedError = error;
+    }
+
+    expect(emittedError).toBeUndefined();
+    expect(await readQueue(queuePath)).toEqual([makeQueueEntry()]);
+  });
+
   it("does not over-dequeue on an interval tick while a spawned child is not yet in the registry", async () => {
     vi.useFakeTimers({
       toFake: ["setInterval", "clearInterval"],
@@ -210,6 +270,32 @@ describe("createSupervisor", () => {
     expect(await readQueue(queuePath)).toEqual([
       makeQueueEntry({ id: "queue-2", planPath: "/plans/two.json" }),
     ]);
+  });
+
+  it("does not spawn after stop is called while a poll is already in flight", async () => {
+    await addToQueue(queuePath, makeQueueEntry());
+    let resolvePrune:
+      | ((value: { alive: RunEntry[]; dead: RunEntry[] }) => void)
+      | undefined;
+    pruneDeadEntriesMock.mockImplementationOnce(
+      () =>
+        new Promise((resolvePromise) => {
+          resolvePrune = resolvePromise;
+        }),
+    );
+
+    const supervisor = createTestSupervisor();
+
+    supervisor.start();
+    await Promise.resolve();
+    supervisor.stop();
+    resolvePrune?.({ alive: [], dead: [] });
+    await new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, 20);
+    });
+
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(await readQueue(queuePath)).toEqual([makeQueueEntry()]);
   });
 
   it("stop clears the polling interval", async () => {

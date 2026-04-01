@@ -10,6 +10,28 @@ import { loadState, saveState, clearState, statePathForPlan } from "#infrastruct
 import { resolvePlanId } from "#infrastructure/plan/plan-generator.js";
 import { logPathForPlan } from "#infrastructure/log/log-writer.js";
 
+const fsPromisesMockState = vi.hoisted(() => ({
+  readFileImpl: undefined as typeof import("fs/promises").readFile | undefined,
+}));
+
+async function mockFsPromisesModule() {
+  const actual = await vi.importActual<typeof import("fs/promises")>("fs/promises");
+
+  return {
+    ...actual,
+    readFile: ((...args: Parameters<typeof actual.readFile>) => {
+      if (fsPromisesMockState.readFileImpl !== undefined) {
+        return fsPromisesMockState.readFileImpl(...args);
+      }
+
+      return actual.readFile(...args);
+    }) satisfies typeof actual.readFile,
+  };
+}
+
+vi.mock("fs/promises", mockFsPromisesModule);
+vi.mock("node:fs/promises", mockFsPromisesModule);
+
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
 const MINIMAL_PLAN = `## Group: Test
@@ -26,6 +48,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  fsPromisesMockState.readFileImpl = undefined;
   await rm(tempDir, { recursive: true });
 });
 
@@ -387,6 +410,94 @@ describe("subcommand routing", () => {
     expect(output).toContain("Phase: verify");
     expect(output).toContain("Foundation");
     expect(output).toContain("active S2 Queue 7m");
+    expect(mocks.assertGitRepo).not.toHaveBeenCalled();
+  });
+
+  it("status with a queued id prints queued entry details", async () => {
+    const { main, mocks } = await loadMainWithSubcommandMocks();
+    mocks.aggregateDashboard.mockResolvedValue({
+      active: [],
+      queued: [
+        {
+          id: "queue-1",
+          repo: "/repos/queued",
+          planPath: "/plans/queued.json",
+          branch: "feature/queued",
+          flags: ["--auto"],
+          addedAt: "2026-04-10T10:00:00.000Z",
+        },
+      ],
+      completed: [],
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const previousArgv = process.argv;
+    process.argv = ["node", "main.ts", "status", "queue-1"];
+
+    try {
+      await main({
+        registryPath: "/tmp/runs.json",
+        queuePath: "/tmp/queue.json",
+        exit: vi.fn(),
+      });
+    } finally {
+      process.argv = previousArgv;
+    }
+
+    const output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toContain("Queued queue-1");
+    expect(output).toContain("Repo: /repos/queued");
+    expect(output).toContain("Plan: /plans/queued.json");
+    expect(output).toContain("Branch: feature/queued");
+    expect(output).toContain("Flags: --auto");
+    expect(output).toContain("Added: 2026-04-10T10:00:00.000Z");
+    expect(mocks.assertGitRepo).not.toHaveBeenCalled();
+  });
+
+  // MANUAL TEST REQUIRED: verify `orch status <id> -f` prints existing log lines,
+  // streams appended output live, and exits cleanly on interrupt in a real terminal.
+  it("status follow prints the current log output before entering follow mode", async () => {
+    fsPromisesMockState.readFileImpl = vi.fn().mockResolvedValue(Buffer.from("line 1\n", "utf8"));
+
+    const { main, mocks } = await loadMainWithSubcommandMocks();
+    mocks.aggregateDashboard.mockResolvedValue({
+      active: [
+        {
+          id: "run-active",
+          repo: "/repos/active",
+          status: "active",
+          sliceProgress: "S1/3",
+          currentPhase: "review",
+          elapsed: "5m",
+          pid: 123,
+          logPath: "/logs/run-active.log",
+        },
+      ],
+      queued: [],
+      completed: [],
+    });
+    const exit = vi.fn();
+    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const previousArgv = process.argv;
+    process.argv = ["node", "main.ts", "status", "run-active", "-f"];
+
+    try {
+      const pendingMain = main({
+        registryPath: "/tmp/runs.json",
+        queuePath: "/tmp/queue.json",
+        exit,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(writeSpy).toHaveBeenCalledWith("line 1\n");
+      await expect(pendingMain).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      process.argv = previousArgv;
+    }
+
+    expect(exit).not.toHaveBeenCalled();
     expect(mocks.assertGitRepo).not.toHaveBeenCalled();
   });
 
