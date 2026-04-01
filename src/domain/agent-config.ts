@@ -18,6 +18,10 @@ export const CLAUDE_MODEL_IDS: Record<ClaudeModel, string> = {
 const VALID_PROVIDERS: readonly string[] = ["claude", "codex"];
 const VALID_CLAUDE_MODELS = Object.keys(CLAUDE_MODEL_IDS);
 
+export const AGENT_DEFAULTS: Record<AgentRole, ResolvedAgentConfig> = Object.fromEntries(
+  AGENT_ROLES.map((role) => [role, { provider: "claude" as const }]),
+) as Record<AgentRole, ResolvedAgentConfig>;
+
 export const parseAgentConfigValue = (value: string): ResolvedAgentConfig => {
   if (VALID_PROVIDERS.includes(value)) {
     return { provider: value as Provider };
@@ -53,7 +57,3 @@ export const resolveAllAgentConfigs = (
   Object.fromEntries(
     AGENT_ROLES.map((role) => [role, resolveAgentConfig(role, agents, cliProvider)]),
   ) as Record<AgentRole, ResolvedAgentConfig>;
-
-export const AGENT_DEFAULTS: Record<AgentRole, ResolvedAgentConfig> = Object.fromEntries(
-  AGENT_ROLES.map((role) => [role, { provider: "claude" as const }]),
-) as Record<AgentRole, ResolvedAgentConfig>;

@@ -1,5 +1,5 @@
-import type { AgentRole } from "./agent-types.js";
 import type { ResolvedAgentConfig } from "./agent-config.js";
+import type { AgentRole } from "./agent-types.js";
 
 export type Provider = "claude" | "codex";
 

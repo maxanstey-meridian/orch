@@ -93,7 +93,7 @@ export class FakeAgentSpawner extends AgentSpawner {
 
   spawn(
     role: AgentRole,
-    opts?: { readonly resumeSessionId?: string; readonly systemPrompt?: string; readonly cwd?: string; readonly planMode?: boolean },
+    opts?: { readonly resumeSessionId?: string; readonly systemPrompt?: string; readonly cwd?: string; readonly planMode?: boolean; readonly model?: string },
   ): FakeAgentHandle {
     const handle = new FakeAgentHandle(`${role}-${++this.sessionCounter}`, role);
     const queue = this.spawnQueue.get(role);

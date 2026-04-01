@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
+import { type AgentSpawner } from "#application/ports/agent-spawner.port.js";
 import type { OperatorGate } from "#application/ports/operator-gate.port.js";
 import type { ProgressSink } from "#application/ports/progress-sink.port.js";
 import type { RuntimeInteractionGate } from "#application/ports/runtime-interaction.port.js";
-import { type AgentSpawner } from "#application/ports/agent-spawner.port.js";
 import type { ResolvedAgentConfig } from "#domain/agent-config.js";
 import type { AgentRole } from "#domain/agent-types.js";
 import type { OrchestratorConfig } from "#domain/config.js";
@@ -45,7 +45,7 @@ export const agentSpawnerFactory = (
       const { provider, model } = config.agentConfig[role];
       switch (provider) {
         case "claude":
-          return getClaudeSpawner().spawn(role, { ...opts, model });
+          return getClaudeSpawner().spawn(role, { ...opts, model: model ?? opts?.model });
         case "codex":
           return getCodexSpawner().spawn(role, opts);
         default: {

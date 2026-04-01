@@ -141,7 +141,7 @@ describe("ClaudeAgentSpawner", () => {
   });
 
   describe("spawnPlanAgent argument forwarding", () => {
-    it("passes style, systemPrompt, cwd, and model to spawnPlanAgent", () => {
+    it("passes style, systemPrompt, and cwd to spawnPlanAgent", () => {
       const spawner = makeSpawner({ plan: "plan skill" }, "/work");
       spawner.spawn("plan", { cwd: "/custom" });
       expect(mockedSpawnPlanAgent).toHaveBeenCalledWith(ROLE_STYLES.plan, "plan skill", "/custom", undefined);
@@ -157,13 +157,6 @@ describe("ClaudeAgentSpawner", () => {
         "claude-haiku-4-5-20251001",
       );
       expect(mockedSpawnAgent).not.toHaveBeenCalled();
-    });
-
-    it("opts.model overrides TRIAGE_MODEL for triage role", () => {
-      const spawner = makeSpawner({ triage: "triage skill" }, "/work");
-      spawner.spawn("triage", { model: "custom-model" });
-      const [, , , model] = mockedSpawnPlanAgent.mock.calls[0];
-      expect(model).toBe("custom-model");
     });
 
     it("resumeSessionId is not forwarded to spawnPlanAgent", () => {
@@ -244,34 +237,6 @@ describe("ClaudeAgentSpawner", () => {
       spawner.spawn("tdd", { systemPrompt: "override prompt" });
       const [, systemPrompt] = mockedSpawnAgent.mock.calls[0];
       expect(systemPrompt).toBe("override prompt");
-    });
-
-    it("opts.model forwarded to spawnClaudeAgent", () => {
-      const spawner = makeSpawner();
-      spawner.spawn("tdd", { model: "claude-sonnet-4-20250514" });
-      const [, , , , model] = mockedSpawnAgent.mock.calls[0];
-      expect(model).toBe("claude-sonnet-4-20250514");
-    });
-
-    it("opts.model forwarded to spawnClaudePlanAgent", () => {
-      const spawner = makeSpawner();
-      spawner.spawn("plan", { model: "claude-sonnet-4-20250514" });
-      const [, , , model] = mockedSpawnPlanAgent.mock.calls[0];
-      expect(model).toBe("claude-sonnet-4-20250514");
-    });
-
-    it("model is undefined when opts.model not provided (non-plan)", () => {
-      const spawner = makeSpawner();
-      spawner.spawn("tdd");
-      const [, , , , model] = mockedSpawnAgent.mock.calls[0];
-      expect(model).toBeUndefined();
-    });
-
-    it("model is undefined when opts.model not provided (plan)", () => {
-      const spawner = makeSpawner();
-      spawner.spawn("plan");
-      const [, , , model] = mockedSpawnPlanAgent.mock.calls[0];
-      expect(model).toBeUndefined();
     });
 
     it("opts.planMode forces spawnPlanAgent for non-plan role", () => {

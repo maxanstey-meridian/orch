@@ -25,10 +25,12 @@ const configSchema = z.object({
   maxReplans: z.number().int().positive().optional(),
 });
 
-const agentsSchema = z.record(
-  z.enum(AGENT_ROLES as unknown as [string, ...string[]]),
-  z.string().regex(/^(claude(:(opus|sonnet|haiku))?|codex)$/),
-).optional();
+const agentsSchema = z
+  .record(
+    z.enum(AGENT_ROLES as unknown as [string, ...string[]]),
+    z.string().regex(/^(claude(:(opus|sonnet|haiku))?|codex)$/),
+  )
+  .optional();
 
 export const orchrcSchema = z
   .object({

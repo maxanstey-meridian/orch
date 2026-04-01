@@ -161,6 +161,7 @@ const main = async () => {
 
   // 3. Resolve plan path — generate from inventory or use existing
   const provider = parseProviderFlag(args);
+  const agentConfig = resolveAllAgentConfigs(orchrc.agents, provider);
   let planPath: string;
 
   if (workMode) {
@@ -173,10 +174,7 @@ const main = async () => {
       log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
       planPath = inputPath;
     } else {
-      const spawnPlanGenerator = planGeneratorSpawnerFactory({
-        agentConfig: resolveAllAgentConfigs(orchrc.agents, provider),
-        cwd,
-      });
+      const spawnPlanGenerator = planGeneratorSpawnerFactory({ agentConfig, cwd });
       planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnPlanGenerator);
     }
   }
@@ -307,7 +305,7 @@ const main = async () => {
     planDisabled,
     tddRules: orchrc.rules.tdd,
     defaultProvider: provider,
-    agentConfig: resolveAllAgentConfigs(orchrc.agents, provider),
+    agentConfig,
     reviewRules: orchrc.rules.review,
   } satisfies OrchestratorConfig;
 

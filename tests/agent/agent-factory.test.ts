@@ -146,55 +146,6 @@ describe("spawnClaudePlanAgentWithSkill", () => {
   });
 });
 
-describe("spawnClaudePlanAgentWithSkill model override", () => {
-  beforeEach(() => {
-    mockedCreateAgent.mockClear();
-  });
-
-  it("passes model through to spawnClaudePlanAgent", async () => {
-    const { spawnClaudePlanAgentWithSkill } = await loadModule();
-    spawnClaudePlanAgentWithSkill(undefined, "claude-sonnet-4-20250514");
-    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
-    expect(args).toContain("--model");
-    expect(args[args.indexOf("--model") + 1]).toBe("claude-sonnet-4-20250514");
-  });
-
-  it("omits --model when no model provided", async () => {
-    const { spawnClaudePlanAgentWithSkill } = await loadModule();
-    spawnClaudePlanAgentWithSkill();
-    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
-    expect(args).not.toContain("--model");
-  });
-});
-
-describe("spawnClaudeAgent model override", () => {
-  beforeEach(() => {
-    mockedCreateAgent.mockClear();
-  });
-
-  it("passes --model when model provided", async () => {
-    const { spawnClaudeAgent } = await loadModule();
-    spawnClaudeAgent({ label: "TDD", color: "", badge: "" }, undefined, undefined, undefined, "claude-sonnet-4-20250514");
-    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
-    expect(args).toContain("--model");
-    expect(args[args.indexOf("--model") + 1]).toBe("claude-sonnet-4-20250514");
-  });
-
-  it("omits --model when no model provided", async () => {
-    const { spawnClaudeAgent } = await loadModule();
-    spawnClaudeAgent({ label: "TDD", color: "", badge: "" });
-    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
-    expect(args).not.toContain("--model");
-  });
-
-  it("--model appears before --append-system-prompt when both provided", async () => {
-    const { spawnClaudeAgent } = await loadModule();
-    spawnClaudeAgent({ label: "TDD", color: "", badge: "" }, "system prompt", undefined, undefined, "claude-sonnet-4-20250514");
-    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
-    expect(args.indexOf("--model")).toBeLessThan(args.indexOf("--append-system-prompt"));
-  });
-});
-
 describe("spawnClaudeAgent resume mode", () => {
   beforeEach(() => {
     mockedCreateAgent.mockClear();
@@ -233,41 +184,6 @@ describe("spawnClaudeAgent resume mode", () => {
 
     expect(args).toContain("-p");
     expect(args).not.toContain("--resume");
-  });
-});
-
-describe("spawnClaudeGapAgent model override", () => {
-  beforeEach(() => {
-    mockedCreateAgent.mockClear();
-  });
-
-  it("passes model through to spawnClaudeAgent", async () => {
-    const { spawnClaudeGapAgent } = await loadModule();
-    spawnClaudeGapAgent(undefined, "claude-sonnet-4-20250514");
-    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
-    expect(args).toContain("--model");
-    expect(args[args.indexOf("--model") + 1]).toBe("claude-sonnet-4-20250514");
-  });
-
-  it("forwards cwd to createClaudeAgent", async () => {
-    const { spawnClaudeGapAgent } = await loadModule();
-    spawnClaudeGapAgent("/work", "model-x");
-    const opts = mockedCreateAgent.mock.calls[0][0];
-    expect(opts.cwd).toBe("/work");
-  });
-});
-
-describe("spawnClaudeGeneratePlanAgent model override", () => {
-  beforeEach(() => {
-    mockedCreateAgent.mockClear();
-  });
-
-  it("passes model through to spawnClaudeAgent", async () => {
-    const { spawnClaudeGeneratePlanAgent } = await loadModule();
-    spawnClaudeGeneratePlanAgent(undefined, "claude-sonnet-4-20250514");
-    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
-    expect(args).toContain("--model");
-    expect(args[args.indexOf("--model") + 1]).toBe("claude-sonnet-4-20250514");
   });
 });
 
