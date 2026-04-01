@@ -15,8 +15,9 @@
  *   npx ts-node src/main.ts --init --plan inventory.md        # interactive project init
  */
 
+import { randomUUID } from "crypto";
 import { readFileSync, mkdirSync, writeFileSync } from "fs";
-import { readFile } from "fs/promises";
+import { mkdir, readFile, rm } from "fs/promises";
 import { homedir } from "os";
 import { join, resolve } from "path";
 import { resolveAllAgentConfigs } from "#domain/agent-config.js";
@@ -58,6 +59,42 @@ type MainRuntime = {
   registryPath?: string;
   onSignal?: (signal: "SIGINT" | "SIGTERM", handler: () => void) => NodeJS.Process;
   exit?: (code: number) => void;
+};
+
+const hasCode = (value: unknown): value is { readonly code: string } =>
+  typeof value === "object" &&
+  value !== null &&
+  "code" in value &&
+  typeof value.code === "string";
+
+const delay = async (ms: number): Promise<void> =>
+  new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+
+export const withRegistryLock = async <T>(
+  registryPath: string,
+  work: () => Promise<T>,
+): Promise<T> => {
+  const lockPath = `${registryPath}.lock`;
+
+  for (;;) {
+    try {
+      await mkdir(lockPath);
+      break;
+    } catch (error) {
+      if (hasCode(error) && error.code === "EEXIST") {
+        await delay(5);
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  try {
+    return await work();
+  } finally {
+    await rm(lockPath, { force: true, recursive: true });
+  }
 };
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -263,15 +300,18 @@ export const main = async (runtime: MainRuntime = {}) => {
   const interactive = !auto && isTTY;
 
   const registryPath = runtime.registryPath ?? join(homedir(), ".orch", "runs.json");
+  const runId = randomUUID();
   let registered = false;
-  await registerRun(registryPath, {
-    id: activePlanId,
-    pid: process.pid,
-    repo: cwd,
-    planPath,
-    statePath: stateFile,
-    branch: branchName,
-    startedAt: new Date().toISOString(),
+  await withRegistryLock(registryPath, async () => {
+    await registerRun(registryPath, {
+      id: runId,
+      pid: process.pid,
+      repo: cwd,
+      planPath,
+      statePath: stateFile,
+      branch: branchName,
+      startedAt: new Date().toISOString(),
+    });
   });
   registered = true;
   const deregisterSelf = async (): Promise<void> => {
@@ -279,7 +319,9 @@ export const main = async (runtime: MainRuntime = {}) => {
       return;
     }
 
-    await deregisterRun(registryPath, activePlanId);
+    await withRegistryLock(registryPath, async () => {
+      await deregisterRun(registryPath, runId);
+    });
     registered = false;
   };
 
