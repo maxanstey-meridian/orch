@@ -76,6 +76,12 @@ describe("resolveAgentConfig", () => {
   it("returns default when cliProvider is claude and no agents entry", () => {
     expect(resolveAgentConfig("tdd", undefined, "claude")).toEqual({ provider: "claude" });
   });
+
+  it("propagates error from invalid agents entry", () => {
+    expect(() => resolveAgentConfig("tdd", { tdd: "garbage" }, "claude")).toThrow(
+      "Invalid agent config value",
+    );
+  });
 });
 
 describe("resolveAllAgentConfigs", () => {
@@ -92,5 +98,11 @@ describe("resolveAllAgentConfigs", () => {
     expect(result.tdd).toEqual({ provider: "codex" });
     expect(result.plan).toEqual({ provider: "claude", model: "claude-opus-4-20250514" });
     expect(result.review).toEqual({ provider: "claude" });
+  });
+
+  it("explicit entry wins over non-claude cliProvider fallback", () => {
+    const result = resolveAllAgentConfigs({ tdd: "claude:opus" }, "codex");
+    expect(result.tdd).toEqual({ provider: "claude", model: "claude-opus-4-20250514" });
+    expect(result.review).toEqual({ provider: "codex" });
   });
 });

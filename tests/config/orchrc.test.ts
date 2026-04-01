@@ -143,6 +143,14 @@ describe("loadOrchrConfig", () => {
 
     expect(() => loadOrchrConfig("/fake")).toThrow("Invalid .orchrc.json");
   });
+
+  it("rejects codex:opus at schema level", () => {
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({ agents: { tdd: "codex:opus" } }),
+    );
+
+    expect(() => loadOrchrConfig("/fake")).toThrow("Invalid .orchrc.json");
+  });
 });
 
 describe("resolveOrchrConfig", () => {
@@ -209,6 +217,11 @@ describe("resolveOrchrConfig", () => {
     const result = resolveOrchrConfig({}, "/fake");
     expect(result.rules.tdd).toBeUndefined();
     expect(result.rules.review).toBeUndefined();
+  });
+
+  it("passes agents through to resolved config", () => {
+    const result = resolveOrchrConfig({ agents: { tdd: "codex" } }, "/fake");
+    expect(result.agents).toEqual({ tdd: "codex" });
   });
 
   it("passes config values through", () => {
