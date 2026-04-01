@@ -785,10 +785,7 @@ export class RunOrchestration {
     this.phase = transition(this.phase, { kind: "AllPassesDone" });
   }
 
-  async gapAnalysis(
-    group: Group,
-    groupBaseSha: string,
-  ): Promise<void> {
+  async gapAnalysis(group: Group, groupBaseSha: string): Promise<void> {
     if (!(await this.git.hasChanges(groupBaseSha))) {
       return;
     }
