@@ -1,7 +1,9 @@
+import { spawn } from "child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
-import { join } from "path";
+import { join, resolve } from "path";
 import { homedir, tmpdir } from "os";
+import { pathToFileURL } from "url";
 import type { QueueEntry } from "#domain/queue.js";
 import {
   addToQueue,
@@ -11,6 +13,13 @@ import {
   readQueue,
   removeFromQueue,
 } from "#infrastructure/queue/queue-store.js";
+
+type ChildProcessResult = {
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stdout: string;
+  readonly stderr: string;
+};
 
 type QueueEntryOverrides = {
   readonly id?: string;
@@ -40,6 +49,59 @@ const makeEntry = (overrides: QueueEntryOverrides = {}): QueueEntry => {
     ...(branch === undefined ? {} : { branch }),
   };
 };
+
+const runNodeProcess = async (args: readonly string[]): Promise<ChildProcessResult> => {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(process.execPath, args, {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", rejectPromise);
+    child.on("close", (code, signal) => {
+      resolvePromise({
+        code,
+        signal,
+        stdout,
+        stderr,
+      });
+    });
+  });
+};
+
+const queueStoreModuleUrl = pathToFileURL(
+  resolve(process.cwd(), "src/infrastructure/queue/queue-store.ts"),
+).href;
+
+const addWorkerScript = `
+const [moduleUrl, queuePath, entryJson] = process.argv.slice(1);
+const { addToQueue } = await import(moduleUrl);
+await addToQueue(queuePath, JSON.parse(entryJson));
+`;
+
+const readWorkerScript = `
+const [moduleUrl, queuePath, minimumLengthText, iterationsText] = process.argv.slice(1);
+const minimumLength = Number(minimumLengthText);
+const iterations = Number(iterationsText);
+const { readQueue } = await import(moduleUrl);
+
+for (let index = 0; index < iterations; index += 1) {
+  const entries = await readQueue(queuePath);
+  if (entries.length < minimumLength) {
+    console.error(\`Observed queue length \${entries.length} below minimum \${minimumLength}\`);
+    process.exit(1);
+  }
+}
+`;
 
 describe("queue store", () => {
   let tempDir = "";
@@ -117,6 +179,78 @@ describe("queue store", () => {
     await Promise.all(entries.map((entry) => addToQueue(queuePath, entry)));
 
     await expect(readQueue(queuePath)).resolves.toEqual(entries);
+  });
+
+  it("cross-process addToQueue calls preserve all entries and never expose empty reads", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const largeSuffix = "x".repeat(200_000);
+    const baselineEntry = makeEntry({
+      id: "queue-0",
+      planPath: `/plans/${largeSuffix}-0`,
+      flags: ["--baseline"],
+    });
+    const entries = Array.from({ length: 12 }, (_, index) =>
+      makeEntry({
+        id: `queue-${index + 1}`,
+        planPath: `/plans/${largeSuffix}-${index + 1}`,
+        flags: [`--flag-${index + 1}`],
+      }),
+    );
+
+    await writeFile(queuePath, JSON.stringify([baselineEntry], null, 2));
+
+    const readerPromises = Array.from({ length: 6 }, () =>
+      runNodeProcess([
+        "--experimental-strip-types",
+        "--input-type=module",
+        "-e",
+        readWorkerScript,
+        queueStoreModuleUrl,
+        queuePath,
+        "1",
+        "200",
+      ]),
+    );
+    const writerPromises = entries.map((entry) =>
+      runNodeProcess([
+        "--experimental-strip-types",
+        "--input-type=module",
+        "-e",
+        addWorkerScript,
+        queueStoreModuleUrl,
+        queuePath,
+        JSON.stringify(entry),
+      ]),
+    );
+
+    const [readerResults, writerResults] = await Promise.all([
+      Promise.all(readerPromises),
+      Promise.all(writerPromises),
+    ]);
+
+    for (const result of readerResults) {
+      expect(result).toEqual({
+        code: 0,
+        signal: null,
+        stdout: "",
+        stderr: "",
+      });
+    }
+
+    for (const result of writerResults) {
+      expect(result).toEqual({
+        code: 0,
+        signal: null,
+        stdout: "",
+        stderr: "",
+      });
+    }
+
+    const actualEntries = await readQueue(queuePath);
+    expect(actualEntries).toHaveLength(entries.length + 1);
+    expect(actualEntries.map((entry) => entry.id).sort()).toEqual(
+      [baselineEntry, ...entries].map((entry) => entry.id).sort(),
+    );
   });
 
   it("removeFromQueue removes only matching entry", async () => {

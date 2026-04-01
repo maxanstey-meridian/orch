@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import type { QueueEntry } from "#domain/queue.js";
@@ -12,7 +12,13 @@ const hasCode = (value: unknown): value is { readonly code: string } =>
 const createCorruptQueueError = (queuePath: string): Error =>
   new Error(`Queue file is corrupt: ${queuePath}`);
 
+const lockRetryDelayMs = 10;
 const pendingMutations = new Map<string, Promise<void>>();
+
+const sleep = async (ms: number): Promise<void> =>
+  new Promise((resolvePromise) => {
+    setTimeout(resolvePromise, ms);
+  });
 
 const isQueueEntry = (value: unknown): value is QueueEntry => {
   if (!isRecord(value)) {
@@ -39,9 +45,20 @@ const isQueueEntry = (value: unknown): value is QueueEntry => {
   return branch === undefined || typeof branch === "string";
 };
 
+const lockPathForQueue = (queuePath: string): string => `${queuePath}.lock`;
+
+const tempPathForQueue = (queuePath: string): string =>
+  `${queuePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+
 const writeQueue = async (queuePath: string, entries: QueueEntry[]): Promise<void> => {
   await mkdir(dirname(queuePath), { recursive: true });
-  await writeFile(queuePath, JSON.stringify(entries, null, 2));
+  const tempPath = tempPathForQueue(queuePath);
+  try {
+    await writeFile(tempPath, JSON.stringify(entries, null, 2));
+    await rename(tempPath, queuePath);
+  } finally {
+    await rm(tempPath, { force: true });
+  }
 };
 
 export const defaultQueuePath = (): string => join(homedir(), ".orch", "queue.json");
@@ -95,23 +112,50 @@ export const readQueue = async (queuePath: string): Promise<QueueEntry[]> => {
   return loadQueue(queuePath, { throwOnCorrupt: false });
 };
 
+const withFileLock = async <T>(
+  queuePath: string,
+  operation: () => Promise<T>,
+): Promise<T> => {
+  const lockPath = lockPathForQueue(queuePath);
+  await mkdir(dirname(queuePath), { recursive: true });
+
+  while (true) {
+    try {
+      await mkdir(lockPath);
+      break;
+    } catch (error) {
+      if (!hasCode(error) || error.code !== "EEXIST") {
+        throw error;
+      }
+
+      await sleep(lockRetryDelayMs);
+    }
+  }
+
+  try {
+    return await operation();
+  } finally {
+    await rm(lockPath, { recursive: true, force: true });
+  }
+};
+
 const withMutationLock = async <T>(
   queuePath: string,
   operation: () => Promise<T>,
 ): Promise<T> => {
   const previousMutation = pendingMutations.get(queuePath) ?? Promise.resolve();
-  let release!: () => void;
+  let releaseMutation!: () => void;
   const currentMutation = new Promise<void>((resolve) => {
-    release = resolve;
+    releaseMutation = resolve;
   });
   pendingMutations.set(queuePath, currentMutation);
 
   await previousMutation;
 
   try {
-    return await operation();
+    return await withFileLock(queuePath, operation);
   } finally {
-    release();
+    releaseMutation();
     if (pendingMutations.get(queuePath) === currentMutation) {
       pendingMutations.delete(queuePath);
     }
