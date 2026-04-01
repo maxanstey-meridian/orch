@@ -11,5 +11,15 @@
     "maxReviewCycles": 3,
     "reviewThreshold": 30,
     "maxReplans": 2
+  },
+  "agents": {
+    "plan": "claude",
+    "tdd": "claude",
+    "review": "claude",
+    "verify": "claude",
+    "gap": "claude",
+    "completeness": "claude",
+    "final": "claude",
+    "triage": "claude"
   }
 }

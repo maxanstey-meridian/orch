@@ -289,6 +289,11 @@ describe("resolveOrchrConfig", () => {
     expect(summary).toBe("review: custom, maxReplans: 1");
   });
 
+  it("buildOrchrSummary omits default agent values", () => {
+    const config = resolveOrchrConfig({ agents: { tdd: "claude", plan: "claude" } }, "/fake");
+    expect(buildOrchrSummary(config)).toBeUndefined();
+  });
+
   it("buildOrchrSummary includes agent overrides", () => {
     const config = resolveOrchrConfig({ agents: { tdd: "codex", plan: "claude:opus" } }, "/fake");
     const summary = buildOrchrSummary(config);

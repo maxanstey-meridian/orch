@@ -113,7 +113,9 @@ export const buildOrchrSummary = (config: ResolvedOrchrConfig): string | undefin
   }
   if (config.agents) {
     for (const [role, value] of Object.entries(config.agents)) {
-      labels.push(`${role}: ${value}`);
+      if (value !== "claude") {
+        labels.push(`${role}: ${value}`);
+      }
     }
   }
   return labels.length > 0 ? labels.join(", ") : undefined;
