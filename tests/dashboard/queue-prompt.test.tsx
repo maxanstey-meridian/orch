@@ -21,6 +21,8 @@ const typeText = async (
 };
 
 describe("QueuePrompt", () => {
+  // MANUAL TEST REQUIRED: verify multi-field keyboard navigation through Repo/Plan/Branch/Flags
+  // in a real terminal, including branch entry and space-separated flags normalization.
   afterEach(() => {
     vi.clearAllMocks();
   });

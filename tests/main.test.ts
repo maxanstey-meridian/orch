@@ -237,6 +237,59 @@ describe("subcommand routing", () => {
     expect(mocks.assertGitRepo).not.toHaveBeenCalled();
   });
 
+  it("queue list prints persisted entries without requiring a git repo", async () => {
+    const { main, mocks } = await loadMainWithSubcommandMocks();
+    mocks.readQueue.mockResolvedValue([
+      {
+        id: "queue-1",
+        repo: "/repos/queued",
+        planPath: "/plans/queued.json",
+        flags: ["--auto"],
+        addedAt: "2026-04-10T10:00:00.000Z",
+      },
+    ]);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const previousArgv = process.argv;
+    process.argv = ["node", "main.ts", "queue", "list"];
+
+    try {
+      await main({
+        registryPath: "/tmp/runs.json",
+        queuePath: "/tmp/queue.json",
+        exit: vi.fn(),
+      });
+    } finally {
+      process.argv = previousArgv;
+    }
+
+    const output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toContain("Queue");
+    expect(output).toContain("queue-1 /repos/queued /plans/queued.json --auto");
+    expect(mocks.readQueue).toHaveBeenCalledWith("/tmp/queue.json");
+    expect(mocks.assertGitRepo).not.toHaveBeenCalled();
+  });
+
+  it("queue remove deletes the requested entry and reports success", async () => {
+    const { main, mocks } = await loadMainWithSubcommandMocks();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const previousArgv = process.argv;
+    process.argv = ["node", "main.ts", "queue", "remove", "queue-1"];
+
+    try {
+      await main({
+        registryPath: "/tmp/runs.json",
+        queuePath: "/tmp/queue.json",
+        exit: vi.fn(),
+      });
+    } finally {
+      process.argv = previousArgv;
+    }
+
+    expect(mocks.removeFromQueue).toHaveBeenCalledWith("/tmp/queue.json", "queue-1");
+    expect(logSpy).toHaveBeenCalledWith("Removed queue-1");
+    expect(mocks.assertGitRepo).not.toHaveBeenCalled();
+  });
+
   it("status prints aggregated dashboard output without requiring a git repo", async () => {
     const { main, mocks } = await loadMainWithSubcommandMocks();
     mocks.aggregateDashboard.mockResolvedValue({
@@ -282,6 +335,58 @@ describe("subcommand routing", () => {
     expect(output).toContain("Queued");
     expect(output).toContain("queue-1 /repos/queued /plans/queued.json --auto");
     expect(mocks.aggregateDashboard).toHaveBeenCalledWith("/tmp/runs.json", "/tmp/queue.json");
+    expect(mocks.assertGitRepo).not.toHaveBeenCalled();
+  });
+
+  it("status with an id prints detailed run information", async () => {
+    const { main, mocks } = await loadMainWithSubcommandMocks();
+    mocks.aggregateDashboard.mockResolvedValue({
+      active: [
+        {
+          id: "run-active",
+          repo: "/repos/active",
+          planName: "Dashboard",
+          branch: "feature/queue",
+          status: "active",
+          sliceProgress: "S2/3",
+          currentPhase: "verify",
+          elapsed: "9m",
+          pid: 123,
+          logPath: "/logs/run-active.log",
+          groups: [
+            {
+              name: "Foundation",
+              slices: [
+                { number: 1, title: "Registry", status: "done", elapsed: "2m" },
+                { number: 2, title: "Queue", status: "active", elapsed: "7m" },
+              ],
+            },
+          ],
+        },
+      ],
+      queued: [],
+      completed: [],
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const previousArgv = process.argv;
+    process.argv = ["node", "main.ts", "status", "run-active"];
+
+    try {
+      await main({
+        registryPath: "/tmp/runs.json",
+        queuePath: "/tmp/queue.json",
+        exit: vi.fn(),
+      });
+    } finally {
+      process.argv = previousArgv;
+    }
+
+    const output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toContain("Run run-active");
+    expect(output).toContain("Plan: Dashboard");
+    expect(output).toContain("Phase: verify");
+    expect(output).toContain("Foundation");
+    expect(output).toContain("active S2 Queue 7m");
     expect(mocks.assertGitRepo).not.toHaveBeenCalled();
   });
 
