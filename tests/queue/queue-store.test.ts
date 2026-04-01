@@ -58,6 +58,16 @@ describe("queue store", () => {
     await expect(readQueue(queuePath)).resolves.toEqual([]);
   });
 
+  it("QueueEntry uses mutable fields and string[] flags", () => {
+    const entry: QueueEntry = makeEntry();
+
+    entry.id = "queue-2";
+    entry.flags.push("--later");
+
+    expect(entry.id).toBe("queue-2");
+    expect(entry.flags).toEqual(["--auto", "--later"]);
+  });
+
   it("defaultQueuePath resolves ~/.orch/queue.json under the current home directory", () => {
     expect(defaultQueuePath()).toBe(join(homedir(), ".orch", "queue.json"));
   });
@@ -82,6 +92,17 @@ describe("queue store", () => {
     await addToQueue(queuePath, second);
 
     await expect(readQueue(queuePath)).resolves.toEqual([first, second]);
+  });
+
+  it("addToQueue creates parent directories when missing", async () => {
+    const queuePath = join(tempDir, "nested", "queue", "queue.json");
+    const entry = makeEntry();
+
+    await addToQueue(queuePath, entry);
+
+    const raw = await readFile(queuePath, "utf8");
+    expect(raw).toBe(JSON.stringify([entry], null, 2));
+    await expect(readQueue(queuePath)).resolves.toEqual([entry]);
   });
 
   it("removeFromQueue removes only matching entry", async () => {
