@@ -483,4 +483,54 @@ describe("registry lifecycle", () => {
     await second;
     expect(secondEntered).toBe(true);
   });
+
+  it("creates the registry parent directory before acquiring the lock", async () => {
+    const mainModule = await import("../../src/main.ts");
+    const withRegistryLock = (mainModule as {
+      withRegistryLock?: (path: string, work: () => Promise<void>) => Promise<void>;
+    }).withRegistryLock;
+    const missingRegistryPath = join(tempDir, "missing", ".orch", "runs.json");
+    let entered = false;
+
+    await withRegistryLock!(missingRegistryPath, async () => {
+      entered = true;
+    });
+
+    expect(entered).toBe(true);
+  });
+
+  it("recovers a stale dead-owner lock directory", async () => {
+    const mainModule = await import("../../src/main.ts");
+    const withRegistryLock = (mainModule as {
+      withRegistryLock?: (path: string, work: () => Promise<void>) => Promise<void>;
+    }).withRegistryLock;
+    const staleRegistryPath = join(tempDir, "stale", ".orch", "runs.json");
+    const lockPath = `${staleRegistryPath}.lock`;
+    let entered = false;
+
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(
+      join(lockPath, "owner.json"),
+      JSON.stringify({
+        acquiredAt: "2000-01-01T00:00:00.000Z",
+        pid: 999999,
+      }),
+    );
+
+    const pending = withRegistryLock!(staleRegistryPath, async () => {
+      entered = true;
+    });
+    const result = await Promise.race([
+      pending.then(() => "entered"),
+      new Promise<"timeout">((resolveDelay) => setTimeout(() => resolveDelay("timeout"), 75)),
+    ]);
+
+    if (result === "timeout") {
+      await rm(lockPath, { force: true, recursive: true });
+      await pending;
+    }
+
+    expect(result).toBe("entered");
+    expect(entered).toBe(true);
+  });
 });
