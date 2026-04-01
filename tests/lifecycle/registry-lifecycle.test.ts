@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -399,6 +399,22 @@ describe("registry lifecycle", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it("registry entry is removed when setup fails before orchestration starts", async () => {
+    mocks.createContainer.mockImplementation(() => {
+      throw new Error("container failed");
+    });
+
+    const { main } = await import("../../src/main.ts");
+
+    await expect(main({
+      onSignal: () => process,
+      registryPath,
+    })).rejects.toThrow("container failed");
+
+    const entries = await readRegistry(registryPath);
+    expect(entries).toEqual([]);
+  });
+
   it("cleaning up one run does not remove another concurrent run of the same plan", async () => {
     const startedFirst = createDeferred<void>();
     const releaseFirst = createDeferred<void>();
@@ -484,6 +500,26 @@ describe("registry lifecycle", () => {
     expect(secondEntered).toBe(true);
   });
 
+  it("releases the registry lock when the callback throws", async () => {
+    const mainModule = await import("../../src/main.ts");
+    const withRegistryLock = (mainModule as {
+      withRegistryLock?: (path: string, work: () => Promise<void>) => Promise<void>;
+    }).withRegistryLock;
+    let secondEntered = false;
+
+    await expect(
+      withRegistryLock!(registryPath, async () => {
+        throw new Error("lock callback failed");
+      }),
+    ).rejects.toThrow("lock callback failed");
+
+    await withRegistryLock!(registryPath, async () => {
+      secondEntered = true;
+    });
+
+    expect(secondEntered).toBe(true);
+  });
+
   it("creates the registry parent directory before acquiring the lock", async () => {
     const mainModule = await import("../../src/main.ts");
     const withRegistryLock = (mainModule as {
@@ -531,6 +567,26 @@ describe("registry lifecycle", () => {
     }
 
     expect(result).toBe("entered");
+    expect(entered).toBe(true);
+  });
+
+  it("recovers a stale lock directory without owner metadata", async () => {
+    const mainModule = await import("../../src/main.ts");
+    const withRegistryLock = (mainModule as {
+      withRegistryLock?: (path: string, work: () => Promise<void>) => Promise<void>;
+    }).withRegistryLock;
+    const staleRegistryPath = join(tempDir, "stale-no-owner", ".orch", "runs.json");
+    const lockPath = `${staleRegistryPath}.lock`;
+    let entered = false;
+
+    await mkdir(lockPath, { recursive: true });
+    const staleTime = new Date(Date.now() - 61_000);
+    await utimes(lockPath, staleTime, staleTime);
+
+    await withRegistryLock!(staleRegistryPath, async () => {
+      entered = true;
+    });
+
     expect(entered).toBe(true);
   });
 });

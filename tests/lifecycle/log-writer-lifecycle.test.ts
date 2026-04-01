@@ -116,5 +116,6 @@ describe("log writer lifecycle", () => {
       badge: "ORCH",
       text: "Execution failed: capture failed",
     });
+    expect(logWriter.closed).toBe(true);
   });
 });
