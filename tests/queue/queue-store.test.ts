@@ -1,0 +1,166 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
+import { join } from "path";
+import { homedir, tmpdir } from "os";
+import type { QueueEntry } from "#domain/queue.js";
+import {
+  addToQueue,
+  defaultQueuePath,
+  dequeueNext,
+  moveInQueue,
+  readQueue,
+  removeFromQueue,
+} from "#infrastructure/queue/queue-store.js";
+
+type QueueEntryOverrides = {
+  readonly id?: string;
+  readonly repo?: string;
+  readonly planPath?: string;
+  readonly branch?: string;
+  readonly flags?: readonly string[];
+  readonly addedAt?: string;
+};
+
+const makeEntry = (overrides: QueueEntryOverrides = {}): QueueEntry => {
+  const {
+    id = "queue-1",
+    repo = "/repos/orch",
+    planPath = "/plans/plan.json",
+    branch,
+    flags = ["--auto"],
+    addedAt = "2026-04-03T12:00:00.000Z",
+  } = overrides;
+
+  return {
+    id,
+    repo,
+    planPath,
+    flags: [...flags],
+    addedAt,
+    ...(branch === undefined ? {} : { branch }),
+  };
+};
+
+describe("queue store", () => {
+  let tempDir = "";
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "queue-store-"));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("readQueue returns empty array when file missing", async () => {
+    const queuePath = join(tempDir, "queue.json");
+
+    await expect(readQueue(queuePath)).resolves.toEqual([]);
+  });
+
+  it("defaultQueuePath resolves ~/.orch/queue.json under the current home directory", () => {
+    expect(defaultQueuePath()).toBe(join(homedir(), ".orch", "queue.json"));
+  });
+
+  it("addToQueue creates file and adds entry", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const entry = makeEntry();
+
+    await addToQueue(queuePath, entry);
+
+    const raw = await readFile(queuePath, "utf8");
+    expect(raw).toBe(JSON.stringify([entry], null, 2));
+    await expect(readQueue(queuePath)).resolves.toEqual([entry]);
+  });
+
+  it("addToQueue appends in order", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const first = makeEntry({ id: "queue-1", branch: "feature/a", flags: ["--auto"] });
+    const second = makeEntry({ id: "queue-2", branch: "feature/b", flags: ["--dry-run"] });
+
+    await addToQueue(queuePath, first);
+    await addToQueue(queuePath, second);
+
+    await expect(readQueue(queuePath)).resolves.toEqual([first, second]);
+  });
+
+  it("removeFromQueue removes only matching entry", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const first = makeEntry({ id: "queue-1" });
+    const second = makeEntry({ id: "queue-2", flags: ["--interactive"] });
+
+    await writeFile(queuePath, JSON.stringify([first, second], null, 2));
+    await removeFromQueue(queuePath, first.id);
+
+    await expect(readQueue(queuePath)).resolves.toEqual([second]);
+  });
+
+  it("removeFromQueue is no-op for unknown id", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const first = makeEntry({ id: "queue-1" });
+    const second = makeEntry({ id: "queue-2", flags: ["--interactive"] });
+
+    await writeFile(queuePath, JSON.stringify([first, second], null, 2));
+    await removeFromQueue(queuePath, "missing");
+
+    await expect(readQueue(queuePath)).resolves.toEqual([first, second]);
+  });
+
+  it("moveInQueue moves entry to specified position", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const first = makeEntry({ id: "queue-1" });
+    const second = makeEntry({ id: "queue-2" });
+    const third = makeEntry({ id: "queue-3" });
+
+    await writeFile(queuePath, JSON.stringify([first, second, third], null, 2));
+    await moveInQueue(queuePath, third.id, 1);
+
+    await expect(readQueue(queuePath)).resolves.toEqual([first, third, second]);
+  });
+
+  it("moveInQueue clamps position to array bounds", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const first = makeEntry({ id: "queue-1" });
+    const second = makeEntry({ id: "queue-2" });
+    const third = makeEntry({ id: "queue-3" });
+
+    await writeFile(queuePath, JSON.stringify([first, second, third], null, 2));
+    await moveInQueue(queuePath, second.id, -10);
+    await expect(readQueue(queuePath)).resolves.toEqual([second, first, third]);
+
+    await moveInQueue(queuePath, second.id, 99);
+    await expect(readQueue(queuePath)).resolves.toEqual([first, third, second]);
+  });
+
+  it("dequeueNext returns first entry and removes it from file", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const first = makeEntry({ id: "queue-1" });
+    const second = makeEntry({ id: "queue-2" });
+
+    await writeFile(queuePath, JSON.stringify([first, second], null, 2));
+
+    await expect(dequeueNext(queuePath)).resolves.toEqual(first);
+    await expect(readQueue(queuePath)).resolves.toEqual([second]);
+  });
+
+  it("dequeueNext returns undefined for empty queue", async () => {
+    const queuePath = join(tempDir, "queue.json");
+
+    await expect(dequeueNext(queuePath)).resolves.toBeUndefined();
+    await expect(readQueue(queuePath)).resolves.toEqual([]);
+  });
+
+  it("readQueue returns empty array on corrupt JSON", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    await writeFile(queuePath, "{ definitely-not-json");
+
+    await expect(readQueue(queuePath)).resolves.toEqual([]);
+  });
+
+  it("readQueue returns empty array when file contains a malformed queue entry", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    await writeFile(queuePath, JSON.stringify([{ id: "queue-1", repo: "/repo", planPath: "/plan", flags: "oops", addedAt: "2026-04-03T12:00:00.000Z" }]));
+
+    await expect(readQueue(queuePath)).resolves.toEqual([]);
+  });
+});
