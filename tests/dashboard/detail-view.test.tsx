@@ -118,6 +118,20 @@ describe("DetailView", () => {
     app.unmount();
   });
 
+  it("renders a fallback message when plan groups are unavailable", () => {
+    const app = render(
+      <DetailView
+        run={makeRun({ groups: undefined })}
+        onBack={vi.fn()}
+        onTail={vi.fn()}
+      />,
+    );
+
+    expect(app.lastFrame()).toContain("No plan details available");
+
+    app.unmount();
+  });
+
   it("returns to the previous view when escape is pressed", async () => {
     const onBack = vi.fn();
     const app = render(
