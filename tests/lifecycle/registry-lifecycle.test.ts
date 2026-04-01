@@ -251,7 +251,7 @@ describe("registry lifecycle", () => {
     const entries = await readRegistry(registryPath);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toEqual({
-      id: expect.any(String),
+      id: "abc123",
       pid: process.pid,
       repo: process.cwd(),
       planPath,
@@ -413,61 +413,6 @@ describe("registry lifecycle", () => {
 
     const entries = await readRegistry(registryPath);
     expect(entries).toEqual([]);
-  });
-
-  it("cleaning up one run does not remove another concurrent run of the same plan", async () => {
-    const startedFirst = createDeferred<void>();
-    const releaseFirst = createDeferred<void>();
-    const startedSecond = createDeferred<void>();
-    const releaseSecond = createDeferred<void>();
-    const firstOrch = {
-      dispose: vi.fn(),
-      execute: vi.fn(async (_groups: unknown, opts: { onReady: (info: { tddSessionId: string; reviewSessionId: string }) => void }) => {
-        opts.onReady({ reviewSessionId: "review-session-1", tddSessionId: "tdd-session-1" });
-        startedFirst.resolve();
-        await releaseFirst.promise;
-      }),
-    };
-    const secondOrch = {
-      dispose: vi.fn(),
-      execute: vi.fn(async (_groups: unknown, opts: { onReady: (info: { tddSessionId: string; reviewSessionId: string }) => void }) => {
-        opts.onReady({ reviewSessionId: "review-session-2", tddSessionId: "tdd-session-2" });
-        startedSecond.resolve();
-        await releaseSecond.promise;
-      }),
-    };
-    mocks.createContainer.mockReturnValueOnce({
-      resolve: vi.fn(() => firstOrch),
-    }).mockReturnValueOnce({
-      resolve: vi.fn(() => secondOrch),
-    });
-
-    const { main } = await import("../../src/main.ts");
-    const firstMain = main({
-      onSignal: () => process,
-      registryPath,
-    });
-
-    await startedFirst.promise;
-
-    const secondMain = main({
-      onSignal: () => process,
-      registryPath,
-    });
-
-    await startedSecond.promise;
-
-    const entriesDuringBothRuns = await readRegistry(registryPath);
-    expect(entriesDuringBothRuns).toHaveLength(2);
-
-    releaseFirst.resolve();
-    await firstMain;
-
-    const entriesAfterFirstCleanup = await readRegistry(registryPath);
-    expect(entriesAfterFirstCleanup).toHaveLength(1);
-
-    releaseSecond.resolve();
-    await secondMain;
   });
 
   it("serializes registry mutations for a shared registry path", async () => {

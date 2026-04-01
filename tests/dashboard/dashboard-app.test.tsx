@@ -7,6 +7,7 @@ import type { QueueEntry } from "#domain/queue.js";
 import { createSupervisor } from "#infrastructure/dashboard/supervisor.js";
 import { removeFromQueue } from "#infrastructure/queue/queue-store.js";
 import { DashboardApp } from "#ui/dashboard/dashboard-app.js";
+import type { DashboardAppProps } from "#ui/dashboard/dashboard-app.js";
 import { useDashboardData } from "#ui/dashboard/use-dashboard-data.js";
 
 vi.mock("#ui/dashboard/use-dashboard-data.js", () => ({
@@ -83,6 +84,11 @@ vi.mock("#ui/dashboard/queue-prompt.js", () => ({
 const useDashboardDataMock = vi.mocked(useDashboardData);
 const removeFromQueueMock = vi.mocked(removeFromQueue);
 const createSupervisorMock = vi.mocked(createSupervisor);
+const defaultDashboardAppProps: DashboardAppProps = {
+  registryPath: "/tmp/runs.json",
+  queuePath: "/tmp/queue.json",
+  orchBin: "/tmp/orch-bin.js",
+};
 
 const makeRun = (overrides: Partial<DashboardRun> = {}): DashboardRun => ({
   id: "run-1",
@@ -158,6 +164,16 @@ const waitForFrame = async (
   throw new Error(`Timed out waiting for dashboard frame: ${app.lastFrame() ?? ""}`);
 };
 
+const renderDashboardApp = (
+  overrides: Partial<typeof defaultDashboardAppProps> = {},
+) =>
+  render(
+    <DashboardApp
+      {...defaultDashboardAppProps}
+      {...overrides}
+    />,
+  );
+
 describe("DashboardApp", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -170,12 +186,7 @@ describe("DashboardApp", () => {
   it("renders a loading state while the dashboard hook is loading", () => {
     useDashboardDataMock.mockReturnValue(makeHookResult({ loading: true }));
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     expect(app.lastFrame()).toContain("Loading dashboard…");
 
@@ -185,12 +196,7 @@ describe("DashboardApp", () => {
   it("renders an error state when the dashboard hook fails", () => {
     useDashboardDataMock.mockReturnValue(makeHookResult({ error: "boom" }));
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     expect(app.lastFrame()).toContain("Dashboard error: boom");
 
@@ -206,12 +212,7 @@ describe("DashboardApp", () => {
       }),
     );
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     expect(app.lastFrame()).toContain("Active");
     expect(app.lastFrame()).toContain("run-ac");
@@ -222,17 +223,12 @@ describe("DashboardApp", () => {
   it("starts the supervisor on mount and stops it on unmount", () => {
     useDashboardDataMock.mockReturnValue(makeHookResult());
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     expect(createSupervisorMock).toHaveBeenCalledWith({
       registryPath: "/tmp/runs.json",
       queuePath: "/tmp/queue.json",
-      orchBin: expect.stringContaining("/dist/main.js"),
+      orchBin: "/tmp/orch-bin.js",
     });
     expect(supervisorState.latest?.start).toHaveBeenCalledTimes(1);
 
@@ -244,17 +240,11 @@ describe("DashboardApp", () => {
   it("does not recreate the supervisor on a rerender with the same paths", () => {
     useDashboardDataMock.mockReturnValue(makeHookResult());
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     app.rerender(
       <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
+        {...defaultDashboardAppProps}
       />,
     );
 
@@ -266,12 +256,10 @@ describe("DashboardApp", () => {
   it("recreates the supervisor when the dashboard paths change", () => {
     useDashboardDataMock.mockReturnValue(makeHookResult());
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs-a.json"
-        queuePath="/tmp/queue-a.json"
-      />,
-    );
+    const app = renderDashboardApp({
+      registryPath: "/tmp/runs-a.json",
+      queuePath: "/tmp/queue-a.json",
+    });
 
     const firstSupervisor = supervisorState.latest;
 
@@ -279,6 +267,7 @@ describe("DashboardApp", () => {
       <DashboardApp
         registryPath="/tmp/runs-b.json"
         queuePath="/tmp/queue-b.json"
+        orchBin="/tmp/orch-bin.js"
       />,
     );
 
@@ -287,9 +276,37 @@ describe("DashboardApp", () => {
     expect(createSupervisorMock).toHaveBeenLastCalledWith({
       registryPath: "/tmp/runs-b.json",
       queuePath: "/tmp/queue-b.json",
-      orchBin: expect.stringContaining("/dist/main.js"),
+      orchBin: "/tmp/orch-bin.js",
     });
     expect(supervisorState.latest?.start).toHaveBeenCalledTimes(1);
+
+    app.unmount();
+  });
+
+  it("recreates the supervisor when the orchBin changes", () => {
+    useDashboardDataMock.mockReturnValue(makeHookResult());
+
+    const app = renderDashboardApp({
+      orchBin: "/tmp/orch-a.js",
+    });
+
+    const firstSupervisor = supervisorState.latest;
+
+    app.rerender(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+        orchBin="/tmp/orch-b.js"
+      />,
+    );
+
+    expect(firstSupervisor?.stop).toHaveBeenCalledTimes(1);
+    expect(createSupervisorMock).toHaveBeenCalledTimes(2);
+    expect(createSupervisorMock).toHaveBeenLastCalledWith({
+      registryPath: "/tmp/runs.json",
+      queuePath: "/tmp/queue.json",
+      orchBin: "/tmp/orch-b.js",
+    });
 
     app.unmount();
   });
@@ -303,12 +320,7 @@ describe("DashboardApp", () => {
       }),
     );
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     app.stdin.write("\r");
     await flushEffects();
@@ -329,12 +341,7 @@ describe("DashboardApp", () => {
       }),
     );
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     app.stdin.write("\u001B[B");
     await flushEffects();
@@ -361,12 +368,7 @@ describe("DashboardApp", () => {
       }),
     );
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     app.stdin.write("f");
     await flushEffects();
@@ -396,12 +398,7 @@ describe("DashboardApp", () => {
       }),
     );
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     app.stdin.write("\r");
     await flushEffects();
@@ -433,12 +430,7 @@ describe("DashboardApp", () => {
     });
     useDashboardDataMock.mockImplementation(() => hookState);
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     app.stdin.write("f");
     await flushEffects();
@@ -453,6 +445,7 @@ describe("DashboardApp", () => {
       <DashboardApp
         registryPath="/tmp/runs.json"
         queuePath="/tmp/queue.json"
+        orchBin="/tmp/orch-bin.js"
       />,
     );
     await flushEffects();
@@ -472,12 +465,7 @@ describe("DashboardApp", () => {
     });
     useDashboardDataMock.mockImplementation(() => hookState);
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     app.stdin.write("\r");
     await vi.advanceTimersByTimeAsync(0);
@@ -491,6 +479,7 @@ describe("DashboardApp", () => {
       <DashboardApp
         registryPath="/tmp/runs.json"
         queuePath="/tmp/queue.json"
+        orchBin="/tmp/orch-bin.js"
       />,
     );
     await vi.advanceTimersByTimeAsync(0);
@@ -525,12 +514,7 @@ describe("DashboardApp", () => {
       }),
     );
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     app.stdin.write("\r");
     await flushEffects();
@@ -557,12 +541,7 @@ describe("DashboardApp", () => {
       }),
     );
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     expect(app.lastFrame()).toContain("> ○ queue-");
 
@@ -585,12 +564,7 @@ describe("DashboardApp", () => {
       }),
     );
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     app.stdin.write("\u001B[B");
     await flushEffects();
@@ -614,12 +588,7 @@ describe("DashboardApp", () => {
       }),
     );
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     app.stdin.write("q");
     await flushEffects();
@@ -645,12 +614,7 @@ describe("DashboardApp", () => {
       }),
     );
 
-    const app = render(
-      <DashboardApp
-        registryPath="/tmp/runs.json"
-        queuePath="/tmp/queue.json"
-      />,
-    );
+    const app = renderDashboardApp();
 
     app.stdin.write("q");
     await flushEffects();

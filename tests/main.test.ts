@@ -225,6 +225,7 @@ describe("subcommand routing", () => {
     expect(mocks.renderDashboard).toHaveBeenCalledWith({
       registryPath: "/tmp/runs.json",
       queuePath: "/tmp/queue.json",
+      orchBin: expect.stringContaining("/dist/src/main.js"),
     });
     expect(mocks.assertGitRepo).not.toHaveBeenCalled();
   });
@@ -256,7 +257,7 @@ describe("subcommand routing", () => {
         planPath: expectedPlanPath,
         branch: "feature/queue",
         flags: ["--auto", "--branch", "feature/queue"],
-        id: expect.any(String),
+        id: resolvePlanId(expectedPlanPath),
         addedAt: expect.any(String),
       }),
     );

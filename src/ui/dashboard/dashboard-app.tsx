@@ -3,7 +3,6 @@ import { createSupervisor } from "#infrastructure/dashboard/supervisor.js";
 import { defaultRegistryPath } from "#infrastructure/registry/run-registry.js";
 import { render, Text } from "ink";
 import React, { useEffect, useMemo, useState } from "react";
-import { fileURLToPath } from "node:url";
 import type { DashboardRun } from "#domain/dashboard.js";
 import { DetailView } from "#ui/dashboard/detail-view.js";
 import { MainView } from "#ui/dashboard/main-view.js";
@@ -20,11 +19,18 @@ export type ViewState =
 export type DashboardAppProps = {
   readonly registryPath: string;
   readonly queuePath: string;
+  readonly orchBin: string;
+  readonly intervalMs?: number;
+};
+
+type RenderDashboardOptions = {
+  readonly registryPath?: string;
+  readonly queuePath?: string;
+  readonly orchBin: string;
   readonly intervalMs?: number;
 };
 
 const runEndedDwellMs = 1_500;
-const dashboardOrchBin = fileURLToPath(new URL("../../../dist/main.js", import.meta.url));
 
 const findDetailRun = (runs: readonly DashboardRun[], runId: string): DashboardRun | undefined =>
   runs.find((run) => run.id === runId);
@@ -52,6 +58,7 @@ const RunEndedView = ({ onReturn }: { readonly onReturn: () => void }) => {
 export const DashboardApp = ({
   registryPath,
   queuePath,
+  orchBin,
   intervalMs,
 }: DashboardAppProps) => {
   const [viewState, setViewState] = useState<ViewState>({ view: "main" });
@@ -71,14 +78,14 @@ export const DashboardApp = ({
     const supervisor = createSupervisor({
       registryPath,
       queuePath,
-      orchBin: dashboardOrchBin,
+      orchBin,
     });
     supervisor.start();
 
     return () => {
       supervisor.stop();
     };
-  }, [queuePath, registryPath]);
+  }, [orchBin, queuePath, registryPath]);
 
   if (loading) {
     return <Text>Loading dashboard…</Text>;
@@ -172,12 +179,13 @@ export const DashboardApp = ({
 };
 
 export const renderDashboard = async (
-  props: Partial<DashboardAppProps> = {},
+  props: RenderDashboardOptions,
 ): Promise<void> => {
   const instance = render(
     <DashboardApp
       registryPath={props.registryPath ?? defaultRegistryPath()}
       queuePath={props.queuePath ?? defaultQueuePath()}
+      orchBin={props.orchBin}
       intervalMs={props.intervalMs}
     />,
   );

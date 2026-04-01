@@ -15,8 +15,7 @@
  *   npx ts-node src/main.ts --init --plan inventory.md        # interactive project init
  */
 
-import { randomUUID } from "crypto";
-import { readFileSync, mkdirSync, watch, writeFileSync } from "fs";
+import { readFileSync, mkdirSync, watch, writeFileSync, existsSync } from "fs";
 import { mkdir, readFile, rm, stat, writeFile } from "fs/promises";
 import { basename, dirname, join, resolve } from "path";
 import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
@@ -94,9 +93,25 @@ const delay = async (ms: number): Promise<void> =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 
 const LOCK_OWNER_FILE = "owner.json";
+const dashboardBuiltEntryPath = resolve(import.meta.dirname, "..", "dist", "src", "main.js");
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
+
+const resolveDashboardOrchBin = (argv: readonly string[]): string => {
+  const currentEntry = argv[1];
+  if (typeof currentEntry === "string" && currentEntry.endsWith(".js")) {
+    return resolve(currentEntry);
+  }
+
+  if (existsSync(dashboardBuiltEntryPath)) {
+    return dashboardBuiltEntryPath;
+  }
+
+  throw new Error(
+    "Cannot resolve a runnable orch entrypoint for dashboard queue execution.",
+  );
+};
 
 const isRegistryLockOwner = (value: unknown): value is RegistryLockOwner =>
   isRecord(value) &&
@@ -347,7 +362,11 @@ export const main = async (runtime: MainRuntime = {}) => {
   };
 
   if (subcommand.command === "dash") {
-    await renderDashboard({ registryPath, queuePath });
+    await renderDashboard({
+      registryPath,
+      queuePath,
+      orchBin: resolveDashboardOrchBin(argv),
+    });
     return;
   }
 
@@ -374,7 +393,7 @@ export const main = async (runtime: MainRuntime = {}) => {
       const planId = resolvePlanId(planPath);
       const branch = parseBranchFlag(subcommand.flags, planId);
       const entry = {
-        id: randomUUID(),
+        id: planId,
         repo: cwd,
         planPath,
         ...(branch === undefined ? {} : { branch }),
@@ -640,7 +659,7 @@ export const main = async (runtime: MainRuntime = {}) => {
   });
   const interactive = !auto && isTTY;
 
-  const runId = randomUUID();
+  const runId = activePlanId;
   let registered = false;
   await withRegistryLock(registryPath, async () => {
     await registerRun(registryPath, {
