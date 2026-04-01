@@ -125,6 +125,29 @@ describe("useDashboardData", () => {
     app.unmount();
   });
 
+  it("uses a 2000ms default polling interval", async () => {
+    vi.useFakeTimers();
+    aggregateDashboardMock.mockResolvedValue(emptyModel);
+
+    const app = render(
+      <HookProbe
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(aggregateDashboardMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(aggregateDashboardMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(aggregateDashboardMock).toHaveBeenCalledTimes(2);
+
+    app.unmount();
+  });
+
   it("stops polling after unmount", async () => {
     vi.useFakeTimers();
     aggregateDashboardMock.mockResolvedValue(emptyModel);

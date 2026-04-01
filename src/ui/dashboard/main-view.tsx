@@ -1,3 +1,4 @@
+import { homedir } from "os";
 import { basename } from "path";
 import { Box, Text, useInput } from "ink";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -10,7 +11,6 @@ export type MainViewProps = {
   readonly model: DashboardModel;
   readonly onOpenDetail: (runId: string) => void;
   readonly onOpenTail: (runId: string) => void;
-  readonly onKill: (runId: string) => void;
   readonly onDelete?: (rowId: string) => void;
 };
 
@@ -27,10 +27,10 @@ const Section = ({
   </Box>
 );
 
-const shortenRepo = (repoPath: string): string => {
-  const shortName = basename(repoPath);
-  return shortName.length > 0 ? shortName : repoPath;
-};
+const shortenId = (id: string): string => id.slice(0, 6);
+
+const shortenRepo = (repoPath: string): string =>
+  repoPath.startsWith(homedir()) ? `~${repoPath.slice(homedir().length)}` : repoPath;
 
 const statusSymbol = (status: DashboardRun["status"]): string => {
   switch (status) {
@@ -44,6 +44,12 @@ const statusSymbol = (status: DashboardRun["status"]): string => {
       return "!";
   }
 };
+
+const buildRunLabel = (run: DashboardRun): string =>
+  `${statusSymbol(run.status)} ${shortenId(run.id)} ${shortenRepo(run.repo)} ${run.branch ?? run.planName ?? "-"} ${run.sliceProgress} ${run.currentPhase ?? "-"} ${run.elapsed}`;
+
+const buildQueueLabel = (entry: QueueEntry): string =>
+  `○ ${shortenId(entry.id)} ${shortenRepo(entry.repo)} ${entry.branch ?? basename(entry.planPath, ".json")} - - -`;
 
 type RenderableRow =
   | {
@@ -70,7 +76,7 @@ const buildSections = (model: DashboardModel): SectionRows[] => [
     rows: model.active.map((run) => ({
       kind: "run",
       id: run.id,
-      label: `${statusSymbol(run.status)} ${run.id} ${shortenRepo(run.repo)} ${run.branch ?? run.planName ?? "-"} ${run.sliceProgress} ${run.currentPhase ?? "-"} ${run.elapsed}`,
+      label: buildRunLabel(run),
       run,
     })),
   },
@@ -79,7 +85,7 @@ const buildSections = (model: DashboardModel): SectionRows[] => [
     rows: model.queued.map((entry) => ({
       kind: "queue",
       id: entry.id,
-      label: `○ ${entry.id} ${shortenRepo(entry.repo)} ${entry.branch ?? basename(entry.planPath, ".json")} queued`,
+      label: buildQueueLabel(entry),
       queueEntry: entry,
     })),
   },
@@ -88,13 +94,13 @@ const buildSections = (model: DashboardModel): SectionRows[] => [
     rows: model.completed.map((run) => ({
       kind: "run",
       id: run.id,
-      label: `${statusSymbol(run.status)} ${run.id} ${shortenRepo(run.repo)} ${run.branch ?? run.planName ?? "-"} ${run.sliceProgress} ${run.currentPhase ?? "-"} ${run.elapsed}`,
+      label: buildRunLabel(run),
       run,
     })),
   },
 ];
 
-export const MainView = ({ model, onOpenDetail, onOpenTail, onKill }: MainViewProps) => {
+export const MainView = ({ model, onOpenDetail, onOpenTail, onDelete }: MainViewProps) => {
   const sections = useMemo(() => buildSections(model), [model]);
   const rows = useMemo(() => sections.flatMap((section) => section.rows), [sections]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -142,21 +148,20 @@ export const MainView = ({ model, onOpenDetail, onOpenTail, onKill }: MainViewPr
     }
 
     if (input === "k" && selectedRow?.kind === "run" && selectedRow.run.pid > 0) {
-      onKill(selectedRow.id);
+      process.kill(selectedRow.run.pid, "SIGTERM");
+      return;
+    }
+
+    const isDeletableRow =
+      selectedRow?.kind === "queue" ||
+      (selectedRow?.kind === "run" && selectedRow.run.status !== "active");
+    if (input === "d" && isDeletableRow) {
+      onDelete?.(selectedRow.id);
     }
   });
 
   const selectedRow = rows[selectedIndex];
   selectedRowRef.current = selectedRow;
-  const shortcuts = ["arrows move"];
-  if (selectedRow?.kind === "run") {
-    shortcuts.push("enter detail");
-    shortcuts.push("f tail");
-
-    if (selectedRow.run.pid > 0) {
-      shortcuts.push("k kill");
-    }
-  }
 
   let rowIndex = -1;
   const renderSectionRow = (row: RenderableRow): React.ReactNode => {
@@ -164,7 +169,11 @@ export const MainView = ({ model, onOpenDetail, onOpenTail, onKill }: MainViewPr
     const isSelected = rowIndex === selectedIndex;
 
     return (
-      <Text key={row.id}>
+      <Text
+        key={row.id}
+        bold={isSelected}
+        inverse={isSelected}
+      >
         {`${isSelected ? ">" : " "} ${row.label}`}
       </Text>
     );
@@ -182,7 +191,7 @@ export const MainView = ({ model, onOpenDetail, onOpenTail, onKill }: MainViewPr
         {sections[2]?.rows.length === 0 ? <Text>No runs to display</Text> : sections[2]?.rows.map(renderSectionRow)}
       </Section>
       {isEmpty ? <Text>No runs to display</Text> : null}
-      <KeyBar shortcuts={shortcuts} />
+      <KeyBar />
     </Box>
   );
 };

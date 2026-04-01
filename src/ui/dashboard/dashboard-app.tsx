@@ -1,5 +1,6 @@
+import { removeFromQueue } from "#infrastructure/queue/queue-store.js";
 import { Box, Text } from "ink";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { MainView } from "#ui/dashboard/main-view.js";
 import { useDashboardData } from "#ui/dashboard/use-dashboard-data.js";
 
@@ -20,7 +21,16 @@ export const DashboardApp = ({
   intervalMs,
 }: DashboardAppProps) => {
   const [viewState, setViewState] = useState<ViewState>({ view: "main" });
+  const [dismissedRowIds, setDismissedRowIds] = useState<string[]>([]);
   const { model, loading, error } = useDashboardData(registryPath, queuePath, intervalMs);
+  const visibleModel = useMemo(
+    () => ({
+      active: model.active,
+      queued: model.queued.filter((entry) => !dismissedRowIds.includes(entry.id)),
+      completed: model.completed.filter((run) => !dismissedRowIds.includes(run.id)),
+    }),
+    [dismissedRowIds, model],
+  );
 
   if (loading) {
     return <Text>Loading dashboard…</Text>;
@@ -48,14 +58,22 @@ export const DashboardApp = ({
 
   return (
     <MainView
-      model={model}
+      model={visibleModel}
       onOpenDetail={(runId) => {
         setViewState({ view: "detail", runId });
       }}
       onOpenTail={(runId) => {
         setViewState({ view: "tail", runId, returnTo: "main" });
       }}
-      onKill={() => {}}
+      onDelete={(rowId) => {
+        setDismissedRowIds((currentIds) =>
+          currentIds.includes(rowId) ? currentIds : [...currentIds, rowId],
+        );
+
+        if (model.queued.some((entry) => entry.id === rowId)) {
+          void removeFromQueue(queuePath, rowId);
+        }
+      }}
     />
   );
 };

@@ -11,7 +11,7 @@ const emptyModel: DashboardModel = {
 export const useDashboardData = (
   registryPath: string,
   queuePath: string,
-  intervalMs = 1_000,
+  intervalMs = 2_000,
 ): { model: DashboardModel; loading: boolean; error?: string } => {
   const [model, setModel] = useState<DashboardModel>(emptyModel);
   const [loading, setLoading] = useState(true);

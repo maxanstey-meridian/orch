@@ -1,12 +1,8 @@
 import { Box, Text } from "ink";
 import React from "react";
 
-export type KeyBarProps = {
-  readonly shortcuts: readonly string[];
-};
-
-export const KeyBar = ({ shortcuts }: KeyBarProps) => (
+export const KeyBar = () => (
   <Box marginTop={1}>
-    <Text>{`Keys: ${shortcuts.join(" | ")}`}</Text>
+    <Text dimColor>↑↓ navigate  ⏎ detail  f tail  q queue  k kill  ? help</Text>
   </Box>
 );

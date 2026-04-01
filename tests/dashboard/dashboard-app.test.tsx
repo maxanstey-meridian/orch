@@ -58,7 +58,7 @@ describe("DashboardApp", () => {
     );
 
     expect(app.lastFrame()).toContain("Active");
-    expect(app.lastFrame()).toContain("run-active");
+    expect(app.lastFrame()).toContain("run-ac");
 
     app.unmount();
   });
