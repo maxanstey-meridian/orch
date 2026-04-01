@@ -159,6 +159,13 @@ describe("ClaudeAgentSpawner", () => {
       expect(mockedSpawnAgent).not.toHaveBeenCalled();
     });
 
+    it("opts.model overrides TRIAGE_MODEL for triage role", () => {
+      const spawner = makeSpawner({ triage: "triage skill" }, "/work");
+      spawner.spawn("triage", { model: "custom-model" });
+      const [, , , model] = mockedSpawnPlanAgent.mock.calls[0];
+      expect(model).toBe("custom-model");
+    });
+
     it("resumeSessionId is not forwarded to spawnPlanAgent", () => {
       const spawner = makeSpawner();
       spawner.spawn("plan", { resumeSessionId: "sess-x" });

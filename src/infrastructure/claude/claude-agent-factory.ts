@@ -75,8 +75,8 @@ const gapSkillContent = readFileSync(
 export const spawnClaudeGapAgent = (cwd?: string, model?: string): ClaudeAgentProcess =>
   spawnClaudeAgent(BOT_GAP, gapSkillContent, undefined, cwd, model);
 
-export const spawnClaudePlanAgentWithSkill = (cwd?: string): ClaudeAgentProcess =>
-  spawnClaudePlanAgent(BOT_PLAN, planSkillContent, cwd);
+export const spawnClaudePlanAgentWithSkill = (cwd?: string, model?: string): ClaudeAgentProcess =>
+  spawnClaudePlanAgent(BOT_PLAN, planSkillContent, cwd, model);
 
 export const spawnClaudeGeneratePlanAgent = (cwd?: string, model?: string): ClaudeAgentProcess =>
   spawnClaudeAgent(BOT_PLAN, generatePlanSkillContent, undefined, cwd, model);

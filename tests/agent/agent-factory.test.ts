@@ -146,6 +146,27 @@ describe("spawnClaudePlanAgentWithSkill", () => {
   });
 });
 
+describe("spawnClaudePlanAgentWithSkill model override", () => {
+  beforeEach(() => {
+    mockedCreateAgent.mockClear();
+  });
+
+  it("passes model through to spawnClaudePlanAgent", async () => {
+    const { spawnClaudePlanAgentWithSkill } = await loadModule();
+    spawnClaudePlanAgentWithSkill(undefined, "claude-sonnet-4-20250514");
+    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
+    expect(args).toContain("--model");
+    expect(args[args.indexOf("--model") + 1]).toBe("claude-sonnet-4-20250514");
+  });
+
+  it("omits --model when no model provided", async () => {
+    const { spawnClaudePlanAgentWithSkill } = await loadModule();
+    spawnClaudePlanAgentWithSkill();
+    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
+    expect(args).not.toContain("--model");
+  });
+});
+
 describe("spawnClaudeAgent model override", () => {
   beforeEach(() => {
     mockedCreateAgent.mockClear();
@@ -164,6 +185,13 @@ describe("spawnClaudeAgent model override", () => {
     spawnClaudeAgent({ label: "TDD", color: "", badge: "" });
     const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
     expect(args).not.toContain("--model");
+  });
+
+  it("--model appears before --append-system-prompt when both provided", async () => {
+    const { spawnClaudeAgent } = await loadModule();
+    spawnClaudeAgent({ label: "TDD", color: "", badge: "" }, "system prompt", undefined, undefined, "claude-sonnet-4-20250514");
+    const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
+    expect(args.indexOf("--model")).toBeLessThan(args.indexOf("--append-system-prompt"));
   });
 });
 
@@ -219,6 +247,13 @@ describe("spawnClaudeGapAgent model override", () => {
     const args: string[] = mockedCreateAgent.mock.calls[0][0].args;
     expect(args).toContain("--model");
     expect(args[args.indexOf("--model") + 1]).toBe("claude-sonnet-4-20250514");
+  });
+
+  it("forwards cwd to createClaudeAgent", async () => {
+    const { spawnClaudeGapAgent } = await loadModule();
+    spawnClaudeGapAgent("/work", "model-x");
+    const opts = mockedCreateAgent.mock.calls[0][0];
+    expect(opts.cwd).toBe("/work");
   });
 });
 

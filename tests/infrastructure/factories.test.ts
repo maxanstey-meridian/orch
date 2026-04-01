@@ -187,6 +187,19 @@ describe("planGeneratorSpawnerFactory", () => {
 
     expect(spawnSpy).toHaveBeenCalledWith("/my/project");
   });
+
+  it("does not pass model to spawnClaudeGeneratePlanAgent", async () => {
+    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
+    const spawnSpy = vi.mocked(mockModule.spawnClaudeGeneratePlanAgent);
+    spawnSpy.mockClear();
+
+    const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = planGeneratorSpawnerFactory({ provider: "claude", cwd: "/my/project" });
+    spawner();
+
+    expect(spawnSpy).toHaveBeenCalledWith("/my/project");
+    expect(spawnSpy.mock.calls[0]).toHaveLength(1);
+  });
 });
 
 describe("promptBuilderFactory", () => {
