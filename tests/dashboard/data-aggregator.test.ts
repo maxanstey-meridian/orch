@@ -305,6 +305,41 @@ describe("data aggregator", () => {
     vi.useRealTimers();
   });
 
+  it("dead PID is classified as failed when completed slice count exceeds plan total", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
+
+    const registryPath = join(tempDir, "runs.json");
+    const queuePath = join(tempDir, "queue.json");
+    const planPath = join(tempDir, "plan.json");
+    const statePath = join(tempDir, "state.json");
+
+    await writeJson(planPath, makePlan());
+    await writeJson(statePath, {
+      startedAt: "2026-04-10T10:00:00.000Z",
+      lastCompletedSlice: 3,
+    });
+    await writeRegistry(registryPath, [
+      makeRunEntry({
+        id: "run-over-complete",
+        pid: 999999,
+        planPath,
+        statePath,
+      }),
+    ]);
+
+    const result = await aggregateDashboard(registryPath, queuePath);
+
+    expect(result.completed).toHaveLength(1);
+    expect(result.completed[0]).toMatchObject({
+      id: "run-over-complete",
+      status: "failed",
+      sliceProgress: "S3/2",
+    });
+
+    vi.useRealTimers();
+  });
+
   it("queued entries are included from queue file", async () => {
     const registryPath = join(tempDir, "runs.json");
     const queuePath = join(tempDir, "queue.json");
