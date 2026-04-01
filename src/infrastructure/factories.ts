@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import type { OperatorGate } from "#application/ports/operator-gate.port.js";
 import type { ProgressSink } from "#application/ports/progress-sink.port.js";
 import type { RuntimeInteractionGate } from "#application/ports/runtime-interaction.port.js";
-import type { OrchestratorConfig, Provider } from "#domain/config.js";
+import { type AgentSpawner } from "#application/ports/agent-spawner.port.js";
+import type { ResolvedAgentConfig } from "#domain/agent-config.js";
+import type { AgentRole } from "#domain/agent-types.js";
+import type { OrchestratorConfig } from "#domain/config.js";
 import type { Hud } from "#ui/hud.js";
 import { InkOperatorGate, SilentOperatorGate, InkProgressSink } from "#ui/ink-operator-gate.js";
 import {
@@ -19,25 +22,39 @@ import { FsStatePersistence } from "./fs-state-persistence.js";
 export const agentSpawnerFactory = (
   config: OrchestratorConfig,
   runtimeInteractionGate: RuntimeInteractionGate,
-) => {
-  switch (config.defaultProvider) {
-    case "claude":
-      return new ClaudeAgentSpawner(
-        { tdd: config.tddSkill, review: config.reviewSkill, verify: config.verifySkill },
-        config.cwd,
-      );
-    case "codex":
-      return new CodexAgentSpawner(
-        config.cwd,
-        { auto: config.auto },
-        () => spawn("codex", ["app-server"], { cwd: config.cwd, stdio: ["pipe", "pipe", "pipe"] }),
-        runtimeInteractionGate,
-      );
-    default: {
-      const _exhaustive: never = config.defaultProvider;
-      throw new Error(`Unknown provider: ${_exhaustive}`);
-    }
-  }
+): AgentSpawner => {
+  let claudeSpawner: ClaudeAgentSpawner | undefined;
+  let codexSpawner: CodexAgentSpawner | undefined;
+
+  const getClaudeSpawner = () =>
+    (claudeSpawner ??= new ClaudeAgentSpawner(
+      { tdd: config.tddSkill, review: config.reviewSkill, verify: config.verifySkill },
+      config.cwd,
+    ));
+
+  const getCodexSpawner = () =>
+    (codexSpawner ??= new CodexAgentSpawner(
+      config.cwd,
+      { auto: config.auto },
+      () => spawn("codex", ["app-server"], { cwd: config.cwd, stdio: ["pipe", "pipe", "pipe"] }),
+      runtimeInteractionGate,
+    ));
+
+  return {
+    spawn(role, opts?) {
+      const { provider, model } = config.agentConfig[role];
+      switch (provider) {
+        case "claude":
+          return getClaudeSpawner().spawn(role, { ...opts, model });
+        case "codex":
+          return getCodexSpawner().spawn(role, opts);
+        default: {
+          const _exhaustive: never = provider;
+          throw new Error(`Unknown provider: ${_exhaustive}`);
+        }
+      }
+    },
+  };
 };
 agentSpawnerFactory.inject = ["config", "runtimeInteractionGate"] as const;
 
@@ -67,14 +84,18 @@ export const runtimeInteractionGateFactory = (
   config.auto ? new SilentRuntimeInteractionGate() : new InkRuntimeInteractionGate(hud);
 runtimeInteractionGateFactory.inject = ["config", "hud"] as const;
 
-export const planGeneratorSpawnerFactory = (opts: { provider: Provider; cwd: string }) => {
-  switch (opts.provider) {
+export const planGeneratorSpawnerFactory = (opts: {
+  agentConfig: Record<AgentRole, ResolvedAgentConfig>;
+  cwd: string;
+}) => {
+  const { provider, model } = opts.agentConfig.plan;
+  switch (provider) {
     case "claude":
-      return () => spawnClaudeGeneratePlanAgent(opts.cwd);
+      return () => spawnClaudeGeneratePlanAgent(opts.cwd, model);
     case "codex":
       throw new Error("Codex provider is not yet implemented");
     default: {
-      const _exhaustive: never = opts.provider;
+      const _exhaustive: never = provider;
       throw new Error(`Unknown provider: ${_exhaustive}`);
     }
   }

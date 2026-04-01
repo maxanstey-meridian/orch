@@ -173,7 +173,10 @@ const main = async () => {
       log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
       planPath = inputPath;
     } else {
-      const spawnPlanGenerator = planGeneratorSpawnerFactory({ provider, cwd });
+      const spawnPlanGenerator = planGeneratorSpawnerFactory({
+        agentConfig: resolveAllAgentConfigs(orchrc.agents, provider),
+        cwd,
+      });
       planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnPlanGenerator);
     }
   }
