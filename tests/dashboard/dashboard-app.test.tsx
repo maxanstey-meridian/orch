@@ -1,3 +1,4 @@
+import { Text } from "ink";
 import { render } from "ink-testing-library";
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,6 +14,27 @@ vi.mock("#ui/dashboard/use-dashboard-data.js", () => ({
 
 vi.mock("#infrastructure/queue/queue-store.js", () => ({
   removeFromQueue: vi.fn(),
+}));
+
+const tailViewState = vi.hoisted(() => ({
+  latestProps: undefined as
+    | { readonly runId: string; readonly logPath?: string; readonly onBack: () => void }
+    | undefined,
+}));
+
+vi.mock("#ui/dashboard/tail-view.js", () => ({
+  TailView: ({
+    runId,
+    logPath,
+    onBack,
+  }: {
+    readonly runId: string;
+    readonly logPath?: string;
+    readonly onBack: () => void;
+  }) => {
+    tailViewState.latestProps = { runId, logPath, onBack };
+    return <Text>{`Tail view: ${runId} ${logPath ?? "-"}`}</Text>;
+  },
 }));
 
 const useDashboardDataMock = vi.mocked(useDashboardData);
@@ -63,10 +85,30 @@ const flushEffects = async (): Promise<void> =>
     setTimeout(resolvePromise, 0);
   });
 
+const waitForFrame = async (
+  app: { lastFrame: () => string | undefined },
+  predicate: (frame: string) => boolean,
+  timeoutMs = 500,
+): Promise<string> => {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const frame = app.lastFrame() ?? "";
+    if (predicate(frame)) {
+      return frame;
+    }
+
+    await flushEffects();
+  }
+
+  throw new Error(`Timed out waiting for dashboard frame: ${app.lastFrame() ?? ""}`);
+};
+
 describe("DashboardApp", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
+    tailViewState.latestProps = undefined;
   });
 
   it("renders a loading state while the dashboard hook is loading", () => {
@@ -182,10 +224,15 @@ describe("DashboardApp", () => {
     app.unmount();
   });
 
-  it("switches to the tail placeholder when f is pressed on a run", async () => {
+  it("switches to the tail view when f is pressed on a run and routes back to main", async () => {
     useDashboardDataMock.mockReturnValue({
       model: makeModel({
-        active: [makeRun({ id: "run-active" })],
+        active: [
+          makeRun({
+            id: "run-active",
+            logPath: "/tmp/.orch/logs/plan-abc123.log",
+          }),
+        ],
       }),
       loading: false,
       error: undefined,
@@ -201,15 +248,26 @@ describe("DashboardApp", () => {
     app.stdin.write("f");
     await flushEffects();
 
-    expect(app.lastFrame()).toContain("Tail placeholder: run-active");
+    expect(app.lastFrame()).toContain("Tail view: run-active /tmp/.orch/logs/plan-abc123.log");
+    expect(tailViewState.latestProps?.logPath).toBe("/tmp/.orch/logs/plan-abc123.log");
+
+    tailViewState.latestProps?.onBack();
+    const mainFrame = await waitForFrame(app, (frame) => frame.includes("Active"));
+
+    expect(mainFrame).toContain("run-ac");
 
     app.unmount();
   });
 
-  it("routes tail from detail with returnTo detail", async () => {
+  it("routes tail from detail and returns to detail", async () => {
     useDashboardDataMock.mockReturnValue({
       model: makeModel({
-        active: [makeRun({ id: "run-active" })],
+        active: [
+          makeRun({
+            id: "run-active",
+            logPath: "/tmp/.orch/logs/plan-abc123.log",
+          }),
+        ],
       }),
       loading: false,
       error: undefined,
@@ -229,8 +287,58 @@ describe("DashboardApp", () => {
     app.stdin.write("f");
     await flushEffects();
 
-    expect(app.lastFrame()).toContain("Tail placeholder: run-active");
-    expect(app.lastFrame()).toContain("Return to: detail");
+    expect(app.lastFrame()).toContain("Tail view: run-active /tmp/.orch/logs/plan-abc123.log");
+
+    tailViewState.latestProps?.onBack();
+    const detailFrame = await waitForFrame(app, (frame) => frame.includes("Plan: Dashboard"));
+
+    expect(detailFrame).toContain("Registry");
+
+    app.unmount();
+  });
+
+  it("keeps the captured logPath while tail is open after the run disappears from the model", async () => {
+    let hookState = {
+      model: makeModel({
+        active: [
+          makeRun({
+            id: "run-active",
+            logPath: "/tmp/.orch/logs/plan-abc123.log",
+          }),
+        ],
+      }),
+      loading: false,
+      error: undefined as string | undefined,
+    };
+    useDashboardDataMock.mockImplementation(() => hookState);
+
+    const app = render(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+
+    app.stdin.write("f");
+    await flushEffects();
+
+    expect(app.lastFrame()).toContain("Tail view: run-active /tmp/.orch/logs/plan-abc123.log");
+
+    hookState = {
+      model: makeModel(),
+      loading: false,
+      error: undefined,
+    };
+    app.rerender(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+    await flushEffects();
+
+    expect(app.lastFrame()).toContain("Tail view: run-active /tmp/.orch/logs/plan-abc123.log");
+    expect(tailViewState.latestProps?.logPath).toBe("/tmp/.orch/logs/plan-abc123.log");
 
     app.unmount();
   });

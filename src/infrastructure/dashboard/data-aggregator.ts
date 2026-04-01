@@ -1,4 +1,4 @@
-import { basename } from "path";
+import { basename, dirname, join } from "path";
 import type { DashboardRun } from "#domain/dashboard.js";
 import type { DashboardModel } from "#domain/dashboard.js";
 import type { Group } from "#domain/plan.js";
@@ -19,6 +19,13 @@ const compareStartedAtDescending = (left: RunEntry, right: RunEntry): number =>
   new Date(right.startedAt).getTime() - new Date(left.startedAt).getTime();
 
 const planNameFromPath = (planPath: string): string => basename(planPath, ".json");
+
+const logPathFromStatePath = (statePath: string): string => {
+  const stateDir = dirname(statePath);
+  const orchDir = basename(stateDir) === "state" ? dirname(stateDir) : stateDir;
+
+  return join(orchDir, "logs", `${basename(statePath, ".json")}.log`);
+};
 
 const resolvePlanName = (groups: readonly Group[], planPath: string): string =>
   groups[0]?.name ?? planNameFromPath(planPath);
@@ -134,6 +141,7 @@ const buildRun = async (entry: RunEntry, status: DashboardRun["status"]): Promis
     currentPhase: state.currentPhase,
     elapsed: formatElapsed(startedAt),
     pid: entry.pid,
+    logPath: logPathFromStatePath(entry.statePath),
     ...(plan.groups === undefined ? {} : { groups: projectGroups(plan.groups, state, status) }),
   };
 };
@@ -162,6 +170,7 @@ const buildCompletedRun = async (entry: RunEntry): Promise<DashboardRun> => {
     currentPhase: state.currentPhase,
     elapsed: formatElapsed(startedAt),
     pid: entry.pid,
+    logPath: logPathFromStatePath(entry.statePath),
     ...(plan.groups === undefined ? {} : { groups: projectGroups(plan.groups, state, status) }),
   };
 };

@@ -1,6 +1,6 @@
-import { mkdtemp, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunEntry } from "#domain/registry.js";
 import { aggregateDashboard, formatElapsed } from "#infrastructure/dashboard/data-aggregator.js";
@@ -8,6 +8,7 @@ import { addToQueue } from "#infrastructure/queue/queue-store.js";
 import { writeRegistry } from "#infrastructure/registry/run-registry.js";
 
 const writeJson = async (filePath: string, value: unknown): Promise<void> => {
+  await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, JSON.stringify(value, null, 2));
 };
 
@@ -146,6 +147,7 @@ describe("data aggregator", () => {
       currentPhase: "review",
       elapsed: "2h",
       pid: process.pid,
+      logPath: join(tempDir, "logs", "state.log"),
     });
 
     vi.useRealTimers();
@@ -262,6 +264,30 @@ describe("data aggregator", () => {
     expect(result.active[0]?.elapsed).toBe("2h 30m");
 
     vi.useRealTimers();
+  });
+
+  it("derives logPath from the canonical state file path", async () => {
+    const registryPath = join(tempDir, "runs.json");
+    const queuePath = join(tempDir, "queue.json");
+    const orchDir = join(tempDir, ".orch");
+    const planPath = join(tempDir, "plan.json");
+    const statePath = join(orchDir, "state", "plan-abc123.json");
+
+    await writeJson(planPath, makePlan());
+    await writeJson(statePath, {
+      lastCompletedSlice: 1,
+    });
+    await writeRegistry(registryPath, [
+      makeRunEntry({
+        id: "run-random-uuid",
+        planPath,
+        statePath,
+      }),
+    ]);
+
+    const result = await aggregateDashboard(registryPath, queuePath);
+
+    expect(result.active[0]?.logPath).toBe(join(orchDir, "logs", "plan-abc123.log"));
   });
 
   it("dead PID is classified as failed when slices remain", async () => {

@@ -1,9 +1,10 @@
 import { removeFromQueue } from "#infrastructure/queue/queue-store.js";
-import { Box, Text } from "ink";
+import { Text } from "ink";
 import React, { useEffect, useMemo, useState } from "react";
 import type { DashboardRun } from "#domain/dashboard.js";
 import { DetailView } from "#ui/dashboard/detail-view.js";
 import { MainView } from "#ui/dashboard/main-view.js";
+import { TailView } from "#ui/dashboard/tail-view.js";
 import { useDashboardData } from "#ui/dashboard/use-dashboard-data.js";
 
 export type ViewState =
@@ -21,6 +22,12 @@ const runEndedDwellMs = 1_500;
 
 const findDetailRun = (runs: readonly DashboardRun[], runId: string): DashboardRun | undefined =>
   runs.find((run) => run.id === runId);
+
+const findTailRun = (model: {
+  readonly active: readonly DashboardRun[];
+  readonly completed: readonly DashboardRun[];
+}, runId: string): DashboardRun | undefined =>
+  [...model.active, ...model.completed].find((run) => run.id === runId);
 
 const RunEndedView = ({ onReturn }: { readonly onReturn: () => void }) => {
   useEffect(() => {
@@ -42,6 +49,7 @@ export const DashboardApp = ({
   intervalMs,
 }: DashboardAppProps) => {
   const [viewState, setViewState] = useState<ViewState>({ view: "main" });
+  const [tailLogPath, setTailLogPath] = useState<string | undefined>(undefined);
   const [dismissedRowIds, setDismissedRowIds] = useState<string[]>([]);
   const { model, loading, error } = useDashboardData(registryPath, queuePath, intervalMs);
   const visibleModel = useMemo(
@@ -77,6 +85,7 @@ export const DashboardApp = ({
           setViewState({ view: "main" });
         }}
         onTail={() => {
+          setTailLogPath(selectedRun.logPath);
           setViewState({ view: "tail", runId: selectedRun.id, returnTo: "detail" });
         }}
       />
@@ -84,11 +93,21 @@ export const DashboardApp = ({
   }
 
   if (viewState.view === "tail") {
+    const returnToView = (): void => {
+      if (viewState.returnTo === "detail") {
+        setViewState({ view: "detail", runId: viewState.runId });
+        return;
+      }
+
+      setViewState({ view: "main" });
+    };
+
     return (
-      <Box flexDirection="column">
-        <Text>{`Tail placeholder: ${viewState.runId}`}</Text>
-        <Text>{`Return to: ${viewState.returnTo}`}</Text>
-      </Box>
+      <TailView
+        logPath={tailLogPath}
+        runId={viewState.runId}
+        onBack={returnToView}
+      />
     );
   }
 
@@ -99,6 +118,7 @@ export const DashboardApp = ({
         setViewState({ view: "detail", runId });
       }}
       onOpenTail={(runId) => {
+        setTailLogPath(findTailRun(visibleModel, runId)?.logPath);
         setViewState({ view: "tail", runId, returnTo: "main" });
       }}
       onDelete={(rowId) => {
