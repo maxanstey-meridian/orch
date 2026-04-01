@@ -42,6 +42,7 @@ import {
 } from "#infrastructure/plan/plan-generator.js";
 import { parsePlan } from "#infrastructure/plan/plan-parser.js";
 import { deregisterRun, registerRun } from "#infrastructure/registry/run-registry.js";
+import { logPathForPlan } from "#infrastructure/log/log-writer.js";
 import {
   loadState,
   clearState,
@@ -455,6 +456,7 @@ export const main = async (runtime: MainRuntime = {}) => {
       maxReviewCycles: orchrc.config.maxReviewCycles ?? 3,
       maxReplans: orchrc.config.maxReplans ?? 2,
       stateFile,
+      logPath: logPathForPlan(orchDir, activePlanId),
       tddSkill,
       reviewSkill,
       verifySkill,

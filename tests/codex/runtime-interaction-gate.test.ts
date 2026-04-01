@@ -113,6 +113,7 @@ describe('runtimeInteractionGateFactory', () => {
     reviewThreshold: 0,
     maxReviewCycles: 0,
     stateFile: '',
+    logPath: null,
     tddSkill: null,
     reviewSkill: null,
     verifySkill: null,

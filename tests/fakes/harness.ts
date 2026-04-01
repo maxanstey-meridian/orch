@@ -9,6 +9,7 @@ import { FakeAgentSpawner } from "./fake-agent-spawner.js";
 import { InMemoryStatePersistence } from "./fake-state-persistence.js";
 import { InMemoryGitOps } from "./fake-git-ops.js";
 import { PassthroughPromptBuilder } from "./fake-prompt-builder.js";
+import { FakeLogWriter } from "./fake-log-writer.js";
 
 const DEFAULT_CONFIG: OrchestratorConfig = {
   cwd: "/tmp/test",
@@ -19,6 +20,7 @@ const DEFAULT_CONFIG: OrchestratorConfig = {
   reviewThreshold: 30,
   maxReviewCycles: 3,
   stateFile: "/tmp/state.json",
+  logPath: null,
   tddSkill: "test",
   reviewSkill: "test",
   verifySkill: "test",
@@ -51,6 +53,7 @@ export const createTestHarness = (opts?: {
   const persistence = new InMemoryStatePersistence();
   const git = new InMemoryGitOps();
   const prompts = new PassthroughPromptBuilder();
+  const logWriter = new FakeLogWriter();
 
   // REAL production code — the full chain from HUD through to orchestration
   const progressSink = new InkProgressSink(hud);
@@ -68,6 +71,7 @@ export const createTestHarness = (opts?: {
     prompts,
     config,
     progressSink,
+    logWriter,
   );
   uc.retryDelayMs = 0;
 
@@ -75,5 +79,5 @@ export const createTestHarness = (opts?: {
     persistence.current = opts.state;
   }
 
-  return { uc, hud, spawner, persistence, git, prompts, progressSink, gate, config };
+  return { uc, hud, spawner, persistence, git, prompts, progressSink, gate, config, logWriter };
 };

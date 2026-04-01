@@ -18,6 +18,7 @@ import { spawnClaudeGeneratePlanAgent } from "./claude/claude-agent-factory.js";
 import { CodexAgentSpawner } from "./codex/codex-agent-spawner.js";
 import { DefaultPromptBuilder } from "./default-prompt-builder.js";
 import { FsStatePersistence } from "./fs-state-persistence.js";
+import { FsLogWriter, NullLogWriter } from "./log/log-writer.js";
 
 export const agentSpawnerFactory = (
   config: OrchestratorConfig,
@@ -78,6 +79,10 @@ agentSpawnerFactory.inject = ["config", "runtimeInteractionGate"] as const;
 export const statePersistenceFactory = (config: OrchestratorConfig) =>
   new FsStatePersistence(config.stateFile);
 statePersistenceFactory.inject = ["config"] as const;
+
+export const logWriterFactory = (config: OrchestratorConfig) =>
+  config.logPath === null ? new NullLogWriter() : new FsLogWriter(config.logPath);
+logWriterFactory.inject = ["config"] as const;
 
 export const gitOpsFactory = (config: OrchestratorConfig) => new ChildProcessGitOps(config.cwd);
 gitOpsFactory.inject = ["config"] as const;

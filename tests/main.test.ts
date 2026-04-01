@@ -8,6 +8,7 @@ import { tmpdir } from "os";
 import { execSync, spawnSync } from "child_process";
 import { loadState, saveState, clearState, statePathForPlan } from "#infrastructure/state/state.js";
 import { resolvePlanId } from "#infrastructure/plan/plan-generator.js";
+import { logPathForPlan } from "#infrastructure/log/log-writer.js";
 
 const exec = (cmd: string, cwd: string) => execSync(cmd, { cwd, encoding: "utf-8" }).trim();
 
@@ -683,6 +684,7 @@ const makeTestConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorCo
   reviewThreshold: 0,
   maxReviewCycles: 3,
   stateFile: "/tmp/state.json",
+  logPath: null,
   tddSkill: "tdd-skill",
   reviewSkill: "review-skill",
   verifySkill: "verify-skill",
@@ -715,9 +717,157 @@ const makeTestAgent = (): AgentHandle => ({
   pipe: vi.fn(),
 });
 
+describe("main log path wiring", () => {
+  it("passes the per-plan log path into createContainer", async () => {
+    const planPath = join(tempDir, "plan.md");
+    await writeFile(planPath, MINIMAL_PLAN);
+    const expectedPlanId = resolvePlanId(planPath);
+    const { realpathSync } = await import("fs");
+    const expectedOrchDir = join(realpathSync(tempDir), ".orch");
+
+    const createContainer = vi.fn(() => ({
+      resolve: vi.fn(() => ({
+        execute: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      })),
+    }));
+
+    vi.resetModules();
+    vi.doMock("../src/composition-root.js", () => ({
+      createContainer,
+    }));
+    vi.doMock("#infrastructure/git/repo-check.js", () => ({
+      assertGitRepo: vi.fn().mockResolvedValue(undefined),
+    }));
+    vi.doMock("#infrastructure/config/orchrc.js", () => ({
+      loadAndResolveOrchrConfig: vi.fn(() => ({
+        skills: {
+          tdd: { enabled: true, value: "tdd skill" },
+          review: { enabled: true, value: "review skill" },
+          verify: { enabled: true, value: "verify skill" },
+          gap: { disabled: true },
+          plan: { disabled: true },
+        },
+        config: {},
+        rules: { tdd: undefined, review: undefined },
+        agents: {},
+      })),
+      resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
+      buildOrchrSummary: vi.fn(() => "summary"),
+    }));
+    vi.doMock("#domain/agent-config.js", async () => {
+      const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
+      return {
+        ...actual,
+        resolveAllAgentConfigs: vi.fn(() => actual.AGENT_DEFAULTS),
+      };
+    });
+    vi.doMock("#infrastructure/fingerprint.js", () => ({
+      runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+    }));
+    vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
+      parsePlan: vi.fn().mockResolvedValue([
+        {
+          name: "Test",
+          slices: [{
+            number: 1,
+            title: "Slice 1",
+            content: "content",
+            why: "why",
+            files: [{ path: "src/s1.ts", action: "new" }],
+            details: "details",
+            tests: "tests",
+          }],
+        },
+      ]),
+    }));
+    vi.doMock("#infrastructure/git/worktree.js", () => ({
+      checkWorktreeResume: vi.fn().mockResolvedValue({ ok: true }),
+      runCleanup: vi.fn(),
+    }));
+    vi.doMock("#infrastructure/git/worktree-setup.js", () => ({
+      resolveWorktree: vi.fn().mockResolvedValue({
+        cwd: tempDir,
+        worktreeInfo: null,
+        skipStash: true,
+      }),
+    }));
+    vi.doMock("#infrastructure/git/git.js", () => ({
+      getStatus: vi.fn().mockResolvedValue(""),
+      stashBackup: vi.fn().mockResolvedValue(false),
+    }));
+    vi.doMock("#ui/hud.js", () => ({
+      createHud: vi.fn(() => ({
+        update: vi.fn(),
+        wrapLog: vi.fn((logger: (...args: unknown[]) => void) => logger),
+        teardown: vi.fn(),
+        setActivity: vi.fn(),
+        onKey: vi.fn(),
+        onInterruptSubmit: vi.fn(),
+        startPrompt: vi.fn(),
+        createWriter: vi.fn(),
+        setSkipping: vi.fn(),
+      })),
+    }));
+    vi.doMock("#ui/display.js", async () => {
+      const actual = await vi.importActual<typeof import("#ui/display.js")>("#ui/display.js");
+      return {
+        ...actual,
+        logSection: vi.fn(),
+        printStartupBanner: vi.fn(),
+        formatPlanSummary: vi.fn(),
+      };
+    });
+
+    const previousArgv = process.argv;
+    const previousCwd = process.cwd();
+    process.argv = [
+      "node",
+      "main.ts",
+      "--work",
+      planPath,
+      "--skip-fingerprint",
+      "--no-interaction",
+    ];
+    process.chdir(tempDir);
+
+    try {
+      const { main } = await import("../src/main.ts");
+      await main({
+        registryPath: join(tempDir, "registry", "runs.json"),
+        onSignal: vi.fn(() => process),
+        exit: vi.fn(),
+      });
+    } finally {
+      process.argv = previousArgv;
+      process.chdir(previousCwd);
+      vi.doUnmock("../src/composition-root.js");
+      vi.doUnmock("#infrastructure/git/repo-check.js");
+      vi.doUnmock("#infrastructure/config/orchrc.js");
+      vi.doUnmock("#domain/agent-config.js");
+      vi.doUnmock("#infrastructure/fingerprint.js");
+      vi.doUnmock("#infrastructure/plan/plan-parser.js");
+      vi.doUnmock("#infrastructure/git/worktree.js");
+      vi.doUnmock("#infrastructure/git/worktree-setup.js");
+      vi.doUnmock("#infrastructure/git/git.js");
+      vi.doUnmock("#ui/hud.js");
+      vi.doUnmock("#ui/display.js");
+      vi.resetModules();
+    }
+
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        logPath: logPathForPlan(expectedOrchDir, expectedPlanId),
+      }),
+      expect.any(Object),
+    );
+  });
+});
+
 describe("composition root integration", () => {
   it("createContainer resolves RunOrchestration and executes a minimal plan end-to-end", async () => {
     const { createContainer } = await import("../src/composition-root.js");
+    const { RunOrchestration } = await import("../src/application/run-orchestration.js");
     const config = makeTestConfig();
     const dummyHud = {
       askUser: vi.fn().mockResolvedValue(""),

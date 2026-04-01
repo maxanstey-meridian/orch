@@ -40,6 +40,7 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   reviewThreshold: 30,
   maxReviewCycles: 3,
   stateFile: "/tmp/state.json",
+  logPath: null,
   tddSkill: "tdd-skill",
   reviewSkill: "review-skill",
   verifySkill: "verify-skill",
@@ -186,5 +187,16 @@ describe("promptBuilderFactory", () => {
     const result = promptBuilderFactory(config);
     expect(result).toBeInstanceOf(DefaultPromptBuilder);
     expect(promptBuilderFactory.inject).toEqual(["config"]);
+  });
+});
+
+describe("logWriterFactory", () => {
+  it("returns NullLogWriter when config.logPath is null and FsLogWriter otherwise", async () => {
+    const { logWriterFactory } = await import("../../src/infrastructure/factories.js");
+    const { FsLogWriter, NullLogWriter } = await import("../../src/infrastructure/log/log-writer.js");
+
+    expect(logWriterFactory(makeConfig({ logPath: null }))).toBeInstanceOf(NullLogWriter);
+    expect(logWriterFactory(makeConfig({ logPath: "/tmp/test.log" }))).toBeInstanceOf(FsLogWriter);
+    expect(logWriterFactory.inject).toEqual(["config"]);
   });
 });

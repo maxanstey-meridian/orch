@@ -12,6 +12,7 @@ export type OrchestratorConfig = {
   readonly reviewThreshold: number;
   readonly maxReviewCycles: number;
   readonly stateFile: string;
+  readonly logPath: string | null;
   readonly tddSkill: string | null;
   readonly reviewSkill: string | null;
   readonly verifySkill: string | null;

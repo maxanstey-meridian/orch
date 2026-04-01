@@ -24,6 +24,7 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   reviewThreshold: 30,
   maxReviewCycles: 3,
   stateFile: "/tmp/state.json",
+  logPath: null,
   tddSkill: "tdd-skill",
   reviewSkill: "review-skill",
   verifySkill: "verify-skill",
@@ -82,5 +83,27 @@ describe("composition-root", () => {
     const sink = container.resolve("progressSink");
     // auto = true → SilentProgressSink → teardown is a no-op, shouldn't throw
     expect(() => sink.teardown()).not.toThrow();
+  });
+
+  it("resolves logWriter and still resolves RunOrchestration", async () => {
+    const { createContainer } = await import("../src/composition-root.js");
+    const { NullLogWriter } = await import("../src/infrastructure/log/log-writer.js");
+    const config = makeConfig({ logPath: null });
+    const dummyHud = {
+      askUser: vi.fn(),
+      update: vi.fn(),
+      setActivity: vi.fn(),
+      teardown: vi.fn(),
+      onKey: vi.fn(),
+      onInterruptSubmit: vi.fn(),
+      startPrompt: vi.fn(),
+      wrapLog: vi.fn(),
+      createWriter: vi.fn(),
+      setSkipping: vi.fn(),
+    } as any;
+
+    const container = createContainer(config, dummyHud);
+    expect(container.resolve("logWriter")).toBeInstanceOf(NullLogWriter);
+    expect(container.resolve("runOrchestration")).toBeInstanceOf(RunOrchestration);
   });
 });

@@ -17,6 +17,7 @@ import { parseVerifyResult } from "#domain/verify.js";
 import { buildTriagePrompt, parseTriageResult } from "#infrastructure/diff-triage.js";
 import type { AgentSpawner, AgentHandle } from "./ports/agent-spawner.port.js";
 import type { GitOps } from "./ports/git-ops.port.js";
+import type { LogWriter } from "./ports/log-writer.port.js";
 import type { OperatorGate } from "./ports/operator-gate.port.js";
 import type { ProgressSink } from "./ports/progress-sink.port.js";
 import type { PromptBuilder } from "./ports/prompt-builder.port.js";
@@ -39,6 +40,7 @@ export class RunOrchestration {
     "promptBuilder",
     "config",
     "progressSink",
+    "logWriter",
   ] as const;
 
   state: OrchestratorState = {};
@@ -62,6 +64,7 @@ export class RunOrchestration {
     private readonly prompts: PromptBuilder,
     private readonly config: OrchestratorConfig,
     private readonly progressSink: ProgressSink,
+    private readonly logWriter: LogWriter,
   ) {}
 
   private failIncompleteSlice(slice: Slice, reason: string): never {
@@ -76,7 +79,17 @@ export class RunOrchestration {
 
   private pipeToSink(agent: AgentHandle, role: AgentRole): void {
     const streamer = this.progressSink.createStreamer(role);
-    agent.pipe(streamer, (summary) => this.progressSink.setActivity(summary));
+    agent.pipe(
+      (text) => {
+        streamer(text);
+        this.logWriter.write(role, text);
+      },
+      (summary) => this.progressSink.setActivity(summary),
+    );
+  }
+
+  private logOrch(text: string): void {
+    this.logWriter.write("ORCH", text);
   }
 
   private async persistStateEvent(event: StateEvent): Promise<void> {
@@ -85,6 +98,7 @@ export class RunOrchestration {
   }
 
   private async enterPhase(phase: PersistedPhase, sliceNumber: number): Promise<void> {
+    this.logOrch(`Entered phase ${phase} for slice ${sliceNumber}`);
     await this.persistStateEvent({ kind: "phaseEntered", phase, sliceNumber });
   }
 
@@ -119,77 +133,78 @@ export class RunOrchestration {
       onReady?: (info: { tddSessionId: string; reviewSessionId: string }) => void;
     },
   ): Promise<void> {
-    if (groups.length === 0) {
-      return;
-    }
-
-    this.state = await this.persistence.load();
-
-    // Spawn initial agents
-    this.tddAgent = this.agents.spawn("tdd", {
-      resumeSessionId: this.state.tddSessionId,
-      cwd: this.config.cwd,
-    });
-    this.reviewAgent = this.agents.spawn("review", {
-      resumeSessionId: this.state.reviewSessionId,
-      cwd: this.config.cwd,
-    });
-    this.pipeToSink(this.tddAgent, "tdd");
-    this.pipeToSink(this.reviewAgent, "review");
-
-    // Send rules reminders (skip if resuming)
-    const reminders: Promise<string>[] = [];
-    if (!this.state.tddSessionId) {
-      reminders.push(this.tddAgent.sendQuiet(this.prompts.rulesReminder("tdd")));
-    }
-    if (!this.state.reviewSessionId) {
-      reminders.push(this.reviewAgent.sendQuiet(this.prompts.rulesReminder("review")));
-    }
-    await Promise.all(reminders);
-
-    if (this.state.tddSessionId) {
-      this.tddIsFirst = false;
-    }
-    if (this.state.reviewSessionId) {
-      this.reviewIsFirst = false;
-    }
-
-    opts?.onReady?.({
-      tddSessionId: this.tddAgent.sessionId,
-      reviewSessionId: this.reviewAgent.sessionId,
-    });
-
-    // Register keyboard interrupts
-    const interrupts = this.progressSink.registerInterrupts();
-    interrupts.onGuide((text) => {
-      if (this.tddAgent) {
-        this.tddAgent.inject(text);
+    try {
+      if (groups.length === 0) {
+        return;
       }
-    });
-    interrupts.onInterrupt((text) => {
-      this.hardInterruptPending = text;
-      if (this.tddAgent) {
-        this.tddAgent.kill();
-      }
-    });
-    interrupts.onSkip(() => {
-      if (!this.canSkipCurrentSlice()) {
-        return false;
-      }
-      this.sliceSkipFlag = !this.sliceSkipFlag;
-      return true;
-    });
-    interrupts.onQuit(() => {
-      this.quitRequested = true;
-      if (this.tddAgent) {
-        this.tddAgent.kill();
-      }
-    });
 
-    const runBaseSha = await this.git.captureRef();
+      this.state = await this.persistence.load();
 
-    for (let i = 0; i < groups.length; i++) {
-      const group = groups[i];
+      // Spawn initial agents
+      this.tddAgent = this.agents.spawn("tdd", {
+        resumeSessionId: this.state.tddSessionId,
+        cwd: this.config.cwd,
+      });
+      this.reviewAgent = this.agents.spawn("review", {
+        resumeSessionId: this.state.reviewSessionId,
+        cwd: this.config.cwd,
+      });
+      this.pipeToSink(this.tddAgent, "tdd");
+      this.pipeToSink(this.reviewAgent, "review");
+
+      // Send rules reminders (skip if resuming)
+      const reminders: Promise<string>[] = [];
+      if (!this.state.tddSessionId) {
+        reminders.push(this.tddAgent.sendQuiet(this.prompts.rulesReminder("tdd")));
+      }
+      if (!this.state.reviewSessionId) {
+        reminders.push(this.reviewAgent.sendQuiet(this.prompts.rulesReminder("review")));
+      }
+      await Promise.all(reminders);
+
+      if (this.state.tddSessionId) {
+        this.tddIsFirst = false;
+      }
+      if (this.state.reviewSessionId) {
+        this.reviewIsFirst = false;
+      }
+
+      opts?.onReady?.({
+        tddSessionId: this.tddAgent.sessionId,
+        reviewSessionId: this.reviewAgent.sessionId,
+      });
+
+      // Register keyboard interrupts
+      const interrupts = this.progressSink.registerInterrupts();
+      interrupts.onGuide((text) => {
+        if (this.tddAgent) {
+          this.tddAgent.inject(text);
+        }
+      });
+      interrupts.onInterrupt((text) => {
+        this.hardInterruptPending = text;
+        if (this.tddAgent) {
+          this.tddAgent.kill();
+        }
+      });
+      interrupts.onSkip(() => {
+        if (!this.canSkipCurrentSlice()) {
+          return false;
+        }
+        this.sliceSkipFlag = !this.sliceSkipFlag;
+        return true;
+      });
+      interrupts.onQuit(() => {
+        this.quitRequested = true;
+        if (this.tddAgent) {
+          this.tddAgent.kill();
+        }
+      });
+
+      const runBaseSha = await this.git.captureRef();
+
+      for (let i = 0; i < groups.length; i++) {
+        const group = groups[i];
 
       // Skip entire group if all its slices are already completed
       const allSlicesDone =
@@ -244,6 +259,7 @@ export class RunOrchestration {
           continue;
         }
 
+        this.logOrch(`Starting slice ${slice.number} (${group.name})`);
         await this.persistStateEvent({
           kind: "sliceStarted",
           sliceNumber: slice.number,
@@ -358,10 +374,17 @@ export class RunOrchestration {
           }
         }
       }
-    }
+      }
 
-    // Final passes
-    await this.finalPasses(runBaseSha);
+      // Final passes
+      await this.finalPasses(runBaseSha);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logOrch(`Execution failed: ${message}`);
+      throw error;
+    } finally {
+      await this.logWriter.close();
+    }
   }
 
   async planThenExecute(
@@ -498,6 +521,7 @@ export class RunOrchestration {
       this.phase = { kind: "Idle" };
       this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
       await this.persistence.save(this.state);
+      this.logOrch(`Completed slice ${slice.number}`);
       this.slicesCompleted++;
       return { reviewBase, skipped: false };
     }
@@ -532,6 +556,7 @@ export class RunOrchestration {
       this.phase = transition(this.phase, { kind: "SliceComplete" });
       this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
       await this.persistence.save(this.state);
+      this.logOrch(`Completed slice ${slice.number}`);
       this.slicesCompleted++;
       return { reviewBase, skipped: false };
     }
@@ -558,6 +583,7 @@ export class RunOrchestration {
 
     this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
     await this.persistence.save(this.state);
+    this.logOrch(`Completed slice ${slice.number}`);
     this.slicesCompleted++;
     this.progressSink.updateProgress({ activeAgent: undefined, activeAgentActivity: undefined });
     return { reviewBase: newReviewBase, skipped: false };
