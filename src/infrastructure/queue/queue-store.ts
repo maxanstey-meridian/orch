@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, writeFile } from "fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import type { QueueEntry } from "#domain/queue.js";
@@ -13,6 +13,7 @@ const createCorruptQueueError = (queuePath: string): Error =>
   new Error(`Queue file is corrupt: ${queuePath}`);
 
 const lockRetryDelayMs = 10;
+const staleLockAgeMs = 5_000;
 const pendingMutations = new Map<string, Promise<void>>();
 
 const sleep = async (ms: number): Promise<void> =>
@@ -49,6 +50,99 @@ const lockPathForQueue = (queuePath: string): string => `${queuePath}.lock`;
 
 const tempPathForQueue = (queuePath: string): string =>
   `${queuePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+
+const isLockMetadata = (value: unknown): value is { readonly pid: number; readonly createdAtMs: number } => {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.pid === "number" &&
+    Number.isInteger(value.pid) &&
+    value.pid > 0 &&
+    typeof value.createdAtMs === "number" &&
+    Number.isFinite(value.createdAtMs)
+  );
+};
+
+const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(hasCode(error) && error.code === "ESRCH");
+  }
+};
+
+const writeLockMetadata = async (lockPath: string): Promise<void> => {
+  await writeFile(
+    lockPath,
+    JSON.stringify({
+      pid: process.pid,
+      createdAtMs: Date.now(),
+    }),
+    { flag: "wx" },
+  );
+};
+
+const readLockMetadata = async (
+  lockPath: string,
+): Promise<{ readonly pid: number; readonly createdAtMs: number } | undefined> => {
+  try {
+    const raw = await readFile(lockPath, "utf8");
+    const parsed: unknown = JSON.parse(raw);
+    return isLockMetadata(parsed) ? parsed : undefined;
+  } catch (error) {
+    if (hasCode(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    return undefined;
+  }
+};
+
+const isStaleLock = async (lockPath: string): Promise<boolean> => {
+  let lockStats;
+  try {
+    lockStats = await stat(lockPath);
+  } catch (error) {
+    if (hasCode(error) && error.code === "ENOENT") {
+      return false;
+    }
+
+    throw error;
+  }
+
+  if (lockStats.isDirectory()) {
+    // Older revisions used a directory lock. Current code never does, so any
+    // directory at this path is stale and should be cleared immediately.
+    return true;
+  }
+
+  const lockMetadata = await readLockMetadata(lockPath);
+  if (lockMetadata !== undefined) {
+    return !isProcessAlive(lockMetadata.pid);
+  }
+
+  return Date.now() - lockStats.mtimeMs >= staleLockAgeMs;
+};
+
+const clearStaleLock = async (lockPath: string): Promise<boolean> => {
+  try {
+    if (!(await isStaleLock(lockPath))) {
+      return false;
+    }
+  } catch (error) {
+    if (hasCode(error) && error.code === "ENOENT") {
+      return false;
+    }
+
+    throw error;
+  }
+
+  await rm(lockPath, { recursive: true, force: true });
+  return true;
+};
 
 const writeQueue = async (queuePath: string, entries: QueueEntry[]): Promise<void> => {
   await mkdir(dirname(queuePath), { recursive: true });
@@ -121,14 +215,17 @@ const withFileLock = async <T>(
 
   while (true) {
     try {
-      await mkdir(lockPath);
+      await writeLockMetadata(lockPath);
       break;
     } catch (error) {
-      if (!hasCode(error) || error.code !== "EEXIST") {
+      if (!hasCode(error) || (error.code !== "EEXIST" && error.code !== "EISDIR")) {
         throw error;
       }
 
-      await sleep(lockRetryDelayMs);
+      const clearedLock = await clearStaleLock(lockPath);
+      if (!clearedLock) {
+        await sleep(lockRetryDelayMs);
+      }
     }
   }
 

@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { join, resolve } from "path";
 import { homedir, tmpdir } from "os";
 import { pathToFileURL } from "url";
@@ -19,6 +19,7 @@ type ChildProcessResult = {
   readonly signal: NodeJS.Signals | null;
   readonly stdout: string;
   readonly stderr: string;
+  readonly timedOut: boolean;
 };
 
 type QueueEntryOverrides = {
@@ -50,7 +51,10 @@ const makeEntry = (overrides: QueueEntryOverrides = {}): QueueEntry => {
   };
 };
 
-const runNodeProcess = async (args: readonly string[]): Promise<ChildProcessResult> => {
+const runNodeProcess = async (
+  args: readonly string[],
+  options: { readonly timeoutMs?: number } = {},
+): Promise<ChildProcessResult> => {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(process.execPath, args, {
       cwd: process.cwd(),
@@ -59,6 +63,14 @@ const runNodeProcess = async (args: readonly string[]): Promise<ChildProcessResu
 
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+    const timeoutHandle =
+      options.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            child.kill("SIGKILL");
+          }, options.timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer | string) => {
       stdout += chunk.toString();
@@ -66,13 +78,22 @@ const runNodeProcess = async (args: readonly string[]): Promise<ChildProcessResu
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderr += chunk.toString();
     });
-    child.on("error", rejectPromise);
+    child.on("error", (error) => {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
+      rejectPromise(error);
+    });
     child.on("close", (code, signal) => {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
       resolvePromise({
         code,
         signal,
         stdout,
         stderr,
+        timedOut,
       });
     });
   });
@@ -234,6 +255,7 @@ describe("queue store", () => {
         signal: null,
         stdout: "",
         stderr: "",
+        timedOut: false,
       });
     }
 
@@ -243,6 +265,7 @@ describe("queue store", () => {
         signal: null,
         stdout: "",
         stderr: "",
+        timedOut: false,
       });
     }
 
@@ -251,6 +274,36 @@ describe("queue store", () => {
     expect(actualEntries.map((entry) => entry.id).sort()).toEqual(
       [baselineEntry, ...entries].map((entry) => entry.id).sort(),
     );
+  });
+
+  it("addToQueue recovers from a legacy lock directory left behind by older implementations", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const entry = makeEntry({ id: "queue-1" });
+    const lockPath = `${queuePath}.lock`;
+
+    await mkdir(lockPath, { recursive: true });
+
+    const result = await runNodeProcess(
+      [
+        "--experimental-strip-types",
+        "--input-type=module",
+        "-e",
+        addWorkerScript,
+        queueStoreModuleUrl,
+        queuePath,
+        JSON.stringify(entry),
+      ],
+      { timeoutMs: 300 },
+    );
+
+    expect(result).toEqual({
+      code: 0,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+    });
+    await expect(readQueue(queuePath)).resolves.toEqual([entry]);
   });
 
   it("removeFromQueue removes only matching entry", async () => {
