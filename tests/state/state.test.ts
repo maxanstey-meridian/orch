@@ -287,8 +287,38 @@ describe("state", () => {
     await expect(loadState(testPath)).rejects.toThrow("currentPhase");
   });
 
+  it("throws when startedAt is not a string", async () => {
+    await writeFile(testPath, JSON.stringify({ startedAt: 123 }));
+    await expect(loadState(testPath)).rejects.toThrow("startedAt");
+  });
+
+  it("throws when currentSlice is negative", async () => {
+    await writeFile(testPath, JSON.stringify({ currentSlice: -1 }));
+    await expect(loadState(testPath)).rejects.toThrow("currentSlice");
+  });
+
+  it("throws when currentSlice is not an integer", async () => {
+    await writeFile(testPath, JSON.stringify({ currentSlice: 1.5 }));
+    await expect(loadState(testPath)).rejects.toThrow("currentSlice");
+  });
+
+  it("throws when currentGroup is an empty string", async () => {
+    await writeFile(testPath, JSON.stringify({ currentGroup: "" }));
+    await expect(loadState(testPath)).rejects.toThrow("currentGroup");
+  });
+
   it("throws when sliceTimings contains an invalid entry", async () => {
     await writeFile(testPath, JSON.stringify({ sliceTimings: [{ number: "two", startedAt: "2026-04-02T10:00:00.000Z" }] }));
+    await expect(loadState(testPath)).rejects.toThrow("sliceTimings");
+  });
+
+  it("throws when sliceTimings contains a non-string completedAt", async () => {
+    await writeFile(
+      testPath,
+      JSON.stringify({
+        sliceTimings: [{ number: 2, startedAt: "2026-04-02T10:00:00.000Z", completedAt: 123 }],
+      }),
+    );
     await expect(loadState(testPath)).rejects.toThrow("sliceTimings");
   });
 

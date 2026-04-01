@@ -14,6 +14,24 @@ const makeSlice = (n: number): Slice => ({
 
 const makeGroup = (name: string, slices: Slice[]): Group => ({ name, slices });
 
+const hasPhaseSubsequence = (
+  phases: readonly (string | undefined)[],
+  expected: readonly string[],
+): boolean => {
+  let expectedIndex = 0;
+
+  for (const phase of phases) {
+    if (phase === expected[expectedIndex]) {
+      expectedIndex += 1;
+      if (expectedIndex === expected.length) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
+
 describe("Review loop lifecycle", () => {
   it("review clean on first cycle, slice completes", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
@@ -73,6 +91,35 @@ describe("Review loop lifecycle", () => {
     // TDD received at least a fix prompt
     const tdd = spawner.lastAgent("tdd");
     expect(tdd.sentPrompts.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("persists review and tdd phases across a review-fix retry", async () => {
+    const { uc, spawner, persistence, git } = createTestHarness({
+      config: { planDisabled: true, gapDisabled: true, verifySkill: null },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+    git.setDiffStats({ added: 50, removed: 10, total: 60 });
+
+    spawner.onNextSpawn("tdd",
+      okResult({ assistantText: "implemented" }),
+      okResult({ assistantText: "fixed review issues" }),
+    );
+    spawner.onNextSpawn("review",
+      okResult({ assistantText: "Found issues: missing null check in handler" }),
+      okResult({ assistantText: "REVIEW_CLEAN" }),
+    );
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+
+    await uc.execute([makeGroup("G1", [makeSlice(1)])]);
+
+    expect(
+      hasPhaseSubsequence(
+        persistence.saveHistory.map((state) => state.currentPhase),
+        ["review", "tdd", "review"],
+      ),
+    ).toBe(true);
   });
 
   it("max review cycles exhausted, slice still completes", async () => {

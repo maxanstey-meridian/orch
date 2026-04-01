@@ -18,6 +18,24 @@ const makeGroup = (name: string, slices: Slice[]): Group => ({ name, slices });
 const VERIFY_PASS = "### VERIFY_RESULT\n**Status:** PASS\n";
 const VERIFY_FAIL = "### VERIFY_RESULT\n**Status:** FAIL\n**New failures** (caused by recent changes):\n- test_foo broke\n";
 
+const hasPhaseSubsequence = (
+  phases: readonly (string | undefined)[],
+  expected: readonly string[],
+): boolean => {
+  let expectedIndex = 0;
+
+  for (const phase of phases) {
+    if (phase === expected[expectedIndex]) {
+      expectedIndex += 1;
+      if (expectedIndex === expected.length) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
+
 describe("Verify loop lifecycle", () => {
   it("verify passes first try, slice completes normally", async () => {
     const { uc, hud, spawner, persistence, git } = createTestHarness({
@@ -74,6 +92,35 @@ describe("Verify loop lifecycle", () => {
     // Second prompt should be a fix prompt (contains failure info)
     const fixPrompt = tdd.sentPrompts[1];
     expect(fixPrompt).toContain("test_foo");
+  });
+
+  it("persists verify and tdd phases across a verify-fix retry", async () => {
+    const { uc, spawner, persistence, git } = createTestHarness({
+      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+
+    spawner.onNextSpawn("tdd",
+      okResult({ assistantText: "implemented" }),
+      okResult({ assistantText: "fixed the failing test" }),
+    );
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn("verify",
+      okResult({ assistantText: VERIFY_FAIL }),
+      okResult({ assistantText: VERIFY_PASS }),
+    );
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+
+    await uc.execute([makeGroup("G1", [makeSlice(1)])]);
+
+    expect(
+      hasPhaseSubsequence(
+        persistence.saveHistory.map((state) => state.currentPhase),
+        ["verify", "tdd", "verify"],
+      ),
+    ).toBe(true);
   });
 
   it("verify fails, TDD makes no changes, operator chooses retry then passes", async () => {

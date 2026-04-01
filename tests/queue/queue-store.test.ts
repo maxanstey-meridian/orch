@@ -406,4 +406,65 @@ describe("queue store", () => {
     );
     await expect(readFile(queuePath, "utf8")).resolves.toBe(malformedFile);
   });
+
+  it("removeFromQueue throws and preserves the file when the queue contains malformed entries", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const validEntry = makeEntry({ id: "queue-1" });
+    const malformedFile = JSON.stringify([
+      validEntry,
+      {
+        id: "broken",
+        repo: "/repo",
+        planPath: "/plan",
+        flags: "oops",
+        addedAt: "2026-04-03T12:00:00.000Z",
+      },
+    ]);
+    await writeFile(queuePath, malformedFile);
+
+    await expect(removeFromQueue(queuePath, validEntry.id)).rejects.toThrow(
+      `Queue file is corrupt: ${queuePath}`,
+    );
+    await expect(readFile(queuePath, "utf8")).resolves.toBe(malformedFile);
+  });
+
+  it("moveInQueue throws and preserves the file when the queue contains malformed entries", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const validEntry = makeEntry({ id: "queue-1" });
+    const malformedFile = JSON.stringify([
+      validEntry,
+      {
+        id: "broken",
+        repo: "/repo",
+        planPath: "/plan",
+        flags: "oops",
+        addedAt: "2026-04-03T12:00:00.000Z",
+      },
+    ]);
+    await writeFile(queuePath, malformedFile);
+
+    await expect(moveInQueue(queuePath, validEntry.id, 0)).rejects.toThrow(
+      `Queue file is corrupt: ${queuePath}`,
+    );
+    await expect(readFile(queuePath, "utf8")).resolves.toBe(malformedFile);
+  });
+
+  it("dequeueNext throws and preserves the file when the queue contains malformed entries", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const validEntry = makeEntry({ id: "queue-1" });
+    const malformedFile = JSON.stringify([
+      validEntry,
+      {
+        id: "broken",
+        repo: "/repo",
+        planPath: "/plan",
+        flags: "oops",
+        addedAt: "2026-04-03T12:00:00.000Z",
+      },
+    ]);
+    await writeFile(queuePath, malformedFile);
+
+    await expect(dequeueNext(queuePath)).rejects.toThrow(`Queue file is corrupt: ${queuePath}`);
+    await expect(readFile(queuePath, "utf8")).resolves.toBe(malformedFile);
+  });
 });

@@ -14,6 +14,24 @@ const makeSlice = (n: number, title = `Slice ${n}`): Slice => ({
 
 const makeGroup = (name: string, slices: Slice[]): Group => ({ name, slices });
 
+const hasPhaseSubsequence = (
+  phases: readonly (string | undefined)[],
+  expected: readonly string[],
+): boolean => {
+  let expectedIndex = 0;
+
+  for (const phase of phases) {
+    if (phase === expected[expectedIndex]) {
+      expectedIndex += 1;
+      if (expectedIndex === expected.length) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
+
 describe("Happy path lifecycle", () => {
   it("single slice completes through plan-execute-verify-review", async () => {
     const { uc, hud, spawner, persistence, git } = createTestHarness({
@@ -149,6 +167,68 @@ describe("Happy path lifecycle", () => {
     expect(persistence.saveHistory.some((state) => state.currentPhase === "gap")).toBe(true);
     expect(persistence.saveHistory.some((state) => state.currentPhase === "final")).toBe(true);
     expect(persistence.current.currentPhase).toBeUndefined();
+  });
+
+  it("persists verify and tdd phases when completeness sends fixes back to TDD", async () => {
+    const { uc, spawner, persistence, git } = createTestHarness({
+      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+
+    spawner.onNextSpawn("tdd",
+      okResult({ assistantText: "slice 1 done" }),
+      okResult({ assistantText: "completed missing work" }),
+    );
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn("completeness",
+      okResult({ assistantText: "❌ Missing required assertion for slice coverage" }),
+    );
+
+    await uc.execute([makeGroup("G1", [makeSlice(1)])]);
+
+    expect(persistence.current.lastCompletedSlice).toBe(1);
+    expect(
+      hasPhaseSubsequence(
+        persistence.saveHistory.map((state) => state.currentPhase),
+        ["verify", "tdd"],
+      ),
+    ).toBe(true);
+  });
+
+  it("persists tdd phases after gap and final findings trigger fix loops", async () => {
+    const { uc, spawner, persistence, git, prompts } = createTestHarness({
+      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: false },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+    prompts.finalPassesOverride = [{ name: "sanity", prompt: "check final state" }];
+
+    spawner.onNextSpawn("tdd",
+      okResult({ assistantText: "slice 1 done" }),
+      okResult({ assistantText: "added missing gap coverage" }),
+      okResult({ assistantText: "addressed final-pass issue" }),
+    );
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn("completeness",
+      okResult({ assistantText: "SLICE_COMPLETE" }),
+    );
+    spawner.onNextSpawn("gap",
+      okResult({ assistantText: "Missing queue coverage in follow-up path" }),
+    );
+    spawner.onNextSpawn("final",
+      okResult({ assistantText: "Found issue in final pass output" }),
+    );
+
+    await uc.execute([makeGroup("G1", [makeSlice(1)])]);
+
+    const phaseHistory = persistence.saveHistory.map((state) => state.currentPhase);
+
+    expect(persistence.current.lastCompletedSlice).toBe(1);
+    expect(hasPhaseSubsequence(phaseHistory, ["gap", "tdd"])).toBe(true);
+    expect(hasPhaseSubsequence(phaseHistory, ["final", "tdd"])).toBe(true);
   });
 
   it("two groups with inter-group confirmation and agent respawn", async () => {
