@@ -54,7 +54,7 @@ export const createFakeAppServer = (): FakeAppServer => {
 
   const rl = createInterface({ input: clientStdin });
 
-  const sendResponse = (id: number, result: unknown) => {
+  const sendResponse = (id: number | string, result: unknown) => {
     clientStdout.push(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
   };
 
@@ -123,6 +123,10 @@ export const createFakeAppServer = (): FakeAppServer => {
       receivedRequests.push({ id: id as number, method, params });
     } else if (method) {
       receivedNotifications.push({ method, params });
+    }
+
+    if (id == null) {
+      return;
     }
 
     switch (method) {

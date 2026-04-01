@@ -1,5 +1,5 @@
 import type { AgentRole, AgentStyle } from "#domain/agent-types.js";
-import { BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL } from "./display.js";
+import { BOT_TDD, BOT_REVIEW, BOT_VERIFY, BOT_PLAN, BOT_GAP, BOT_FINAL, a } from "./display.js";
 
 export const ROLE_STYLES: Readonly<Record<AgentRole, AgentStyle>> = {
   tdd: BOT_TDD,
@@ -9,5 +9,5 @@ export const ROLE_STYLES: Readonly<Record<AgentRole, AgentStyle>> = {
   gap: BOT_GAP,
   final: BOT_FINAL,
   completeness: BOT_PLAN,
-  triage: { label: "Triage", color: "#888", badge: "[TRG]" },
+  triage: { label: "TRG", color: a.dim, badge: `${a.dim} TRG ${a.reset}` },
 };
