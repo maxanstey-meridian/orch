@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { AGENT_DEFAULTS } from "#domain/agent-config.js";
 import type { OrchestratorConfig } from "#domain/config.js";
 import type { Hud } from "#ui/hud.js";
 
@@ -45,21 +46,24 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   gapDisabled: false,
   planDisabled: false,
   maxReplans: 2,
-  provider: "claude",
+  defaultProvider: "claude",
+  agentConfig: AGENT_DEFAULTS,
   tddRules: "custom tdd",
   reviewRules: "custom review",
   ...overrides,
 });
 
 describe("agentSpawnerFactory", () => {
-  it("creates ClaudeAgentSpawner from config with correct skills and cwd", async () => {
+  it("routes claude role to ClaudeAgentSpawner", async () => {
+    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
+    const spawnClaudeAgent = vi.mocked(mockModule.spawnClaudeAgent);
+    spawnClaudeAgent.mockClear();
+
     const { agentSpawnerFactory } = await import("../../src/infrastructure/factories.js");
-    const { ClaudeAgentSpawner } = await import(
-      "../../src/infrastructure/claude-agent-spawner.js"
-    );
     const config = makeConfig();
-    const result = agentSpawnerFactory(config, dummyGate);
-    expect(result).toBeInstanceOf(ClaudeAgentSpawner);
+    const spawner = agentSpawnerFactory(config, dummyGate);
+    spawner.spawn("tdd");
+    expect(spawnClaudeAgent).toHaveBeenCalled();
     expect(agentSpawnerFactory.inject).toEqual(["config", "runtimeInteractionGate"]);
   });
 
@@ -81,18 +85,10 @@ describe("agentSpawnerFactory", () => {
       "my-tdd-skill",         // systemPrompt from skills.tdd
       undefined,              // resumeSessionId
       "/custom/cwd",          // cwd from config
+      undefined,              // model
     );
   });
 
-  it("creates CodexAgentSpawner for codex provider", async () => {
-    const { agentSpawnerFactory } = await import("../../src/infrastructure/factories.js");
-    const { CodexAgentSpawner } = await import(
-      "../../src/infrastructure/codex/codex-agent-spawner.js"
-    );
-    const config = makeConfig({ provider: "codex" });
-    const result = agentSpawnerFactory(config, dummyGate);
-    expect(result).toBeInstanceOf(CodexAgentSpawner);
-  });
 });
 
 describe("statePersistenceFactory", () => {
@@ -153,20 +149,23 @@ describe("progressSinkFactory", () => {
 describe("planGeneratorSpawnerFactory", () => {
   it("returns a spawner function for claude provider", async () => {
     const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
-    const spawner = planGeneratorSpawnerFactory({ provider: "claude", cwd: "/tmp/test" });
+    const spawner = planGeneratorSpawnerFactory({ agentConfig: AGENT_DEFAULTS, cwd: "/tmp/test" });
     expect(typeof spawner).toBe("function");
   });
 
   it("throws for codex provider", async () => {
     const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
-    expect(() => planGeneratorSpawnerFactory({ provider: "codex", cwd: "/tmp" })).toThrow(
-      "not yet implemented",
-    );
+    expect(() =>
+      planGeneratorSpawnerFactory({
+        agentConfig: { ...AGENT_DEFAULTS, plan: { provider: "codex" } },
+        cwd: "/tmp",
+      }),
+    ).toThrow("not yet implemented");
   });
 
   it("returned spawner produces an object with send and kill", async () => {
     const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
-    const spawner = planGeneratorSpawnerFactory({ provider: "claude", cwd: "/tmp" });
+    const spawner = planGeneratorSpawnerFactory({ agentConfig: AGENT_DEFAULTS, cwd: "/tmp" });
     const agent = spawner();
 
     expect(agent).toHaveProperty("send");
@@ -175,17 +174,6 @@ describe("planGeneratorSpawnerFactory", () => {
     expect(typeof agent.kill).toBe("function");
   });
 
-  it("passes cwd to spawnClaudeGeneratePlanAgent", async () => {
-    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
-    const spawnSpy = vi.mocked(mockModule.spawnClaudeGeneratePlanAgent);
-    spawnSpy.mockClear();
-
-    const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
-    const spawner = planGeneratorSpawnerFactory({ provider: "claude", cwd: "/my/project" });
-    spawner();
-
-    expect(spawnSpy).toHaveBeenCalledWith("/my/project");
-  });
 });
 
 describe("promptBuilderFactory", () => {

@@ -142,7 +142,7 @@ describe("ClaudeAgentSpawner", () => {
     it("passes style, systemPrompt, and cwd to spawnPlanAgent", () => {
       const spawner = makeSpawner({ plan: "plan skill" }, "/work");
       spawner.spawn("plan", { cwd: "/custom" });
-      expect(mockedSpawnPlanAgent).toHaveBeenCalledWith(ROLE_STYLES.plan, "plan skill", "/custom");
+      expect(mockedSpawnPlanAgent).toHaveBeenCalledWith(ROLE_STYLES.plan, "plan skill", "/custom", undefined);
     });
 
     it("passes the Haiku model override for triage", () => {
@@ -162,7 +162,8 @@ describe("ClaudeAgentSpawner", () => {
       spawner.spawn("plan", { resumeSessionId: "sess-x" });
       expect(mockedSpawnPlanAgent).toHaveBeenCalledOnce();
       const args = mockedSpawnPlanAgent.mock.calls[0];
-      expect(args).toHaveLength(3);
+      expect(args).toHaveLength(4);
+      expect(args[3]).toBeUndefined();
       expect(args).not.toContain("sess-x");
     });
   });

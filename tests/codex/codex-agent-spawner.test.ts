@@ -19,26 +19,6 @@ describe('CodexAgentSpawner', () => {
     fake?.close();
   });
 
-  it('spawning triage returns a stub handle without starting Codex', async () => {
-    const processFactory = vi.fn();
-    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, processFactory, silentGate);
-
-    const handle = spawner.spawn('triage');
-    const result = await handle.send('classify this diff');
-    const quietResult = await handle.sendQuiet('classify quietly');
-
-    expect(processFactory).not.toHaveBeenCalled();
-    expect(handle.sessionId).toBe('');
-    expect(handle.alive).toBe(false);
-    expect(result).toEqual({
-      exitCode: 0,
-      assistantText: '',
-      resultText: '',
-      needsInput: false,
-      sessionId: '',
-    });
-    expect(quietResult).toBe('');
-  });
 
   it('spawn with no resumeSessionId calls thread/start and sessionId is the thread id', async () => {
     fake = createFakeAppServer();

@@ -785,10 +785,7 @@ export class RunOrchestration {
     this.phase = transition(this.phase, { kind: "AllPassesDone" });
   }
 
-  async gapAnalysis(
-    group: Group,
-    groupBaseSha: string,
-  ): Promise<void> {
+  async gapAnalysis(group: Group, groupBaseSha: string): Promise<void> {
     if (!(await this.git.hasChanges(groupBaseSha))) {
       return;
     }
@@ -843,10 +840,6 @@ export class RunOrchestration {
     if (!diff) {
       return FULL_TRIAGE;
     }
-    if (this.config.provider === "codex") {
-      return FULL_TRIAGE;
-    }
-
     try {
       const agent = this.agents.spawn("triage", { cwd: this.config.cwd });
       const prompt = buildTriagePrompt(diff);

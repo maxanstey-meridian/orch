@@ -73,26 +73,6 @@ export class CodexAgentSpawner implements AgentSpawner {
     },
   ): AgentHandle {
     const style = ROLE_STYLES[role];
-    if (role === "triage") {
-      return {
-        sessionId: "",
-        style,
-        alive: false,
-        stderr: "",
-        send: async () => ({
-          exitCode: 0,
-          assistantText: "",
-          resultText: "",
-          needsInput: false,
-          sessionId: "",
-        }),
-        sendQuiet: async () => "",
-        inject: () => {},
-        kill: () => {},
-        pipe: () => {},
-      };
-    }
-
     const modeConfig = resolveCodexModeConfig(role, this.config);
     const proc = this.processFactory();
     const client = createCodexAppServerClient(proc);

@@ -667,6 +667,7 @@ vi.mock("../src/infrastructure/claude/claude-agent-factory.js", () => ({
   ),
 }));
 
+import { AGENT_DEFAULTS } from "#domain/agent-config.js";
 import type { OrchestratorConfig } from "#domain/config.js";
 import type { AgentResult } from "#domain/agent-types.js";
 import type { AgentHandle } from "#application/ports/agent-spawner.port.js";
@@ -688,7 +689,8 @@ const makeTestConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorCo
   gapDisabled: true,
   planDisabled: true,
   maxReplans: 2,
-  provider: "claude",
+  defaultProvider: "claude",
+  agentConfig: AGENT_DEFAULTS,
   ...overrides,
 });
 

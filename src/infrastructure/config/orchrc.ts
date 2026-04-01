@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import type { AgentRole } from "#domain/agent-types.js";
+import { AGENT_ROLES } from "#domain/agent-types.js";
 
 const skillValue = z.string().nullable().optional();
 
@@ -23,11 +25,19 @@ const configSchema = z.object({
   maxReplans: z.number().int().positive().optional(),
 });
 
+const agentsSchema = z
+  .record(
+    z.enum(AGENT_ROLES as unknown as [string, ...string[]]),
+    z.string().regex(/^(claude(:(opus|sonnet|haiku))?|codex)$/),
+  )
+  .optional();
+
 export const orchrcSchema = z
   .object({
     skills: skillsSchema.optional(),
     rules: rulesSchema.optional(),
     config: configSchema.optional(),
+    agents: agentsSchema,
   })
   .strict();
 
@@ -45,6 +55,7 @@ export type ResolvedOrchrConfig = {
   skills: Record<SkillKey, ResolvedSkill>;
   rules: Partial<Record<RuleKey, string>>;
   config: Partial<z.infer<typeof configSchema>>;
+  agents?: Partial<Record<AgentRole, string>>;
 };
 
 export const resolveOrchrConfig = (raw: OrchrConfig, cwd: string): ResolvedOrchrConfig => {
@@ -85,7 +96,7 @@ export const resolveOrchrConfig = (raw: OrchrConfig, cwd: string): ResolvedOrchr
     }
   }
 
-  return { skills, rules, config: raw.config ?? {} };
+  return { skills, rules, config: raw.config ?? {}, agents: raw.agents };
 };
 
 export const buildOrchrSummary = (config: ResolvedOrchrConfig): string | undefined => {
@@ -100,6 +111,13 @@ export const buildOrchrSummary = (config: ResolvedOrchrConfig): string | undefin
   for (const [key, value] of Object.entries(config.config)) {
     if (value !== undefined) {
       labels.push(`${key}: ${value}`);
+    }
+  }
+  if (config.agents) {
+    for (const [role, value] of Object.entries(config.agents)) {
+      if (value !== "claude") {
+        labels.push(`${role}: ${value}`);
+      }
     }
   }
   return labels.length > 0 ? labels.join(", ") : undefined;

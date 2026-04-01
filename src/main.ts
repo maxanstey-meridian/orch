@@ -18,6 +18,7 @@
 import { readFileSync, mkdirSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { resolve } from "path";
+import { resolveAllAgentConfigs } from "#domain/agent-config.js";
 import type { OrchestratorConfig } from "#domain/config.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
 import { parseBranchFlag, parseProviderFlag } from "#infrastructure/cli/cli-args.js";
@@ -159,6 +160,7 @@ const main = async () => {
 
   // 3. Resolve plan path — generate from inventory or use existing
   const provider = parseProviderFlag(args);
+  const agentConfig = resolveAllAgentConfigs(orchrc.agents, provider);
   let planPath: string;
 
   if (workMode) {
@@ -171,7 +173,7 @@ const main = async () => {
       log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
       planPath = inputPath;
     } else {
-      const spawnPlanGenerator = planGeneratorSpawnerFactory({ provider, cwd });
+      const spawnPlanGenerator = planGeneratorSpawnerFactory({ agentConfig, cwd });
       planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnPlanGenerator);
     }
   }
@@ -301,7 +303,8 @@ const main = async () => {
     gapDisabled,
     planDisabled,
     tddRules: orchrc.rules.tdd,
-    provider,
+    defaultProvider: provider,
+    agentConfig,
     reviewRules: orchrc.rules.review,
   } satisfies OrchestratorConfig;
 

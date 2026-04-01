@@ -1,3 +1,4 @@
+import { AGENT_DEFAULTS } from "#domain/agent-config.js";
 import type { OrchestratorConfig } from "#domain/config.js";
 import type { OrchestratorState } from "#domain/state.js";
 import type { AgentResult } from "#domain/agent-types.js";
@@ -24,7 +25,8 @@ const DEFAULT_CONFIG: OrchestratorConfig = {
   gapDisabled: true,
   planDisabled: false,
   maxReplans: 3,
-  provider: "claude",
+  defaultProvider: "claude",
+  agentConfig: AGENT_DEFAULTS,
 };
 
 /** Standard successful AgentResult. Override fields as needed. */

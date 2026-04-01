@@ -5,7 +5,7 @@ export type CodexModeConfig = {
   readonly approvalMode: "auto-approve" | "interactive";
 };
 
-const READ_ONLY_ROLES: ReadonlySet<AgentRole> = new Set(["plan", "gap", "completeness"]);
+const READ_ONLY_ROLES: ReadonlySet<AgentRole> = new Set(["plan", "gap", "completeness", "triage"]);
 
 export const resolveCodexModeConfig = (
   role: AgentRole,
