@@ -106,13 +106,20 @@ module. These silently diverge when the named type changes. The fix is to refere
 - Conditionals that check a subset of a discriminated union's variants
 - State that is initialized but can be read before initialization completes
 
-### 10. Enum / value completeness
+### 10. Tests that assert broken behaviour
+
+Tests that "document" a known bug by asserting the wrong outcome. For example: `expect(brokenToggle).toBe(true)` with a
+comment like "BUG: this doesn't toggle off yet" or "documents the bug". These are worse than no test — they pass green,
+giving false confidence, and actively prevent anyone from catching the bug via test failure. If a behaviour is wrong, the
+test must either assert the correct behaviour (and fail until fixed) or not exist. Never assert the broken state.
+
+### 11. Enum / value completeness
 
 When the scope introduces or touches an enum value, status string, or type constant — use `findReferences` on sibling
 values to find every consumer (switch/case, filter arrays, display logic, serialisation). Verify the new or changed
 value is handled everywhere. Pure diff review is not enough — read outside the diff.
 
-### 11. Data safety and race conditions
+### 12. Data safety and race conditions
 
 Flag as highest severity:
 

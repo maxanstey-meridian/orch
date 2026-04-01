@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { AgentSpawner } from "../../../src/application/ports/agent-spawner.port.js";
-import type { AgentHandle } from "../../../src/application/ports/agent-spawner.port.js";
-import type { AgentStyle, AgentResult, AgentRole } from "../../../src/domain/agent-types.js";
+import { AgentSpawner } from "#application/ports/agent-spawner.port.js";
+import type { AgentHandle } from "#application/ports/agent-spawner.port.js";
+import type { AgentStyle, AgentResult, AgentRole } from "#domain/agent-types.js";
 
 describe("AgentHandle", () => {
   it("can be created as a mock object literal with all required fields", async () => {

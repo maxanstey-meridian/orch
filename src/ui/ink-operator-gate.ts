@@ -60,6 +60,7 @@ export class SilentProgressSink implements ProgressSink {
       onGuide: () => {},
       onInterrupt: () => {},
       onSkip: () => {},
+      onQuit: () => {},
     };
   }
 
@@ -76,6 +77,8 @@ export class SilentProgressSink implements ProgressSink {
   logSliceIntro(_slice: Slice): void {}
 
   logBadge(_role: AgentRole, _phase: string): void {}
+
+  clearSkipping(): void {}
 
   teardown(): void {}
 }
@@ -137,6 +140,7 @@ export class InkOperatorGate implements OperatorGate {
 export class InkProgressSink implements ProgressSink {
   private readonly writer: (text: string) => void;
   private readonly logFn: (...args: unknown[]) => void;
+  private skipping = false;
 
   constructor(private readonly hud: Hud) {
     this.writer = hud.createWriter();
@@ -147,6 +151,7 @@ export class InkProgressSink implements ProgressSink {
     let guideCallback: ((text: string) => void) | null = null;
     let interruptCallback: ((text: string) => void) | null = null;
     let skipCallback: (() => boolean) | null = null;
+    let quitCallback: (() => void) | null = null;
 
     this.hud.onKey((key) => {
       const normalized = key.toLowerCase();
@@ -157,7 +162,11 @@ export class InkProgressSink implements ProgressSink {
         this.hud.startPrompt("interrupt");
       }
       if (normalized === "s" && skipCallback?.()) {
-        this.hud.setSkipping(true);
+        this.skipping = !this.skipping;
+        this.hud.setSkipping(this.skipping);
+      }
+      if (normalized === "q") {
+        quitCallback?.();
       }
     });
 
@@ -179,6 +188,9 @@ export class InkProgressSink implements ProgressSink {
       },
       onSkip: (cb) => {
         skipCallback = cb;
+      },
+      onQuit: (cb) => {
+        quitCallback = cb;
       },
     };
   }
@@ -207,6 +219,14 @@ export class InkProgressSink implements ProgressSink {
     const style = styleForRole(role);
     const ts = new Date().toLocaleTimeString("en-GB", { hour12: false });
     this.logFn(`\n${ts}  ${style.badge}  ${phase}`);
+  }
+
+  clearSkipping(): void {
+    if (!this.skipping) {
+      return;
+    }
+    this.skipping = false;
+    this.hud.setSkipping(false);
   }
 
   teardown(): void {

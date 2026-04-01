@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { StatePersistence } from "../../../src/application/ports/state-persistence.port.js";
-import type { OrchestratorState } from "../../../src/domain/state.js";
+import { StatePersistence } from "#application/ports/state-persistence.port.js";
+import type { OrchestratorState } from "#domain/state.js";
 
 class InMemoryStatePersistence extends StatePersistence {
   private state: OrchestratorState | null = null;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PlanSchema, parsePlanJson } from "@/infrastructure/plan/plan-schema.js";
+import { PlanSchema, parsePlanJson } from "#infrastructure/plan/plan-schema.js";
 
 describe("PlanSchema", () => {
   const validSlice = (number: number) => ({

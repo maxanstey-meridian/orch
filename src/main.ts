@@ -1,5 +1,5 @@
 #!/usr/bin/env npx ts-node
-
+// smoke test
 /**
  * main.ts — TDD orchestrator CLI
  *

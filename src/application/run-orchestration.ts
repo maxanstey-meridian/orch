@@ -50,6 +50,7 @@ export class RunOrchestration {
   tddIsFirst = true;
   reviewIsFirst = true;
   sliceSkipFlag = false;
+  quitRequested = false;
   hardInterruptPending: string | null = null;
   slicesCompleted = 0;
 
@@ -154,8 +155,14 @@ export class RunOrchestration {
       if (!this.canSkipCurrentSlice()) {
         return false;
       }
-      this.sliceSkipFlag = true;
+      this.sliceSkipFlag = !this.sliceSkipFlag;
       return true;
+    });
+    interrupts.onQuit(() => {
+      this.quitRequested = true;
+      if (this.tddAgent) {
+        this.tddAgent.kill();
+      }
     });
 
     const runBaseSha = await this.git.captureRef();
@@ -196,6 +203,14 @@ export class RunOrchestration {
       const groupTriageResults: TriageResult[] = [];
 
       for (const slice of group.slices) {
+        // Reset skip state from previous slice
+        this.sliceSkipFlag = false;
+        this.progressSink.clearSkipping();
+
+        if (this.quitRequested) {
+          return;
+        }
+
         if (
           this.state.lastCompletedSlice !== undefined &&
           slice.number <= this.state.lastCompletedSlice
@@ -408,6 +423,11 @@ export class RunOrchestration {
 
     // Dead session fallback
     if (!this.tddAgent!.alive) {
+      const deadSessionInterrupt = this.hardInterruptPending;
+      if (deadSessionInterrupt) {
+        this.phase = { kind: "Idle" };
+        return { tddResult, skipped: false, hardInterrupt: deadSessionInterrupt, planText: plan };
+      }
       await this.respawnTdd();
       this.progressSink.logBadge("tdd", "implementing...");
       const retryResult = await this.withRetry(
@@ -776,9 +796,6 @@ export class RunOrchestration {
       return;
     }
     if (this.config.gapDisabled) {
-      return;
-    }
-    if (triageResults.length > 0 && !triageResults.some((t) => t.runGap)) {
       return;
     }
 

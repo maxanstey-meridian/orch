@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { ProgressSink } from "../../../src/application/ports/progress-sink.port.js";
-import type { InterruptHandler, ProgressUpdate } from "../../../src/application/ports/progress-sink.port.js";
-import type { AgentRole } from "../../../src/domain/agent-types.js";
-import type { Slice } from "../../../src/domain/plan.js";
-import { styleForRole } from "../../../src/ui/ink-operator-gate.js";
+import { ProgressSink } from "#application/ports/progress-sink.port.js";
+import type { InterruptHandler, ProgressUpdate } from "#application/ports/progress-sink.port.js";
+import type { AgentRole } from "#domain/agent-types.js";
+import type { Slice } from "#domain/plan.js";
+import { styleForRole } from "#ui/ink-operator-gate.js";
 
 class TestProgressSink extends ProgressSink {
   registerInterrupts(): InterruptHandler {

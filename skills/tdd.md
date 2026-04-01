@@ -78,6 +78,8 @@ the current test. Don't anticipate future tests.
 
 **Narrating instead of executing**: Writing "RED confirmed" or "GREEN. Cycle complete." without actually running tests via Bash. You must execute, read output, then report. No exceptions.
 
+**Documenting bugs instead of fixing them**: NEVER write a test that asserts broken behaviour and call it "documents the bug". If something is broken, fix it. If you can't fix it, let the test fail — a failing test is visible. A passing test that asserts the wrong outcome is invisible, and it actively prevents anyone from catching the bug later. There is no scenario where `expect(brokenThing).toBe(wrong)` is acceptable.
+
 ## When You Cannot Write a Good Test
 
 If a feature requires integration testing that you cannot set up (e.g. real CLI interaction, real process spawning, real keyboard input in a terminal), do NOT write a mock test that passes regardless. Instead:

@@ -262,7 +262,7 @@ const App = () => {
         ) : (
           <Text dimColor>{"S: skip"}</Text>
         )}
-        <Text dimColor>{" | C: slice | P: plan | Q: quit"}</Text>
+        <Text dimColor>{" | Q: quit"}</Text>
         {activity ? (
           <Text>
             {`  ${SPINNER[spinIdx]} `}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { GitOps } from "../../../src/application/ports/git-ops.port.js";
+import { GitOps } from "#application/ports/git-ops.port.js";
 
 class InMemoryGitOps extends GitOps {
   constructor(

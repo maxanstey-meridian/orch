@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   PromptBuilder,
   type FinalPass,
-} from "../../../src/application/ports/prompt-builder.port.js";
+} from "#application/ports/prompt-builder.port.js";
 
 class MockPromptBuilder extends PromptBuilder {
   plan(sliceContent: string, sliceNumber: number): string {

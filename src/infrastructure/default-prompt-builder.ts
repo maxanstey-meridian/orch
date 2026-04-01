@@ -15,13 +15,15 @@ import {
   buildFinalPasses,
 } from "./plan/prompts.js";
 
-export class DefaultPromptBuilder implements PromptBuilder {
+export class DefaultPromptBuilder extends PromptBuilder {
   constructor(
     private readonly brief: string,
     private readonly planContent: string,
     private readonly tddRules?: string,
     private readonly reviewRules?: string,
-  ) {}
+  ) {
+    super();
+  }
 
   plan(sliceContent: string, sliceNumber: number): string {
     return _withBrief(buildPlanPrompt(sliceContent, this.planContent, sliceNumber), this.brief);
