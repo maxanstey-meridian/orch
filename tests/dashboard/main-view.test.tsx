@@ -213,4 +213,37 @@ describe("MainView", () => {
 
     app.unmount();
   });
+
+  it("ignores run-only shortcuts when the selected row is queued", async () => {
+    const onOpenDetail = vi.fn();
+    const onOpenTail = vi.fn();
+    const onKill = vi.fn();
+    const app = render(
+      <MainView
+        model={makeModel({
+          active: [makeRun({ id: "run-active" })],
+          queued: [makeQueueEntry({ id: "queue-1" })],
+        })}
+        onOpenDetail={onOpenDetail}
+        onOpenTail={onOpenTail}
+        onKill={onKill}
+      />,
+    );
+
+    app.stdin.write("\u001B[B");
+    await flushEffects();
+    expect(app.lastFrame()).toContain("> ○ queue-1");
+
+    app.stdin.write("\r");
+    app.stdin.write("f");
+    app.stdin.write("k");
+    await flushEffects();
+
+    expect(onOpenDetail).not.toHaveBeenCalled();
+    expect(onOpenTail).not.toHaveBeenCalled();
+    expect(onKill).not.toHaveBeenCalled();
+    expect(app.lastFrame()).toContain("> ○ queue-1");
+
+    app.unmount();
+  });
 });

@@ -86,4 +86,28 @@ describe("DashboardApp", () => {
 
     app.unmount();
   });
+
+  it("switches to the tail placeholder when f is pressed on a run", async () => {
+    useDashboardDataMock.mockReturnValue({
+      model: makeModel({
+        active: [makeRun({ id: "run-active" })],
+      }),
+      loading: false,
+      error: undefined,
+    });
+
+    const app = render(
+      <DashboardApp
+        registryPath="/tmp/runs.json"
+        queuePath="/tmp/queue.json"
+      />,
+    );
+
+    app.stdin.write("f");
+    await flushEffects();
+
+    expect(app.lastFrame()).toContain("Tail placeholder: run-active");
+
+    app.unmount();
+  });
 });

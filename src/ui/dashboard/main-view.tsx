@@ -1,6 +1,6 @@
 import { basename } from "path";
 import { Box, Text, useInput } from "ink";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { DashboardModel } from "#domain/dashboard.js";
 import type { DashboardRun } from "#domain/dashboard.js";
 import type { QueueEntry } from "#domain/queue.js";
@@ -98,6 +98,7 @@ export const MainView = ({ model, onOpenDetail, onOpenTail, onKill }: MainViewPr
   const sections = useMemo(() => buildSections(model), [model]);
   const rows = useMemo(() => sections.flatMap((section) => section.rows), [sections]);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const selectedRowRef = useRef<RenderableRow | undefined>(undefined);
   const isEmpty =
     model.active.length === 0 &&
     model.queued.length === 0 &&
@@ -118,7 +119,7 @@ export const MainView = ({ model, onOpenDetail, onOpenTail, onKill }: MainViewPr
       return;
     }
 
-    const selectedRow = rows[selectedIndex];
+    const selectedRow = selectedRowRef.current;
 
     if (key.downArrow) {
       setSelectedIndex((currentIndex) => Math.min(currentIndex + 1, rows.length - 1));
@@ -146,6 +147,7 @@ export const MainView = ({ model, onOpenDetail, onOpenTail, onKill }: MainViewPr
   });
 
   const selectedRow = rows[selectedIndex];
+  selectedRowRef.current = selectedRow;
   const shortcuts = ["arrows move"];
   if (selectedRow?.kind === "run") {
     shortcuts.push("enter detail");
