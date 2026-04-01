@@ -10,10 +10,10 @@ describe("parseSubcommand", () => {
     });
   });
 
-  it("falls through to legacy for orch work without a plan path", () => {
+  it("preserves work command identity when the plan path is missing", () => {
     expect(parseSubcommand(["node", "orch", "work"])).toEqual({
-      command: "legacy",
-      args: ["work"],
+      command: "work",
+      error: "missing-plan-path",
     });
   });
 
@@ -53,10 +53,11 @@ describe("parseSubcommand", () => {
     });
   });
 
-  it("falls through to legacy for orch queue add without a plan path", () => {
+  it("preserves queue add identity when the plan path is missing", () => {
     expect(parseSubcommand(["node", "orch", "queue", "add"])).toEqual({
-      command: "legacy",
-      args: ["queue", "add"],
+      command: "queue",
+      action: "add",
+      error: "missing-plan-path",
     });
   });
 
@@ -75,10 +76,11 @@ describe("parseSubcommand", () => {
     });
   });
 
-  it("falls through to legacy for orch queue remove without an id", () => {
+  it("preserves queue remove identity when the id is missing", () => {
     expect(parseSubcommand(["node", "orch", "queue", "remove"])).toEqual({
-      command: "legacy",
-      args: ["queue", "remove"],
+      command: "queue",
+      action: "remove",
+      error: "missing-id",
     });
   });
 
@@ -90,10 +92,10 @@ describe("parseSubcommand", () => {
     });
   });
 
-  it("falls through to legacy for orch plan without an inventory path", () => {
+  it("preserves plan command identity when the inventory path is missing", () => {
     expect(parseSubcommand(["node", "orch", "plan"])).toEqual({
-      command: "legacy",
-      args: ["plan"],
+      command: "plan",
+      error: "missing-inventory-path",
     });
   });
 
@@ -125,10 +127,18 @@ describe("parseSubcommand", () => {
     });
   });
 
-  it("falls through to legacy for queue without a supported action", () => {
+  it("preserves queue identity when the action is missing", () => {
     expect(parseSubcommand(["node", "orch", "queue"])).toEqual({
-      command: "legacy",
-      args: ["queue"],
+      command: "queue",
+      error: "missing-action",
+    });
+  });
+
+  it("preserves queue identity when the action is unsupported", () => {
+    expect(parseSubcommand(["node", "orch", "queue", "promote"])).toEqual({
+      command: "queue",
+      error: "unknown-action",
+      action: "promote",
     });
   });
 });

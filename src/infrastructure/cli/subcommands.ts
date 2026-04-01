@@ -1,11 +1,17 @@
 export type SubcommandResult =
   | { command: "work"; planPath: string; flags: string[] }
+  | { command: "work"; error: "missing-plan-path" }
   | { command: "dash" }
   | { command: "status"; id?: string; follow?: boolean }
   | { command: "queue"; action: "add"; planPath: string; flags: string[] }
+  | { command: "queue"; action: "add"; error: "missing-plan-path" }
   | { command: "queue"; action: "list" }
   | { command: "queue"; action: "remove"; id: string }
+  | { command: "queue"; action: "remove"; error: "missing-id" }
+  | { command: "queue"; error: "missing-action" }
+  | { command: "queue"; error: "unknown-action"; action: string }
   | { command: "plan"; inventoryPath: string; flags: string[] }
+  | { command: "plan"; error: "missing-inventory-path" }
   | { command: "legacy"; args: string[] };
 
 export const parseSubcommand = (argv: string[]): SubcommandResult => {
@@ -13,8 +19,8 @@ export const parseSubcommand = (argv: string[]): SubcommandResult => {
     const planPath = argv[3];
     if (!planPath || planPath.startsWith("-")) {
       return {
-        command: "legacy",
-        args: argv.slice(2),
+        command: "work",
+        error: "missing-plan-path",
       };
     }
 
@@ -42,12 +48,20 @@ export const parseSubcommand = (argv: string[]): SubcommandResult => {
     };
   }
 
+  if (argv[2] === "queue" && !argv[3]) {
+    return {
+      command: "queue",
+      error: "missing-action",
+    };
+  }
+
   if (argv[2] === "queue" && argv[3] === "add") {
     const planPath = argv[4];
     if (!planPath || planPath.startsWith("-")) {
       return {
-        command: "legacy",
-        args: argv.slice(2),
+        command: "queue",
+        action: "add",
+        error: "missing-plan-path",
       };
     }
 
@@ -70,8 +84,9 @@ export const parseSubcommand = (argv: string[]): SubcommandResult => {
     const id = argv[4];
     if (!id || id.startsWith("-")) {
       return {
-        command: "legacy",
-        args: argv.slice(2),
+        command: "queue",
+        action: "remove",
+        error: "missing-id",
       };
     }
 
@@ -82,12 +97,20 @@ export const parseSubcommand = (argv: string[]): SubcommandResult => {
     };
   }
 
+  if (argv[2] === "queue") {
+    return {
+      command: "queue",
+      error: "unknown-action",
+      action: argv[3],
+    };
+  }
+
   if (argv[2] === "plan") {
     const inventoryPath = argv[3];
     if (!inventoryPath || inventoryPath.startsWith("-")) {
       return {
-        command: "legacy",
-        args: argv.slice(2),
+        command: "plan",
+        error: "missing-inventory-path",
       };
     }
 
