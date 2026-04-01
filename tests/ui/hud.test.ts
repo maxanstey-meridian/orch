@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { HUD_MAX_LINES, appendHudLines, buildStatusLine, createHud } from "#ui/hud.js";
+import { buildStatusLine, createHud } from "#ui/hud.js";
 import type { HudState } from "#ui/hud.js";
 
 const makeMockStdout = (overrides: { columns?: number; rows?: number } = {}) => {
@@ -120,19 +120,6 @@ describe("buildStatusLine", () => {
     expect(line).toContain("Group: Empty");
     expect(line).toContain("[");
     expect(line).toContain("]");
-  });
-});
-
-describe("appendHudLines", () => {
-  it("keeps only the most recent retained lines", () => {
-    const lines = Array.from({ length: HUD_MAX_LINES - 1 }, (_, index) => `line-${index}`);
-
-    appendHudLines(lines, ["kept", "newest"]);
-
-    expect(lines).toHaveLength(HUD_MAX_LINES);
-    expect(lines[0]).toBe("line-1");
-    expect(lines.at(-2)).toBe("kept");
-    expect(lines.at(-1)).toBe("newest");
   });
 });
 
