@@ -34,7 +34,7 @@ export const agentSpawnerFactory = (
         runtimeInteractionGate,
       );
     default: {
-      const _exhaustive: never = config.provider;
+      const _exhaustive: never = config.defaultProvider;
       throw new Error(`Unknown provider: ${_exhaustive}`);
     }
   }
