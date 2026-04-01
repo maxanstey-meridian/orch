@@ -5,8 +5,23 @@ import { z } from "zod";
 export type { OrchestratorState } from "#domain/state.js";
 import type { OrchestratorState } from "#domain/state.js";
 
+const persistedPhases = ["tdd", "review", "verify", "gap", "final", "plan"] as const;
+
 const stateSchema = z
   .object({
+    startedAt: z.string().optional(),
+    currentPhase: z.enum(persistedPhases).optional(),
+    currentSlice: z.number().int().nonnegative().optional(),
+    currentGroup: z.string().min(1).optional(),
+    sliceTimings: z
+      .array(
+        z.object({
+          number: z.number().int().nonnegative(),
+          startedAt: z.string(),
+          completedAt: z.string().optional(),
+        }),
+      )
+      .optional(),
     lastCompletedSlice: z.number().int().nonnegative().optional(),
     lastCompletedGroup: z.string().min(1).optional(),
     lastSliceImplemented: z.number().int().nonnegative().optional(),

@@ -34,6 +34,15 @@ describe("Crash recovery lifecycle", () => {
     await uc.execute(groups);
 
     expect(persistence.current.lastCompletedSlice).toBe(3);
+    expect(persistence.current.currentSlice).toBe(3);
+    expect(persistence.current.currentGroup).toBe("G1");
+    expect(persistence.current.sliceTimings).toEqual([
+      {
+        number: 3,
+        startedAt: expect.any(String),
+        completedAt: expect.any(String),
+      },
+    ]);
 
     // TDD received only 1 prompt (slice 3, not 1 or 2)
     const tdd = spawner.lastAgent("tdd");

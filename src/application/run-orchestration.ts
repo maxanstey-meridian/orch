@@ -7,7 +7,7 @@ import type { Group } from "#domain/plan.js";
 import type { Slice } from "#domain/plan.js";
 import { isCleanReview } from "#domain/review-check.js";
 import { shouldReview } from "#domain/review.js";
-import type { OrchestratorState } from "#domain/state.js";
+import type { OrchestratorState, PersistedPhase, StateEvent } from "#domain/state.js";
 import { advanceState } from "#domain/state.js";
 import { isAlreadyImplemented } from "#domain/transition.js";
 import { transition } from "#domain/transition.js";
@@ -77,6 +77,19 @@ export class RunOrchestration {
   private pipeToSink(agent: AgentHandle, role: AgentRole): void {
     const streamer = this.progressSink.createStreamer(role);
     agent.pipe(streamer, (summary) => this.progressSink.setActivity(summary));
+  }
+
+  private async persistStateEvent(event: StateEvent): Promise<void> {
+    this.state = advanceState(this.state, event);
+    await this.persistence.save(this.state);
+  }
+
+  private async enterPhase(phase: PersistedPhase, sliceNumber: number): Promise<void> {
+    await this.persistStateEvent({ kind: "phaseEntered", phase, sliceNumber });
+  }
+
+  private currentSliceNumber(defaultSliceNumber = 0): number {
+    return this.state.currentSlice ?? this.state.lastCompletedSlice ?? defaultSliceNumber;
   }
 
   dispose(): void {
@@ -223,6 +236,12 @@ export class RunOrchestration {
           continue;
         }
 
+        await this.persistStateEvent({
+          kind: "sliceStarted",
+          sliceNumber: slice.number,
+          groupName: group.name,
+        });
+
         this.progressSink.updateProgress({
           currentSlice: { number: slice.number },
           completedSlices: this.slicesCompleted,
@@ -258,6 +277,7 @@ export class RunOrchestration {
           this.hardInterruptPending = null;
           await this.respawnTdd();
           this.progressSink.logBadge("tdd", "implementing...");
+          await this.enterPhase("tdd", slice.number);
           tddResult = await this.withRetry(
             () => this.tddAgent!.send(this.prompts.withBrief(guidance)),
             this.tddAgent!,
@@ -348,6 +368,7 @@ export class RunOrchestration {
         ? this.prompts.withBrief(this.prompts.tdd(sliceContent, undefined, sliceNumber))
         : this.prompts.tdd(sliceContent, undefined, sliceNumber);
       this.progressSink.logBadge("tdd", "implementing...");
+      await this.enterPhase("tdd", sliceNumber);
       const tddResult = await this.withRetry(
         () => this.tddAgent!.send(prompt),
         this.tddAgent!,
@@ -363,6 +384,7 @@ export class RunOrchestration {
     const planAgent = this.agents.spawn("plan", { cwd: this.config.cwd });
     this.pipeToSink(planAgent, "plan");
     this.progressSink.logBadge("plan", "planning...");
+    await this.enterPhase("plan", sliceNumber);
     const planResult = await this.withRetry(() => planAgent.send(planPrompt), planAgent, "plan");
 
     const plan = planResult.planText ?? planResult.assistantText ?? "";
@@ -413,6 +435,7 @@ export class RunOrchestration {
       operatorGuidance,
     );
     this.progressSink.logBadge("tdd", "implementing...");
+    await this.enterPhase("tdd", sliceNumber);
     const tddResult = await this.withRetry(
       () => this.tddAgent!.send(executePrompt),
       this.tddAgent!,
@@ -428,6 +451,7 @@ export class RunOrchestration {
       }
       await this.respawnTdd();
       this.progressSink.logBadge("tdd", "implementing...");
+      await this.enterPhase("tdd", sliceNumber);
       const retryResult = await this.withRetry(
         () => this.tddAgent!.send(executePrompt),
         this.tddAgent!,
@@ -509,7 +533,7 @@ export class RunOrchestration {
     }
 
     if (this.config.reviewSkill !== null && triage.runReview) {
-      await this.reviewFix(slice.content, reviewBase);
+      await this.reviewFix(slice.content, reviewBase, slice.number);
     }
     const newReviewBase = await this.git.captureRef();
 
@@ -531,7 +555,7 @@ export class RunOrchestration {
     return { reviewBase: newReviewBase, skipped: false };
   }
 
-  async reviewFix(content: string, baseSha: string): Promise<void> {
+  async reviewFix(content: string, baseSha: string, sliceNumber: number): Promise<void> {
     let reviewSha = baseSha;
     let priorFindings: string | undefined;
 
@@ -553,6 +577,7 @@ export class RunOrchestration {
         ? this.prompts.withBrief(this.prompts.review(content, reviewSha, priorFindings))
         : this.prompts.review(content, reviewSha, priorFindings);
       this.progressSink.logBadge("review", "reviewing...");
+      await this.enterPhase("review", sliceNumber);
       const reviewResult = await this.withRetry(
         () => this.reviewAgent!.send(reviewPrompt),
         this.reviewAgent!,
@@ -570,6 +595,7 @@ export class RunOrchestration {
       const preFixSha = await this.git.captureRef();
       const fixPrompt = this.prompts.tdd(content, reviewText);
       this.progressSink.logBadge("tdd", "implementing...");
+      await this.enterPhase("tdd", sliceNumber);
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt),
         this.tddAgent!,
@@ -600,6 +626,7 @@ export class RunOrchestration {
     const prompt = this.prompts.completeness(slice.content, baseSha, slice.number);
     const checkAgent = this.agents.spawn("completeness", { cwd: this.config.cwd });
     this.pipeToSink(checkAgent, "completeness");
+    await this.enterPhase("verify", slice.number);
     const result = await this.withRetry(
       () => checkAgent.send(prompt),
       checkAgent,
@@ -624,6 +651,7 @@ export class RunOrchestration {
       slice.number,
     );
     this.progressSink.logBadge("tdd", "implementing...");
+    await this.enterPhase("tdd", slice.number);
     const fixResult = await this.withRetry(
       () => this.tddAgent!.send(this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt),
       this.tddAgent!,
@@ -653,6 +681,7 @@ export class RunOrchestration {
       `Verify the changes since commit ${verifyBaseSha}. Context: TDD implementation of Slice ${slice.number}.`,
     );
     this.progressSink.logBadge("verify", "verifying...");
+    await this.enterPhase("verify", slice.number);
     const verifyResult = await this.withRetry(
       () => this.verifyAgent!.send(verifyPrompt),
       this.verifyAgent,
@@ -672,6 +701,7 @@ export class RunOrchestration {
       const retryPrompt = `Verification found issues after your implementation. Fix them:\n\n${failureContext}`;
       const preFixSha = await this.git.captureRef();
       this.progressSink.logBadge("tdd", "implementing...");
+      await this.enterPhase("tdd", slice.number);
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(retryPrompt),
         this.tddAgent!,
@@ -701,6 +731,7 @@ export class RunOrchestration {
       // Re-verify — tell the verifier what TDD fixed
       const fixSummary = fixResult.assistantText?.slice(0, 500) ?? "TDD attempted fixes.";
       this.progressSink.logBadge("verify", "verifying...");
+      await this.enterPhase("verify", slice.number);
       const reVerifyResult = await this.withRetry(
         () =>
           this.verifyAgent!.send(
@@ -745,6 +776,7 @@ export class RunOrchestration {
       this.pipeToSink(finalAgent, "final");
       const finalPrompt = this.prompts.withBrief(pass.prompt);
       this.progressSink.logBadge("final", "finalising...");
+      await this.enterPhase("final", this.currentSliceNumber());
       const finalResult = await this.withRetry(
         () => finalAgent.send(finalPrompt),
         finalAgent,
@@ -767,6 +799,7 @@ export class RunOrchestration {
       );
       const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
       this.progressSink.logBadge("tdd", "implementing...");
+      await this.enterPhase("tdd", this.currentSliceNumber());
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(actualFixPrompt),
         this.tddAgent!,
@@ -800,6 +833,10 @@ export class RunOrchestration {
     this.pipeToSink(gapAgent, "gap");
     const gapPrompt = this.prompts.withBrief(this.prompts.gap(groupContent, groupBaseSha));
     this.progressSink.logBadge("gap", "filling gaps...");
+    await this.enterPhase(
+      "gap",
+      this.currentSliceNumber(group.slices[group.slices.length - 1]?.number ?? 0),
+    );
     const gapResult = await this.withRetry(() => gapAgent.send(gapPrompt), gapAgent, "gap");
 
     const gapText = gapResult.assistantText ?? "";
@@ -817,6 +854,10 @@ export class RunOrchestration {
     );
     const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
     this.progressSink.logBadge("tdd", "implementing...");
+    await this.enterPhase(
+      "tdd",
+      this.currentSliceNumber(group.slices[group.slices.length - 1]?.number ?? 0),
+    );
     const fixResult = await this.withRetry(
       () => this.tddAgent!.send(actualFixPrompt),
       this.tddAgent!,

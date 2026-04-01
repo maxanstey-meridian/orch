@@ -264,6 +264,34 @@ describe("state", () => {
     await expect(loadState(testPath)).rejects.toThrow("reviewSessionId");
   });
 
+  it("persists phase and slice timing fields and loads them back", async () => {
+    const state = {
+      startedAt: "2026-04-02T10:00:00.000Z",
+      currentPhase: "review" as const,
+      currentSlice: 2,
+      currentGroup: "G1",
+      sliceTimings: [
+        { number: 1, startedAt: "2026-04-02T10:00:00.000Z", completedAt: "2026-04-02T10:05:00.000Z" },
+        { number: 2, startedAt: "2026-04-02T10:06:00.000Z" },
+      ],
+    };
+
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+
+    expect(loaded).toEqual(state);
+  });
+
+  it("throws when currentPhase is not a supported persisted phase", async () => {
+    await writeFile(testPath, JSON.stringify({ currentPhase: "executing" }));
+    await expect(loadState(testPath)).rejects.toThrow("currentPhase");
+  });
+
+  it("throws when sliceTimings contains an invalid entry", async () => {
+    await writeFile(testPath, JSON.stringify({ sliceTimings: [{ number: "two", startedAt: "2026-04-02T10:00:00.000Z" }] }));
+    await expect(loadState(testPath)).rejects.toThrow("sliceTimings");
+  });
+
   it("loads state without session IDs (backwards compat)", async () => {
     await writeFile(testPath, JSON.stringify({ lastCompletedSlice: 5 }));
     const loaded = await loadState(testPath);

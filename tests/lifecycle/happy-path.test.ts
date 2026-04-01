@@ -58,6 +58,10 @@ describe("Happy path lifecycle", () => {
 
     // State advanced
     expect(persistence.current.lastCompletedSlice).toBe(1);
+    expect(persistence.saveHistory.some((state) => state.currentPhase === "plan")).toBe(true);
+    expect(persistence.saveHistory.some((state) => state.currentPhase === "tdd")).toBe(true);
+    expect(persistence.saveHistory.some((state) => state.currentPhase === "verify")).toBe(true);
+    expect(persistence.saveHistory.some((state) => state.currentPhase === "review")).toBe(true);
 
     // Agents were spawned for the right roles
     expect(spawner.agentsForRole("plan").length).toBeGreaterThanOrEqual(1);
@@ -89,6 +93,60 @@ describe("Happy path lifecycle", () => {
     const tddAgents = spawner.agentsForRole("tdd");
     expect(tddAgents.length).toBe(1);
     expect(tddAgents[0].sentPrompts.length).toBe(2);
+  });
+
+  it("persists slice and phase progress for an active slice without mutating earlier saves", async () => {
+    const { uc, spawner, persistence } = createTestHarness({
+      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      auto: true,
+    });
+
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "slice 1 done" }));
+    spawner.onNextSpawn("review");
+
+    await uc.execute([makeGroup("G1", [makeSlice(1)])]);
+
+    const tddPhaseSave = persistence.saveHistory.find((state) => state.currentPhase === "tdd");
+
+    expect(tddPhaseSave).toEqual({
+      currentPhase: "tdd",
+      currentSlice: 1,
+      currentGroup: "G1",
+      startedAt: expect.any(String),
+      tddSessionId: expect.any(String),
+      reviewSessionId: expect.any(String),
+      sliceTimings: [{ number: 1, startedAt: expect.any(String) }],
+    });
+    expect(tddPhaseSave?.sliceTimings?.[0]?.completedAt).toBeUndefined();
+    expect(persistence.current.sliceTimings).toEqual([
+      {
+        number: 1,
+        startedAt: tddPhaseSave?.sliceTimings?.[0]?.startedAt,
+        completedAt: expect.any(String),
+      },
+    ]);
+    expect(persistence.current.startedAt).toBe(tddPhaseSave?.startedAt);
+  });
+
+  it("persists gap and final phases when those passes run", async () => {
+    const { uc, spawner, persistence, git, prompts } = createTestHarness({
+      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: false },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+    prompts.finalPassesOverride = [{ name: "sanity", prompt: "check final state" }];
+
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "slice 1 done" }));
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+    spawner.onNextSpawn("gap", okResult({ assistantText: "NO_GAPS_FOUND" }));
+    spawner.onNextSpawn("final", okResult({ assistantText: "NO_ISSUES_FOUND" }));
+
+    await uc.execute([makeGroup("G1", [makeSlice(1)])]);
+
+    expect(persistence.saveHistory.some((state) => state.currentPhase === "gap")).toBe(true);
+    expect(persistence.saveHistory.some((state) => state.currentPhase === "final")).toBe(true);
   });
 
   it("two groups with inter-group confirmation and agent respawn", async () => {
