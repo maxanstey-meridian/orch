@@ -507,7 +507,7 @@ describe("data aggregator", () => {
     vi.useRealTimers();
   });
 
-  it("completed run remains visible on the second poll", async () => {
+  it("completed run is pruned after the first poll", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
 
@@ -534,7 +534,7 @@ describe("data aggregator", () => {
     const secondResult = await aggregateDashboard(registryPath, queuePath);
 
     expect(firstResult.completed.map((run) => run.id)).toEqual(["run-second-poll"]);
-    expect(secondResult.completed.map((run) => run.id)).toEqual(["run-second-poll"]);
+    expect(secondResult.completed).toEqual([]);
 
     vi.useRealTimers();
   });
