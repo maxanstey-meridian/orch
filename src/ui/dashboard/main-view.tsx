@@ -70,6 +70,12 @@ type SectionRows = {
   readonly rows: RenderableRow[];
 };
 
+const isErrorWithCode = (value: unknown): value is { readonly code: string } =>
+  typeof value === "object" &&
+  value !== null &&
+  "code" in value &&
+  typeof value.code === "string";
+
 const buildSections = (model: DashboardModel): SectionRows[] => [
   {
     title: "Active",
@@ -147,8 +153,21 @@ export const MainView = ({ model, onOpenDetail, onOpenTail, onDelete }: MainView
       return;
     }
 
-    if (input === "k" && selectedRow?.kind === "run" && selectedRow.run.pid > 0) {
-      process.kill(selectedRow.run.pid, "SIGTERM");
+    if (
+      input === "k" &&
+      selectedRow?.kind === "run" &&
+      selectedRow.run.status === "active" &&
+      selectedRow.run.pid > 0
+    ) {
+      try {
+        process.kill(selectedRow.run.pid, "SIGTERM");
+      } catch (error) {
+        if (isErrorWithCode(error) && error.code === "ESRCH") {
+          return;
+        }
+
+        throw error;
+      }
       return;
     }
 

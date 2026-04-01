@@ -182,6 +182,58 @@ describe("MainView", () => {
     app.unmount();
   });
 
+  it("does not try to kill a completed run from the main list", async () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const app = render(
+      <MainView
+        model={makeModel({
+          active: [makeRun({ id: "run-active" })],
+          completed: [makeRun({ id: "run-done", status: "completed", pid: 321 })],
+        })}
+        onOpenDetail={vi.fn()}
+        onOpenTail={vi.fn()}
+      />,
+    );
+
+    app.stdin.write("\u001B[B");
+    await flushEffects();
+    expect(app.lastFrame()).toContain("> ✓ run-do");
+
+    app.stdin.write("k");
+    await flushEffects();
+
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(app.lastFrame()).toContain("> ✓ run-do");
+
+    app.unmount();
+  });
+
+  it("keeps the dashboard stable when killing an active run races with process exit", async () => {
+    const killError = Object.assign(new Error("missing process"), {
+      code: "ESRCH",
+    });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw killError;
+    });
+    const app = render(
+      <MainView
+        model={makeModel({
+          active: [makeRun({ id: "run-active", pid: 321 })],
+        })}
+        onOpenDetail={vi.fn()}
+        onOpenTail={vi.fn()}
+      />,
+    );
+
+    app.stdin.write("k");
+    await flushEffects();
+
+    expect(killSpy).toHaveBeenCalledWith(321, "SIGTERM");
+    expect(app.lastFrame()).toContain("> ● run-ac");
+
+    app.unmount();
+  });
+
   it("keeps the fixed key hint row visible while selection moves", async () => {
     const app = render(
       <MainView
