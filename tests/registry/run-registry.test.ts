@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
-import { tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 import type { RunEntry } from "#domain/registry.js";
 import {
+  defaultRegistryPath,
   deregisterRun,
   pruneDeadEntries,
   readRegistry,
@@ -58,6 +59,10 @@ describe("run registry", () => {
     const registryPath = join(tempDir, "runs.json");
 
     await expect(readRegistry(registryPath)).resolves.toEqual([]);
+  });
+
+  it("defaultRegistryPath resolves ~/.orch/runs.json under the current home directory", () => {
+    expect(defaultRegistryPath()).toBe(join(homedir(), ".orch", "runs.json"));
   });
 
   it("registerRun creates file and appends entry", async () => {

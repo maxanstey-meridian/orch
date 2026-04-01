@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "fs/promises";
-import { dirname } from "path";
+import { homedir } from "os";
+import { dirname, join } from "path";
 import type { RunEntry } from "#domain/registry.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -35,6 +36,8 @@ const isRunEntry = (value: unknown): value is RunEntry => {
 
   return branch === undefined || typeof branch === "string";
 };
+
+export const defaultRegistryPath = (): string => join(homedir(), ".orch", "runs.json");
 
 export const readRegistry = async (registryPath: string): Promise<RunEntry[]> => {
   let raw: string;
