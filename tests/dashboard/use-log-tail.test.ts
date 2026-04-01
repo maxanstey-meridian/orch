@@ -17,6 +17,8 @@ const HookProbe = ({ logPath }: { readonly logPath?: string }) => {
       count: lines.length,
       first: lines[0] ?? null,
       last: lines.at(-1) ?? null,
+      tail: lines.slice(-10),
+      joinedTail: lines.slice(-10).join(" | "),
       error,
     }),
   );
@@ -104,6 +106,34 @@ describe("useLogTail", () => {
     app.unmount();
   });
 
+  it("preserves every line from burst appends in order", async () => {
+    const logPath = join(tempDir, "plan.log");
+    await writeFile(logPath, "[ORCH] first\n");
+
+    const app = render(React.createElement(HookProbe, { logPath }));
+
+    await waitFor(() => {
+      const frame = app.lastFrame() ?? "";
+      return frame.includes('"count":1') && frame.includes('"last":"[ORCH] first"');
+    });
+
+    await appendFile(logPath, "[TDD] second\n");
+    await appendFile(logPath, "[REVIEW] third\n");
+    await appendFile(logPath, "[VERIFY] fourth\n");
+
+    await waitFor(() => {
+      const frame = app.lastFrame() ?? "";
+      return frame.includes('"count":4') && frame.includes('"last":"[VERIFY] fourth"');
+    });
+
+    const frame = (app.lastFrame() ?? "").replace(/\s+/g, " ");
+    expect(frame).toContain(
+      '"joinedTail":"[ORCH] first | [TDD] second | [REVIEW] third | [VERIFY] fourth"',
+    );
+
+    app.unmount();
+  });
+
   it("caps the line buffer at 500 entries after the initial load", async () => {
     const logPath = join(tempDir, "plan.log");
     const content = Array.from({ length: 550 }, (_, index) => makeLine(index + 1))
@@ -168,6 +198,34 @@ describe("useLogTail", () => {
       const frame = app.lastFrame() ?? "";
       return frame.includes('"last":"[ORCH] recovered"') && !frame.includes("Log file not found yet");
     });
+
+    app.unmount();
+  });
+
+  it("reloads from the new file contents after truncation and replacement", async () => {
+    const logPath = join(tempDir, "plan.log");
+    await writeFile(logPath, "[ORCH] first\n[TDD] second\n");
+
+    const app = render(React.createElement(HookProbe, { logPath }));
+
+    await waitFor(() => {
+      const frame = app.lastFrame() ?? "";
+      return frame.includes('"count":2') && frame.includes('"last":"[TDD] second"');
+    });
+
+    await writeFile(logPath, "[REVIEW] reset\n");
+    await appendFile(logPath, "[VERIFY] replacement\n");
+
+    await waitFor(() => {
+      const frame = app.lastFrame() ?? "";
+      return frame.includes('"count":2') && frame.includes('"last":"[VERIFY] replacement"');
+    });
+
+    const frame = (app.lastFrame() ?? "").replace(/\s+/g, " ");
+    expect(frame).toContain('"first":"[REVIEW] reset"');
+    expect(frame.indexOf("[REVIEW] reset")).toBeGreaterThanOrEqual(0);
+    expect(frame.indexOf("[VERIFY] replacement")).toBeGreaterThan(frame.indexOf("[REVIEW] reset"));
+    expect(frame).not.toContain("[ORCH] first");
 
     app.unmount();
   });
