@@ -38,6 +38,18 @@ describe("log writer", () => {
     );
   });
 
+  it("write prefixes every physical line when text contains embedded newlines", async () => {
+    const logPath = join(tempDir, "plan.log");
+    const writer = new FsLogWriter(logPath);
+
+    writer.write("AGENT", "line 1\nline 2");
+    await writer.close();
+
+    await expect(readFile(logPath, "utf8")).resolves.toMatch(
+      /^\[[^\]]+\] \[AGENT\] line 1\n\[[^\]]+\] \[AGENT\] line 2\n$/,
+    );
+  });
+
   it("multiple writes append to same file", async () => {
     const logPath = join(tempDir, "plan.log");
     const writer = new FsLogWriter(logPath);

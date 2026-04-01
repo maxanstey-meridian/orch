@@ -3,21 +3,31 @@ import { once } from "events";
 import { dirname, join } from "path";
 import { LogWriter } from "#application/ports/log-writer.port.js";
 
-const formatLine = (badge: string, text: string): string =>
-  `[${new Date().toISOString()}] [${badge}] ${text}\n`;
+const formatLine = (badge: string, text: string): string => {
+  const prefix = `[${new Date().toISOString()}] [${badge}] `;
+  return text
+    .split("\n")
+    .map((line) => `${prefix}${line}`)
+    .join("\n")
+    .concat("\n");
+};
 
 export class FsLogWriter implements LogWriter {
   private stream?: ReturnType<typeof createWriteStream>;
 
   constructor(private readonly logPath: string) {}
 
-  write(badge: string, text: string): void {
-    mkdirSync(dirname(this.logPath), { recursive: true });
+  private ensureStream(): ReturnType<typeof createWriteStream> {
     if (!this.stream) {
+      mkdirSync(dirname(this.logPath), { recursive: true });
       this.stream = createWriteStream(this.logPath, { flags: "a" });
     }
 
-    this.stream.write(formatLine(badge, text));
+    return this.stream;
+  }
+
+  write(badge: string, text: string): void {
+    this.ensureStream().write(formatLine(badge, text));
   }
 
   async close(): Promise<void> {
