@@ -54,49 +54,17 @@ import { createContainer } from "./composition-root.js";
 
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
 
-type RegisterRunLifecycleOptions = {
+type MainRuntime = {
   registryPath?: string;
-  planId: string;
-  cwd: string;
-  planPath: string;
-  statePath: string;
-  branch?: string;
-};
-
-export const registerRunLifecycle = async ({
-  registryPath = join(homedir(), ".orch", "runs.json"),
-  planId,
-  cwd,
-  planPath,
-  statePath,
-  branch,
-}: RegisterRunLifecycleOptions): Promise<() => Promise<void>> => {
-  let registered = false;
-
-  await registerRun(registryPath, {
-    id: planId,
-    pid: process.pid,
-    repo: cwd,
-    planPath,
-    statePath,
-    branch,
-    startedAt: new Date().toISOString(),
-  });
-  registered = true;
-
-  return async () => {
-    if (!registered) {
-      return;
-    }
-
-    await deregisterRun(registryPath, planId);
-    registered = false;
-  };
+  onSignal?: (signal: "SIGINT" | "SIGTERM", handler: () => void) => NodeJS.Process;
+  exit?: (code: number) => void;
 };
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
-const main = async () => {
+export const main = async (runtime: MainRuntime = {}) => {
+  const onSignal = runtime.onSignal ?? ((signal: "SIGINT" | "SIGTERM", handler: () => void) => process.on(signal, handler));
+  const exit = runtime.exit ?? process.exit;
   await assertGitRepo(process.cwd());
 
   const args = process.argv.slice(2);
@@ -294,29 +262,40 @@ const main = async () => {
   });
   const interactive = !auto && isTTY;
 
-  const registryPath = join(homedir(), ".orch", "runs.json");
-  const deregisterSelf = await registerRunLifecycle({
-    registryPath,
-    planId: activePlanId,
-    cwd,
+  const registryPath = runtime.registryPath ?? join(homedir(), ".orch", "runs.json");
+  let registered = false;
+  await registerRun(registryPath, {
+    id: activePlanId,
+    pid: process.pid,
+    repo: cwd,
     planPath,
     statePath: stateFile,
     branch: branchName,
+    startedAt: new Date().toISOString(),
   });
+  registered = true;
+  const deregisterSelf = async (): Promise<void> => {
+    if (!registered) {
+      return;
+    }
+
+    await deregisterRun(registryPath, activePlanId);
+    registered = false;
+  };
 
   // 7. Signal handlers + cleanup
   // cleanup is set to hud.teardown initially, then upgraded to orch.dispose()
   // after the container is created (kills agents + tears down HUD).
   let cleanup = () => hud.teardown();
-  const exitWithCleanup = async (code: number): Promise<never> => {
+  const exitWithCleanup = async (code: number): Promise<void> => {
     cleanup();
     await deregisterSelf();
-    process.exit(code);
+    exit(code);
   };
-  process.on("SIGINT", () => {
+  onSignal("SIGINT", () => {
     void exitWithCleanup(130);
   });
-  process.on("SIGTERM", () => {
+  onSignal("SIGTERM", () => {
     void exitWithCleanup(143);
   });
 
@@ -329,6 +308,7 @@ const main = async () => {
     if (groupFilter && startIdx === -1) {
       console.error(`No group "${groupFilter}". Available: ${groups.map((g) => g.name).join(", ")}`);
       await exitWithCleanup(1);
+      return;
     }
 
     // Stash unrelated working tree changes (skip if using worktree — it's clean by definition)
@@ -390,10 +370,12 @@ const main = async () => {
       if (err instanceof CreditExhaustedError) {
         log(`\n${ts()} ${a.red}Credit exhaustion detected: ${err.message}${a.reset}`);
         await exitWithCleanup(2);
+        return;
       }
       if (err instanceof IncompleteRunError) {
         log(`\n${ts()} ${a.red}${err.message}${a.reset}`);
         await exitWithCleanup(1);
+        return;
       }
       throw err;
     }
