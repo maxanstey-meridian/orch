@@ -61,6 +61,7 @@ const sliceElapsed = (state: OrchestratorState, sliceNumber: number): string | u
 const projectGroups = (
   groups: readonly Group[],
   state: OrchestratorState,
+  runStatus: DashboardRun["status"],
 ): DashboardRun["groups"] =>
   groups.map((group) => ({
     name: group.name,
@@ -68,9 +69,11 @@ const projectGroups = (
       const status =
         slice.number <= (state.lastCompletedSlice ?? 0)
           ? "done"
-          : state.currentPhase !== undefined && state.currentSlice === slice.number
-            ? "active"
-            : "pending";
+          : runStatus === "failed" && state.currentSlice === slice.number
+            ? "failed"
+            : state.currentPhase !== undefined && state.currentSlice === slice.number
+              ? "active"
+              : "pending";
       const elapsed =
         state.sliceTimings === undefined ? undefined : sliceElapsed(state, slice.number);
 
@@ -130,7 +133,7 @@ const buildRun = async (entry: RunEntry, status: DashboardRun["status"]): Promis
     currentPhase: state.currentPhase,
     elapsed: formatElapsed(startedAt),
     pid: entry.pid,
-    ...(plan.groups === undefined ? {} : { groups: projectGroups(plan.groups, state) }),
+    ...(plan.groups === undefined ? {} : { groups: projectGroups(plan.groups, state, status) }),
   };
 };
 
@@ -141,7 +144,7 @@ const buildCompletedRun = async (entry: RunEntry): Promise<DashboardRun> => {
   ]);
   const status =
     plan.groups === undefined
-      ? "failed"
+      ? "dead"
       : (state.lastCompletedSlice ?? 0) === plan.totalSlices
         ? "completed"
         : "failed";
@@ -157,7 +160,7 @@ const buildCompletedRun = async (entry: RunEntry): Promise<DashboardRun> => {
     currentPhase: state.currentPhase,
     elapsed: formatElapsed(startedAt),
     pid: entry.pid,
-    ...(plan.groups === undefined ? {} : { groups: projectGroups(plan.groups, state) }),
+    ...(plan.groups === undefined ? {} : { groups: projectGroups(plan.groups, state, status) }),
   };
 };
 

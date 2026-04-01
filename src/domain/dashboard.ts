@@ -1,4 +1,5 @@
 import type { QueueEntry } from "#domain/queue.js";
+import type { PersistedPhase } from "#domain/state.js";
 
 export type DashboardRun = {
   readonly id: string;
@@ -7,7 +8,7 @@ export type DashboardRun = {
   readonly planName?: string;
   readonly status: "active" | "dead" | "completed" | "failed";
   readonly sliceProgress: string;
-  readonly currentPhase?: string;
+  readonly currentPhase?: PersistedPhase;
   readonly elapsed: string;
   readonly pid: number;
   readonly logPath?: string;

@@ -245,6 +245,15 @@ describe("data aggregator", () => {
       currentPhase: "review",
       elapsed: "2h",
     });
+    expect(result.completed[0]?.groups).toEqual([
+      {
+        name: "Dashboard",
+        slices: [
+          { number: 1, title: "Registry", status: "done", elapsed: "30m" },
+          { number: 2, title: "Aggregator", status: "failed", elapsed: "1h 30m" },
+        ],
+      },
+    ]);
 
     vi.useRealTimers();
   });
@@ -535,6 +544,45 @@ describe("data aggregator", () => {
       elapsed: "2h",
     });
     expect(result.active[0]?.groups).toBeUndefined();
+
+    vi.useRealTimers();
+  });
+
+  it("dead PID with corrupt plan is classified as dead", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
+
+    const registryPath = join(tempDir, "runs.json");
+    const queuePath = join(tempDir, "queue.json");
+    const planPath = join(tempDir, "broken-plan.json");
+    const statePath = join(tempDir, "state.json");
+
+    await writeFile(planPath, "{ definitely-not-json");
+    await writeJson(statePath, {
+      startedAt: "2026-04-10T10:00:00.000Z",
+      lastCompletedSlice: 1,
+    });
+    await writeRegistry(registryPath, [
+      makeRunEntry({
+        id: "run-dead-corrupt-plan",
+        pid: 999999,
+        planPath,
+        statePath,
+        startedAt: "2026-04-10T10:00:00.000Z",
+      }),
+    ]);
+
+    const result = await aggregateDashboard(registryPath, queuePath);
+
+    expect(result.completed).toHaveLength(1);
+    expect(result.completed[0]).toMatchObject({
+      id: "run-dead-corrupt-plan",
+      planName: "broken-plan",
+      status: "dead",
+      sliceProgress: "S1/0",
+      elapsed: "2h",
+    });
+    expect(result.completed[0]?.groups).toBeUndefined();
 
     vi.useRealTimers();
   });
