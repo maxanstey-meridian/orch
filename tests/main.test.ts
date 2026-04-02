@@ -1395,6 +1395,8 @@ const runMainWithInventoryPlanMocks = async (options?: {
   args?: string[];
   requestTriageResult?: { mode: "direct" | "grouped" | "sliced"; reason: string };
   requestTriageText?: string;
+  requestTriageResultText?: string;
+  requestTriageSendError?: Error;
   parsedRequestTriageResult?: { mode: "direct" | "grouped" | "sliced"; reason: string };
   inputAlreadyPlan?: boolean;
   inventoryContent?: string;
@@ -1441,9 +1443,12 @@ const runMainWithInventoryPlanMocks = async (options?: {
       reason: "bounded local change",
     };
     return {
-      send: vi.fn().mockResolvedValue({
-        assistantText: options?.requestTriageText ?? JSON.stringify(triageResult),
-      }),
+      send: options?.requestTriageSendError === undefined
+        ? vi.fn().mockResolvedValue({
+            assistantText: options?.requestTriageText ?? JSON.stringify(triageResult),
+            resultText: options?.requestTriageResultText ?? "",
+          })
+        : vi.fn().mockRejectedValue(options.requestTriageSendError),
       kill: vi.fn(),
     };
   });
@@ -1843,6 +1848,61 @@ describe("main execution preference wiring", () => {
     );
   });
 
+  it("prefers non-empty triage resultText when assistantText is empty", async () => {
+    const {
+      createContainer,
+      doGeneratePlan,
+      parseRequestTriageResult,
+      exit,
+    } = await runMainWithInventoryPlanMocks({
+      requestTriageText: "",
+      requestTriageResultText: JSON.stringify({
+        mode: "direct",
+        reason: "bounded local change",
+      }),
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(parseRequestTriageResult).toHaveBeenCalledWith(
+      JSON.stringify({ mode: "direct", reason: "bounded local change" }),
+    );
+    expect(doGeneratePlan).not.toHaveBeenCalled();
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionPreference: "auto",
+        executionMode: "direct",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("falls back to sliced planning when request triage transport fails", async () => {
+    const {
+      createContainer,
+      doGeneratePlan,
+      exit,
+    } = await runMainWithInventoryPlanMocks({
+      requestTriageSendError: new Error("triage unavailable"),
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(doGeneratePlan).toHaveBeenCalledWith(
+      expect.any(String),
+      "brief text",
+      expect.any(String),
+      expect.any(Function),
+      expect.any(Function),
+      "sliced",
+    );
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionPreference: "auto",
+        executionMode: "sliced",
+      }),
+      expect.any(Object),
+    );
+  });
+
   it.each([
     {
       label: "grouped triage result",
@@ -1952,6 +2012,53 @@ describe("main execution preference wiring", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       "Execution mode overrides are not supported with --work until plan metadata is available.",
     );
+    expect(exit).toHaveBeenCalledWith(1);
+    errorSpy.mockRestore();
+  });
+
+  it.each([
+    {
+      label: "direct metadata",
+      planContent: JSON.stringify({
+        executionMode: "direct",
+        groups: [{
+          name: "Test",
+          slices: [{
+            number: 1,
+            title: "Slice 1",
+            why: "why",
+            files: [{ path: "src/s1.ts", action: "new" }],
+            details: "details",
+            tests: "tests",
+          }],
+        }],
+      }),
+      expectedMessage: "Plan metadata executionMode=direct is invalid for --work.",
+    },
+    {
+      label: "unknown metadata",
+      planContent: JSON.stringify({
+        executionMode: "bogus",
+        groups: [{
+          name: "Test",
+          slices: [{
+            number: 1,
+            title: "Slice 1",
+            why: "why",
+            files: [{ path: "src/s1.ts", action: "new" }],
+            details: "details",
+            tests: "tests",
+          }],
+        }],
+      }),
+      expectedMessage: "Invalid plan executionMode metadata: bogus.",
+    },
+  ])("rejects invalid --work $label", async ({ planContent, expectedMessage }) => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { createContainer, exit } = await runMainWithWorkPlanMocks([], { planContent });
+
+    expect(createContainer).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expectedMessage);
     expect(exit).toHaveBeenCalledWith(1);
     errorSpy.mockRestore();
   });
