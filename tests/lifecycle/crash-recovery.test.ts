@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { AGENT_DEFAULTS } from "#domain/agent-config.js";
 import { createTestHarness, okResult } from "../fakes/harness.js";
 import type { Group, Slice } from "#domain/plan.js";
 
@@ -58,7 +59,18 @@ describe("Crash recovery lifecycle", () => {
 
   it("drops persisted sessions when they belong to a different provider", async () => {
     const { uc, spawner, persistence } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true, defaultProvider: "codex" },
+      config: {
+        planDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        gapDisabled: true,
+        defaultProvider: "codex",
+        agentConfig: {
+          ...AGENT_DEFAULTS,
+          tdd: { provider: "codex" },
+          review: { provider: "codex" },
+        },
+      },
       state: {
         lastCompletedSlice: 2,
         tddSession: { provider: "claude", id: "old-tdd-session" },
@@ -135,5 +147,42 @@ describe("Crash recovery lifecycle", () => {
     expect(run2.persistence.current.lastCompletedSlice).toBe(2);
     const tdd = run2.spawner.lastAgent("tdd");
     expect(tdd.sentPrompts.length).toBe(1); // only slice 2
+  });
+
+  it("resumes and persists sessions using each role's configured provider", async () => {
+    const { uc, spawner, persistence } = createTestHarness({
+      config: {
+        planDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        gapDisabled: true,
+        defaultProvider: "claude",
+        agentConfig: {
+          ...AGENT_DEFAULTS,
+          tdd: { provider: "codex" },
+          review: { provider: "claude" },
+        },
+      },
+      state: {
+        tddSession: { provider: "codex", id: "old-tdd-session" },
+        reviewSession: { provider: "claude", id: "old-review-session" },
+      },
+      auto: true,
+    });
+
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "slice 1 done" }));
+    spawner.onNextSpawn("review");
+
+    await uc.execute([makeGroup("G1", [makeSlice(1)])]);
+
+    const tddSpawn = spawner.spawned.find((spawn) => spawn.role === "tdd");
+    const reviewSpawn = spawner.spawned.find((spawn) => spawn.role === "review");
+    expect(tddSpawn?.opts?.resumeSessionId).toBe("old-tdd-session");
+    expect(reviewSpawn?.opts?.resumeSessionId).toBe("old-review-session");
+    expect(persistence.current.tddSession).toEqual({ provider: "codex", id: expect.any(String) });
+    expect(persistence.current.reviewSession).toEqual({
+      provider: "claude",
+      id: expect.any(String),
+    });
   });
 });

@@ -122,13 +122,13 @@ export class RunOrchestration {
     return this.state.currentSlice ?? this.state.lastCompletedSlice ?? defaultSliceNumber;
   }
 
-  private currentProvider(): Provider {
-    return this.config.defaultProvider;
+  private providerForRole(role: "tdd" | "review"): Provider {
+    return this.config.agentConfig[role].provider;
   }
 
   private sessionForRole(role: "tdd" | "review"): PersistedAgentSession | undefined {
     const session = role === "tdd" ? this.state.tddSession : this.state.reviewSession;
-    if (session?.provider !== this.currentProvider()) {
+    if (session?.provider !== this.providerForRole(role)) {
       return undefined;
     }
     return session;
@@ -139,7 +139,7 @@ export class RunOrchestration {
     if (!agent) {
       throw new Error(`Missing ${role} agent`);
     }
-    return { provider: this.currentProvider(), id: agent.sessionId };
+    return { provider: this.providerForRole(role), id: agent.sessionId };
   }
 
   private async sendRulesReminder(role: "tdd" | "review"): Promise<void> {
@@ -222,10 +222,13 @@ export class RunOrchestration {
 
       this.state = await this.persistence.load();
 
-      if (this.state.tddSession && this.state.tddSession.provider !== this.currentProvider()) {
+      if (this.state.tddSession && this.state.tddSession.provider !== this.providerForRole("tdd")) {
         this.state = { ...this.state, tddSession: undefined };
       }
-      if (this.state.reviewSession && this.state.reviewSession.provider !== this.currentProvider()) {
+      if (
+        this.state.reviewSession &&
+        this.state.reviewSession.provider !== this.providerForRole("review")
+      ) {
         this.state = { ...this.state, reviewSession: undefined };
       }
 

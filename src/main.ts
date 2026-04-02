@@ -787,45 +787,13 @@ export const main = async (runtime: MainRuntime = {}) => {
     return;
   }
 
-  if (executionMode === "direct") {
-    const directGroups = buildDirectExecutionGroups(planContent ?? "", planPath);
+  if (showPlan) {
+    const groups = await parsePlan(planPath);
     for (const line of earlyLog) {
       origLog(line);
     }
-    const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
-    const hud = createHud(isTTY);
-    log = hud.wrapLog(origLog);
-    cleanup = () => hud.teardown();
-    const planLogPath = logPathForPlan(orchDir, activePlanId);
-    const orchestratorConfig = {
-      cwd,
-      planPath,
-      planContent: planContent ?? "",
-      brief,
-      executionMode,
-      executionPreference,
-      auto,
-      reviewThreshold:
-        rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),
-      maxReviewCycles: orchrc.config.maxReviewCycles ?? 3,
-      maxReplans: orchrc.config.maxReplans ?? 2,
-      stateFile,
-      logPath: planLogPath,
-      tddSkill,
-      reviewSkill,
-      verifySkill,
-      gapDisabled,
-      planDisabled: true,
-      tddRules: orchrc.rules.tdd,
-      defaultProvider: provider,
-      agentConfig,
-      reviewRules: orchrc.rules.review,
-    } satisfies OrchestratorConfig;
-    const container = createContainer(orchestratorConfig, hud);
-    const orch = container.resolve("runOrchestration");
-    cleanup = () => orch.dispose();
-    await orch.execute(directGroups);
-    cleanup();
+    formatPlanSummary(origLog, groups);
+    exit(0);
     return;
   }
 
@@ -863,16 +831,72 @@ export const main = async (runtime: MainRuntime = {}) => {
   });
 
   try {
-    const groups = await parsePlan(planPath);
-
-    if (showPlan) {
+    if (executionMode === "direct") {
+      const directGroups = buildDirectExecutionGroups(planContent ?? "", planPath);
+      const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
+      const hud = createHud(isTTY);
+      hud.update({ totalSlices: 1, completedSlices: 0, startTime: Date.now() });
+      log = hud.wrapLog(origLog);
       for (const line of earlyLog) {
-        origLog(line);
+        log(line);
       }
-      formatPlanSummary(origLog, groups);
-      exit(0);
+      cleanup = () => hud.teardown();
+      const planLogPath = logPathForPlan(orchDir, activePlanId);
+      log(`${ts()} ${a.dim}Log file: ${planLogPath}${a.reset}`);
+      log(`${ts()} ${a.dim}Initialising agents — this may take a few minutes...${a.reset}`);
+      const orchestratorConfig = {
+        cwd,
+        planPath,
+        planContent: planContent ?? "",
+        brief,
+        executionMode,
+        executionPreference,
+        auto,
+        reviewThreshold:
+          rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),
+        maxReviewCycles: orchrc.config.maxReviewCycles ?? 3,
+        maxReplans: orchrc.config.maxReplans ?? 2,
+        stateFile,
+        logPath: planLogPath,
+        tddSkill,
+        reviewSkill,
+        verifySkill,
+        gapDisabled,
+        planDisabled: true,
+        tddRules: orchrc.rules.tdd,
+        defaultProvider: provider,
+        agentConfig,
+        reviewRules: orchrc.rules.review,
+      } satisfies OrchestratorConfig;
+      const container = createContainer(orchestratorConfig, hud);
+      const orch = container.resolve("runOrchestration");
+      cleanup = () => orch.dispose();
+
+      try {
+        executionStarted = true;
+        await orch.execute(directGroups);
+      } catch (err) {
+        if (err instanceof CreditExhaustedError) {
+          log(`\n${ts()} ${a.red}Credit exhaustion detected: ${err.message}${a.reset}`);
+          await exitWithCleanup(2);
+          return;
+        }
+        if (err instanceof IncompleteRunError) {
+          log(`\n${ts()} ${a.red}${err.message}${a.reset}`);
+          await exitWithCleanup(1);
+          return;
+        }
+        throw err;
+      }
+
+      logSection(log, `${a.green}✅ All groups complete + final review done${a.reset}`);
+      const status = await getStatus(cwd);
+      log(`\n${status}`);
+      cleanup();
       return;
     }
+
+    const groups = await parsePlan(planPath);
 
     const totalSlices = groups.reduce((n, g) => n + g.slices.length, 0);
     const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;

@@ -13,12 +13,14 @@ const mocks = vi.hoisted(() => ({
   createHud: vi.fn(),
   ensureCanonicalPlan: vi.fn(),
   getStatus: vi.fn(),
+  isPlanFormat: vi.fn(),
   loadAndResolveOrchrConfig: vi.fn(),
   loadState: vi.fn(),
   parseBranchFlag: vi.fn(),
   parseExecutionPreference: vi.fn(),
   parsePlan: vi.fn(),
   parseProviderFlag: vi.fn(),
+  resolvePlanId: vi.fn(),
   resolveAllAgentConfigs: vi.fn(),
   resolveSkillValue: vi.fn(),
   resolveWorktree: vi.fn(),
@@ -69,8 +71,9 @@ vi.mock("#infrastructure/git/worktree.js", () => ({
 vi.mock("#infrastructure/plan/plan-generator.js", () => ({
   doGeneratePlan: vi.fn(),
   ensureCanonicalPlan: mocks.ensureCanonicalPlan,
-  isPlanFormat: vi.fn(),
+  isPlanFormat: mocks.isPlanFormat,
   planGeneratorSpawnerFactory: vi.fn(),
+  resolvePlanId: mocks.resolvePlanId,
 }));
 
 vi.mock("#infrastructure/plan/plan-parser.js", () => ({
@@ -187,6 +190,7 @@ beforeEach(async () => {
   mocks.parseProviderFlag.mockReturnValue("claude");
   mocks.parseExecutionPreference.mockReturnValue("auto");
   mocks.resolveAllAgentConfigs.mockReturnValue({});
+  mocks.resolvePlanId.mockReturnValue("abc123");
   mocks.ensureCanonicalPlan.mockReturnValue("abc123");
   mocks.parseBranchFlag.mockReturnValue("feature/test");
   mocks.statePathForPlan.mockReturnValue(statePath);
@@ -218,6 +222,7 @@ beforeEach(async () => {
   });
   mocks.stashBackup.mockResolvedValue(false);
   mocks.getStatus.mockResolvedValue("clean");
+  mocks.isPlanFormat.mockReturnValue(false);
 });
 
 afterEach(async () => {
@@ -416,6 +421,89 @@ describe("registry lifecycle", () => {
     const entries = await readRegistry(registryPath);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toEqual(expect.objectContaining({ planPath, statePath }));
+  });
+
+  it("direct inventory runs register and clean up through the shared signal path", async () => {
+    const inventoryPath = join(tempDir, "inventory.md");
+    await writeFile(inventoryPath, "# Feature Inventory\n\n- Direct change\n");
+    const started = createDeferred<void>();
+    const release = createDeferred<void>();
+    const signalHandlers = new Map<string, () => void>();
+    const exit = vi.fn();
+    const orch = {
+      dispose: vi.fn(),
+      execute: vi.fn(async () => {
+        started.resolve();
+        await release.promise;
+      }),
+    };
+    mocks.resolveAllAgentConfigs.mockReturnValue({
+      plan: { provider: "claude" },
+    });
+    mocks.parseExecutionPreference.mockReturnValue("quick");
+    mocks.createContainer.mockReturnValue({
+      resolve: vi.fn(() => orch),
+    });
+    process.argv = [
+      "node",
+      "/virtual/main.ts",
+      "--plan",
+      inventoryPath,
+      "--skip-fingerprint",
+      "--no-interaction",
+      "--quick",
+    ];
+
+    const mainModule = await import("../../src/main.js");
+    const main = mainModule.main as (runtime?: MainTestRuntime) => Promise<void>;
+    const mainPromise = main({
+      registryPath,
+      onSignal: (signal, handler) => {
+        signalHandlers.set(signal, handler);
+        return process;
+      },
+      exit,
+    });
+
+    await started.promise;
+
+    const entries = await readRegistry(registryPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(expect.objectContaining({ planPath: inventoryPath }));
+    expect(signalHandlers.has("SIGTERM")).toBe(true);
+
+    signalHandlers.get("SIGTERM")?.();
+    expect(orch.dispose).toHaveBeenCalledTimes(1);
+
+    release.resolve();
+    await mainPromise;
+    expect(exit).toHaveBeenCalledWith(143);
+  });
+
+  it("show-plan exits before writing preflight state or registry entries", async () => {
+    const exit = vi.fn();
+    process.argv = [
+      "node",
+      "/virtual/main.ts",
+      "--work",
+      planPath,
+      "--skip-fingerprint",
+      "--no-interaction",
+      "--show-plan",
+    ];
+
+    const { main } = await import("../../src/main.js");
+    await main({
+      onSignal: () => process,
+      registryPath,
+      exit,
+    });
+
+    const entries = await readRegistry(registryPath);
+    expect(entries).toEqual([]);
+    expect(mocks.saveState).not.toHaveBeenCalled();
+    expect(mocks.createContainer).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(0);
   });
 
   it("concurrent runs of the same plan keep distinct registry identities", async () => {
