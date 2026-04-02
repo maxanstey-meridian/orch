@@ -2,6 +2,7 @@ import { randomBytes, createHash } from "crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
 import type { PromptAgent } from "#application/ports/agent-spawner.port.js";
+import type { ExecutionMode } from "#domain/config.js";
 import { a, type LogFn } from "#ui/display.js";
 import type { Group } from "./plan-parser.js";
 import { parsePlanJson } from "./plan-schema.js";
@@ -163,6 +164,7 @@ export const generatePlan = async (
   briefContent: string,
   agent: PromptAgent,
   outputDir: string,
+  _targetExecutionMode: Exclude<ExecutionMode, "direct"> = "sliced",
 ): Promise<GeneratePlanResult> => {
   const inventory = readFileSync(inventoryPath, "utf-8");
 
@@ -218,6 +220,7 @@ export const doGeneratePlan = async (
   outputDir: string,
   log: LogFn,
   spawnPlanAgent: () => PromptAgent,
+  targetExecutionMode: Exclude<ExecutionMode, "direct"> = "sliced",
 ): Promise<string> => {
   log(`${a.bold}Generating plan from inventory...${a.reset}`);
   const planAgent = spawnPlanAgent();
@@ -227,6 +230,7 @@ export const doGeneratePlan = async (
       briefContent,
       planAgent,
       outputDir,
+      targetExecutionMode,
     );
     log(`${a.green}Plan written to ${planPath}${a.reset}`);
     for (const line of planSummaryLines(groups)) {

@@ -1,4 +1,5 @@
 import { type AgentStyle } from "#domain/agent-types.js";
+import type { ExecutionMode } from "#domain/config.js";
 import { type Slice, type Group } from "#infrastructure/plan/plan-parser.js";
 
 export type LogFn = (...args: unknown[]) => void;
@@ -126,6 +127,24 @@ export const formatPlanSummary = (log: LogFn, groups: readonly Group[]): void =>
     }
     log(`${a.dim}└──${a.reset}`);
   }
+};
+
+export const formatExecutionModeSummary = (executionMode: ExecutionMode): string => {
+  switch (executionMode) {
+    case "direct":
+      return "Execution direct — bounded request with no generated plan";
+    case "grouped":
+      return "Execution grouped — coarse increments with group-boundary gates";
+    case "sliced":
+      return "Execution sliced — fine-grained slices with per-slice cadence";
+  }
+};
+
+export const printExecutionModeBanner = (
+  log: LogFn,
+  executionMode: ExecutionMode,
+): void => {
+  log(`${a.bold}${formatExecutionModeSummary(executionMode)}${a.reset}`);
 };
 
 export type BannerOpts = {

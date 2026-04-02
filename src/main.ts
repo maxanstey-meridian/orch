@@ -6,7 +6,7 @@
  * No dep injection, no framework — reads top-to-bottom.
  *
  * Usage:
- *   npx ts-node src/main.ts --plan inventory.md               # generate plan and exit
+ *   npx ts-node src/main.ts --plan inventory.md               # bootstrap from inventory
  *   npx ts-node src/main.ts --work plan.md                    # execute a plan
  *   npx ts-node src/main.ts --work plan.md --group Auth       # start from group
  *   npx ts-node src/main.ts --work plan.md --auto             # auto-accept all prompts (--no-interaction is an alias)
@@ -36,7 +36,10 @@ import {
   buildOrchrSummary,
 } from "#infrastructure/config/orchrc.js";
 import { aggregateDashboard } from "#infrastructure/dashboard/data-aggregator.js";
-import { planGeneratorSpawnerFactory } from "#infrastructure/factories.js";
+import {
+  planGeneratorSpawnerFactory,
+  requestTriageSpawnerFactory,
+} from "#infrastructure/factories.js";
 import { runFingerprint } from "#infrastructure/fingerprint.js";
 import { getStatus, stashBackup } from "#infrastructure/git/git.js";
 import { assertGitRepo } from "#infrastructure/git/repo-check.js";
@@ -50,6 +53,10 @@ import {
   resolvePlanId,
 } from "#infrastructure/plan/plan-generator.js";
 import { parsePlan } from "#infrastructure/plan/plan-parser.js";
+import {
+  buildRequestTriagePrompt,
+  parseRequestTriageResult,
+} from "#infrastructure/request-triage.js";
 import {
   defaultQueuePath,
   addToQueue,
@@ -68,7 +75,14 @@ import {
   type OrchestratorState,
 } from "#infrastructure/state/state.js";
 import { renderDashboard } from "#ui/dashboard/dashboard-app.js";
-import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "#ui/display.js";
+import {
+  a,
+  ts,
+  logSection,
+  printStartupBanner,
+  formatPlanSummary,
+  printExecutionModeBanner,
+} from "#ui/display.js";
 import { createHud } from "#ui/hud.js";
 import { runInit, profileToMarkdown } from "#ui/init.js";
 import { createContainer } from "./composition-root.js";
@@ -307,6 +321,43 @@ const resolveExecutionMode = (executionPreference: ExecutionPreference): Executi
   }
 };
 
+const resolvePlannedWorkExecutionMode = (
+  executionPreference: ExecutionPreference,
+): ExecutionMode => {
+  if (executionPreference !== "auto") {
+    throw new Error(
+      "Execution mode overrides are not supported with --work until plan metadata is available.",
+    );
+  }
+
+  return "sliced";
+};
+
+const resolveInventoryExecutionMode = async (opts: {
+  executionPreference: ExecutionPreference;
+  requestContent: string;
+  agentConfig: ReturnType<typeof resolveAllAgentConfigs>;
+  cwd: string;
+}): Promise<ExecutionMode> => {
+  if (opts.executionPreference !== "auto") {
+    return resolveExecutionMode(opts.executionPreference);
+  }
+
+  const triageAgent = requestTriageSpawnerFactory({
+    agentConfig: opts.agentConfig,
+    cwd: opts.cwd,
+  })();
+
+  try {
+    const prompt = buildRequestTriagePrompt(opts.requestContent);
+    const result = await triageAgent.send(prompt);
+    const triage = parseRequestTriageResult(result.assistantText ?? result.resultText ?? "");
+    return triage.mode;
+  } finally {
+    triageAgent.kill();
+  }
+};
+
 const findDashboardEntry = (
   model: DashboardModel,
   id: string,
@@ -511,7 +562,7 @@ export const main = async (runtime: MainRuntime = {}) => {
   }
   if (args.includes("--plan-only")) {
     exitWithError(
-      "--plan-only is no longer supported. Use --plan instead (it generates and exits by default).",
+      "--plan-only is no longer supported. Use --plan <inventory> instead.",
     );
     return;
   }
@@ -532,7 +583,6 @@ export const main = async (runtime: MainRuntime = {}) => {
     exitWithError(error instanceof Error ? error.message : String(error));
     return;
   }
-  const executionMode = resolveExecutionMode(executionPreference);
   const rawThreshold = getArg("--review-threshold");
   const reviewThreshold = rawThreshold !== undefined ? Number(rawThreshold) : 30;
   if (Number.isNaN(reviewThreshold)) {
@@ -545,7 +595,7 @@ export const main = async (runtime: MainRuntime = {}) => {
   }
   if (inventoryPath && workMode) {
     exitWithError(
-      "--plan and --work are mutually exclusive. Use --plan to generate, then --work to execute.",
+      "--plan and --work are mutually exclusive. Use --plan <inventory> to bootstrap from inventory, or --work <plan> to execute an existing plan.",
     );
     return;
   }
@@ -563,7 +613,7 @@ export const main = async (runtime: MainRuntime = {}) => {
   }
   if (!inventoryPath && !workMode) {
     exitWithError(
-      "Provide --plan <inventory> to generate a plan, or --work <plan> to execute an existing one.",
+      "Provide --plan <inventory> to bootstrap from inventory, or --work <plan> to execute an existing plan.",
     );
     return;
   }
@@ -611,26 +661,60 @@ export const main = async (runtime: MainRuntime = {}) => {
   const provider = parseProviderFlag(args);
   const agentConfig = resolveAllAgentConfigs(orchrc.agents, provider);
   let planPath: string;
-
-  if (workMode) {
-    planPath = resolve(workPath!);
-  } else {
-    const inputPath = resolve(inventoryPath!);
-    const srcContent = readFileSync(inputPath, "utf-8");
-
-    if (isPlanFormat(srcContent)) {
-      log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
-      planPath = inputPath;
+  let planContent: string | undefined;
+  let executionMode: ExecutionMode;
+  try {
+    if (workMode) {
+      planPath = resolve(workPath!);
+      executionMode = resolvePlannedWorkExecutionMode(executionPreference);
+      printExecutionModeBanner(log, executionMode);
     } else {
-      const spawnPlanGenerator = planGeneratorSpawnerFactory({ agentConfig, cwd });
-      planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnPlanGenerator);
+      const inputPath = resolve(inventoryPath!);
+      const srcContent = readFileSync(inputPath, "utf-8");
+
+      if (isPlanFormat(srcContent)) {
+        log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
+        planPath = inputPath;
+        planContent = srcContent;
+        executionMode = resolvePlannedWorkExecutionMode(executionPreference);
+        printExecutionModeBanner(log, executionMode);
+      } else {
+        executionMode = await resolveInventoryExecutionMode({
+          executionPreference,
+          requestContent: srcContent,
+          agentConfig,
+          cwd,
+        });
+        printExecutionModeBanner(log, executionMode);
+        const spawnPlanGenerator = planGeneratorSpawnerFactory({ agentConfig, cwd });
+        if (executionMode === "direct") {
+          planPath = inputPath;
+          planContent = srcContent;
+        } else {
+          planPath = await doGeneratePlan(
+            inputPath,
+            brief,
+            orchDir,
+            log,
+            spawnPlanGenerator,
+            executionMode,
+          );
+        }
+      }
     }
+  } catch (error) {
+    exitWithError(error instanceof Error ? error.message : String(error));
+    return;
   }
 
   // 4. Derive per-plan state path
-  const activePlanId = ensureCanonicalPlan(planPath, orchDir);
+  const activePlanId =
+    executionMode === "direct"
+      ? resolvePlanId(planPath)
+      : ensureCanonicalPlan(planPath, orchDir);
   const branchName = parseBranchFlag(args, activePlanId);
   const stateFile = statePathForPlan(orchDir, activePlanId);
+  let cleanup = () => {};
   mkdirSync(resolve(orchDir, "state"), { recursive: true });
 
   if (resetState) {
@@ -649,21 +733,50 @@ export const main = async (runtime: MainRuntime = {}) => {
     return;
   }
 
-  // Generate-only mode: --plan without --work
-  const generateOnly = !!inventoryPath && !workMode;
-  if (generateOnly) {
+  if (executionMode === "direct") {
     for (const line of earlyLog) {
       origLog(line);
     }
-    origLog(`Plan written to ${planPath} — review and run with --work`);
-    exit(0);
+    const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
+    const hud = createHud(isTTY);
+    log = hud.wrapLog(origLog);
+    cleanup = () => hud.teardown();
+    const planLogPath = logPathForPlan(orchDir, activePlanId);
+    const orchestratorConfig = {
+      cwd,
+      planPath,
+      planContent: planContent ?? "",
+      brief,
+      executionMode,
+      executionPreference,
+      auto,
+      reviewThreshold:
+        rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),
+      maxReviewCycles: orchrc.config.maxReviewCycles ?? 3,
+      maxReplans: orchrc.config.maxReplans ?? 2,
+      stateFile,
+      logPath: planLogPath,
+      tddSkill,
+      reviewSkill,
+      verifySkill,
+      gapDisabled,
+      planDisabled,
+      tddRules: orchrc.rules.tdd,
+      defaultProvider: provider,
+      agentConfig,
+      reviewRules: orchrc.rules.review,
+    } satisfies OrchestratorConfig;
+    const container = createContainer(orchestratorConfig, hud);
+    const orch = container.resolve("runOrchestration");
+    cleanup = () => orch.dispose();
+    await orch.execute([]);
+    cleanup();
     return;
   }
 
   const runId = randomUUID();
   let registered = false;
   let executionStarted = false;
-  let cleanup = () => {};
   await saveState(stateFile, {
     ...(await loadState(stateFile)),
     startedAt: new Date().toISOString(),
@@ -762,7 +875,7 @@ export const main = async (runtime: MainRuntime = {}) => {
     log(`${ts()} ${a.dim}Log file: ${planLogPath}${a.reset}`);
     log(`${ts()} ${a.dim}Initialising agents — this may take a few minutes...${a.reset}`);
 
-    const planContent = await readFile(planPath, "utf-8");
+    planContent ??= await readFile(planPath, "utf-8");
 
     // 9. Composition root — wire all ports + use case
     const orchestratorConfig = {

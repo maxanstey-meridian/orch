@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { printStartupBanner, printSliceIntro, printSliceContent, formatPlanSummary } from "#ui/display.js";
+import {
+  printStartupBanner,
+  printSliceIntro,
+  printSliceContent,
+  formatPlanSummary,
+  formatExecutionModeSummary,
+} from "#ui/display.js";
 import type { Slice } from "#infrastructure/plan/plan-parser.js";
 
 const collect = () => {
@@ -138,6 +144,16 @@ describe("printStartupBanner", () => {
     printStartupBanner(log, baseOpts);
     const text = strip(lines.join("\n"));
     expect(text).not.toContain("Config");
+  });
+});
+
+describe("formatExecutionModeSummary", () => {
+  it.each([
+    ["direct", "Execution direct — bounded request with no generated plan"],
+    ["grouped", "Execution grouped — coarse increments with group-boundary gates"],
+    ["sliced", "Execution sliced — fine-grained slices with per-slice cadence"],
+  ] as const)("formats %s mode for operator output", (executionMode, expected) => {
+    expect(formatExecutionModeSummary(executionMode)).toBe(expected);
   });
 });
 

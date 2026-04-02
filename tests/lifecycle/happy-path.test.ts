@@ -32,6 +32,8 @@ const hasPhaseSubsequence = (
   return false;
 };
 
+const stripAnsi = (value: string): string => value.replace(/\x1b\[[0-9;]*m/g, "");
+
 describe("Happy path lifecycle", () => {
   it("single slice completes through plan-execute-verify-review", async () => {
     const { uc, hud, spawner, persistence, git } = createTestHarness({
@@ -450,5 +452,27 @@ describe("Happy path lifecycle", () => {
     const reviewAgent = spawner.lastAgent("review");
     const reviewSends = reviewAgent.sentPrompts.filter((p) => p.includes("[REVIEW]"));
     expect(reviewSends.length).toBe(0);
+  });
+
+  it("logs the configured execution mode and direct-marked runs avoid per-slice planning logs", async () => {
+    const { uc, hud, spawner } = createTestHarness({
+      config: {
+        executionMode: "direct",
+        planDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        gapDisabled: true,
+      },
+      auto: true,
+    });
+
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "slice 1 done" }));
+    spawner.onNextSpawn("review");
+
+    await uc.execute([makeGroup("G1", [makeSlice(1)])]);
+
+    expect(hud.logs.map(stripAnsi).some((line) => line.includes("Execution direct"))).toBe(true);
+    expect(spawner.agentsForRole("plan")).toHaveLength(0);
+    expect(spawner.agentsForRole("tdd")[0]?.sentPrompts.some((prompt) => prompt.includes("[PLAN:"))).toBe(false);
   });
 });

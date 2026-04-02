@@ -21,6 +21,7 @@ import type { TriageResult } from "#domain/triage.js";
 import { FULL_TRIAGE } from "#domain/triage.js";
 import { parseVerifyResult } from "#domain/verify.js";
 import { buildTriagePrompt, parseTriageResult } from "#infrastructure/diff-triage.js";
+import { printExecutionModeBanner } from "#ui/display.js";
 import type { AgentSpawner, AgentHandle } from "./ports/agent-spawner.port.js";
 import type { GitOps } from "./ports/git-ops.port.js";
 import type { LogWriter } from "./ports/log-writer.port.js";
@@ -214,6 +215,8 @@ export class RunOrchestration {
     },
   ): Promise<void> {
     try {
+      printExecutionModeBanner((text) => this.progressSink.log(text), this.config.executionMode);
+
       if (groups.length === 0) {
         return;
       }
