@@ -1425,9 +1425,10 @@ const runMainWithInventoryPlanMocks = async (options?: {
     ],
   }));
 
+  const execute = vi.fn().mockResolvedValue(undefined);
   const createContainer = vi.fn(() => ({
     resolve: vi.fn(() => ({
-      execute: vi.fn().mockResolvedValue(undefined),
+      execute,
       dispose: vi.fn(),
     })),
   }));
@@ -1613,6 +1614,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
 
   return {
     createContainer,
+    execute,
     doGeneratePlan,
     requestTriageSpawnerFactory,
     buildRequestTriagePrompt,
@@ -1716,6 +1718,7 @@ describe("main execution preference wiring", () => {
   it("uses direct bootstrap for --plan inventory --quick without triage or plan generation", async () => {
     const {
       createContainer,
+      execute,
       doGeneratePlan,
       requestTriageSpawnerFactory,
       buildRequestTriagePrompt,
@@ -1738,9 +1741,22 @@ describe("main execution preference wiring", () => {
         brief: "brief text",
         executionPreference: "quick",
         executionMode: "direct",
+        planDisabled: true,
       }),
       expect.any(Object),
     );
+    expect(execute).toHaveBeenCalledWith([
+      expect.objectContaining({
+        name: "Direct",
+        slices: [
+          expect.objectContaining({
+            number: 1,
+            title: "Direct request",
+            content: "# Feature Inventory\n\n- Add authentication\n",
+          }),
+        ],
+      }),
+    ]);
   });
 
   it.each([

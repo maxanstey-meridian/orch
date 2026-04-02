@@ -23,6 +23,7 @@ import { resolveAllAgentConfigs } from "#domain/agent-config.js";
 import type { ExecutionMode, ExecutionPreference, OrchestratorConfig } from "#domain/config.js";
 import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
+import type { Group } from "#domain/plan.js";
 import type { QueueEntry } from "#domain/queue.js";
 import {
   parseBranchFlag,
@@ -328,15 +329,17 @@ const readPlanExecutionMode = (planContent: string): ExecutionMode | undefined =
       return undefined;
     }
 
-    switch (parsed.executionMode) {
-      case "grouped":
-      case "sliced":
-        return parsed.executionMode;
+    const executionMode = parsed.executionMode;
+    if (executionMode === "grouped" || executionMode === "sliced") {
+      return executionMode;
+    }
+
+    switch (executionMode) {
       case "direct":
         throw new Error("Plan metadata executionMode=direct is invalid for --work.");
       default:
         throw new Error(
-          `Invalid plan executionMode metadata: ${String(parsed.executionMode)}.`,
+          `Invalid plan executionMode metadata: ${String(executionMode)}.`,
         );
     }
   } catch (error) {
@@ -347,6 +350,23 @@ const readPlanExecutionMode = (planContent: string): ExecutionMode | undefined =
     throw error;
   }
 };
+
+const buildDirectExecutionGroups = (requestContent: string, inventoryPath: string): readonly Group[] => [
+  {
+    name: "Direct",
+    slices: [
+      {
+        number: 1,
+        title: "Direct request",
+        content: requestContent,
+        why: "Direct execution was selected during bootstrap.",
+        files: [{ path: inventoryPath, action: "edit" }],
+        details: "Implement the inventory request directly without generated plan slices.",
+        tests: "Run the relevant tests and explain the coverage changes.",
+      },
+    ],
+  },
+];
 
 const resolvePlannedWorkExecutionMode = (
   planContent: string,
@@ -768,6 +788,7 @@ export const main = async (runtime: MainRuntime = {}) => {
   }
 
   if (executionMode === "direct") {
+    const directGroups = buildDirectExecutionGroups(planContent ?? "", planPath);
     for (const line of earlyLog) {
       origLog(line);
     }
@@ -794,7 +815,7 @@ export const main = async (runtime: MainRuntime = {}) => {
       reviewSkill,
       verifySkill,
       gapDisabled,
-      planDisabled,
+      planDisabled: true,
       tddRules: orchrc.rules.tdd,
       defaultProvider: provider,
       agentConfig,
@@ -803,7 +824,7 @@ export const main = async (runtime: MainRuntime = {}) => {
     const container = createContainer(orchestratorConfig, hud);
     const orch = container.resolve("runOrchestration");
     cleanup = () => orch.dispose();
-    await orch.execute([]);
+    await orch.execute(directGroups);
     cleanup();
     return;
   }

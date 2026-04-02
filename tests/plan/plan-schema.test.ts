@@ -25,6 +25,18 @@ describe("PlanSchema", () => {
     }
   });
 
+  it("accepts grouped execution mode metadata", () => {
+    const input = {
+      executionMode: "grouped",
+      groups: [validGroup("Core", [validSlice(1)])],
+    };
+    const result = PlanSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.executionMode).toBe("grouped");
+    }
+  });
+
   it("rejects plan missing required fields", () => {
     // missing groups entirely
     expect(PlanSchema.safeParse({}).success).toBe(false);

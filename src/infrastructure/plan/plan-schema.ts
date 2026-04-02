@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Group, Slice } from "#domain/plan.js";
+import type { Group, PlannedExecutionMode, Slice } from "#domain/plan.js";
 import { buildContent } from "#domain/plan.js";
 
 export type { FileAction } from "#domain/plan.js";
@@ -44,6 +44,7 @@ export const PlanGroupSchema = z.object({
 
 export const PlanSchema = z
   .object({
+    executionMode: z.enum(["grouped", "sliced"]).optional(),
     context: PlanContextSchema.optional(),
     groups: z.array(PlanGroupSchema).min(1),
   })
@@ -66,8 +67,12 @@ export const PlanSchema = z
 export type PlanSliceJson = z.infer<typeof PlanSliceSchema>;
 export type PlanGroupJson = z.infer<typeof PlanGroupSchema>;
 export type PlanJson = z.infer<typeof PlanSchema>;
+export type PlanDocument = {
+  readonly executionMode?: PlannedExecutionMode;
+  readonly groups: readonly Group[];
+};
 
-export const parsePlanJson = (json: string, source = "<json>"): readonly Group[] => {
+export const parsePlanDocumentJson = (json: string, source = "<json>"): PlanDocument => {
   let raw: unknown;
   try {
     raw = JSON.parse(json);
@@ -81,24 +86,31 @@ export const parsePlanJson = (json: string, source = "<json>"): readonly Group[]
     throw new Error(`Invalid plan (${source}):\n${issues}`);
   }
 
-  return result.data.groups.map((g) => ({
-    name: g.name,
-    slices: g.slices.map(
-      (s): Slice => ({
-        number: s.number,
-        title: s.title,
-        content: buildContent(s),
-        why: s.why,
-        files: s.files,
-        details: s.details,
-        tests: s.tests,
-        relatedFiles: s.relatedFiles,
-        keyContext: s.keyContext,
-        dependsOn: s.dependsOn,
-        testPatterns: s.testPatterns,
-        signatures: s.signatures,
-        gotchas: s.gotchas,
-      }),
-    ),
-  }));
+  return {
+    executionMode: result.data.executionMode,
+    groups: result.data.groups.map((g) => ({
+      name: g.name,
+      slices: g.slices.map(
+        (s): Slice => ({
+          number: s.number,
+          title: s.title,
+          content: buildContent(s),
+          why: s.why,
+          files: s.files,
+          details: s.details,
+          tests: s.tests,
+          relatedFiles: s.relatedFiles,
+          keyContext: s.keyContext,
+          dependsOn: s.dependsOn,
+          testPatterns: s.testPatterns,
+          signatures: s.signatures,
+          gotchas: s.gotchas,
+        }),
+      ),
+    })),
+  };
+};
+
+export const parsePlanJson = (json: string, source = "<json>"): readonly Group[] => {
+  return parsePlanDocumentJson(json, source).groups;
 };

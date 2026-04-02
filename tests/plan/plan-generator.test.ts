@@ -341,6 +341,20 @@ describe("generatePlan", () => {
     expect(parsed.groups[1].slices).toHaveLength(1);
   });
 
+  it("records the requested grouped execution mode in the written plan", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_PLAN);
+
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir, "grouped");
+
+    const written = readFileSync(planPath, "utf-8");
+    const parsed = PlanSchema.parse(JSON.parse(written));
+    expect(parsed.executionMode).toBe("grouped");
+  });
+
   it("preserves optional top-level context when the generated plan includes it", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");

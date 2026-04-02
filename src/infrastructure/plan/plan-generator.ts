@@ -5,7 +5,7 @@ import type { PromptAgent } from "#application/ports/agent-spawner.port.js";
 import type { ExecutionMode } from "#domain/config.js";
 import { a, type LogFn } from "#ui/display.js";
 import type { Group } from "./plan-parser.js";
-import { parsePlanJson } from "./plan-schema.js";
+import { PlanSchema, parsePlanJson } from "./plan-schema.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -164,7 +164,7 @@ export const generatePlan = async (
   briefContent: string,
   agent: PromptAgent,
   outputDir: string,
-  _targetExecutionMode: Exclude<ExecutionMode, "direct"> = "sliced",
+  targetExecutionMode: Exclude<ExecutionMode, "direct"> = "sliced",
 ): Promise<GeneratePlanResult> => {
   const inventory = readFileSync(inventoryPath, "utf-8");
 
@@ -190,9 +190,20 @@ export const generatePlan = async (
   }
 
   // Parse, validate via Zod, and map to Group[]
+  let planDocument: ReturnType<typeof PlanSchema.parse>;
   let groups: readonly Group[];
   try {
-    groups = parsePlanJson(planText, "generated plan");
+    let rawPlan: Record<string, unknown>;
+    try {
+      rawPlan = JSON.parse(planText) as Record<string, unknown>;
+    } catch (error) {
+      throw new Error(`Invalid JSON in plan: generated plan — ${(error as Error).message}`);
+    }
+    planDocument = PlanSchema.parse({
+      ...rawPlan,
+      executionMode: targetExecutionMode,
+    });
+    groups = parsePlanJson(JSON.stringify(planDocument), "generated plan");
   } catch (e) {
     console.error("--- RAW AGENT OUTPUT ---");
     console.error(best);
@@ -203,7 +214,7 @@ export const generatePlan = async (
   }
 
   // Pretty-print the validated JSON for disk
-  const formatted = JSON.stringify(JSON.parse(planText), null, 2);
+  const formatted = JSON.stringify(planDocument, null, 2);
   const planId = generatePlanId();
 
   // Write to disk
