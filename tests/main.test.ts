@@ -1250,9 +1250,12 @@ const makeTestAgent = (): AgentHandle => ({
   pipe: vi.fn(),
 });
 
-const runMainWithWorkPlanMocks = async (args: string[]) => {
+const runMainWithWorkPlanMocks = async (
+  args: string[],
+  options?: { planContent?: string },
+) => {
   const planPath = join(tempDir, "plan.md");
-  await writeFile(planPath, MINIMAL_PLAN);
+  await writeFile(planPath, options?.planContent ?? MINIMAL_PLAN);
   const createContainer = vi.fn(() => ({
     resolve: vi.fn(() => ({
       execute: vi.fn().mockResolvedValue(undefined),
@@ -1624,6 +1627,38 @@ describe("main execution preference wiring", () => {
       expect.objectContaining({
         executionPreference: "auto",
         executionMode: "sliced",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("uses grouped execution mode from plan metadata for --work in auto mode", async () => {
+    const { createContainer, exit } = await runMainWithWorkPlanMocks([], {
+      planContent: JSON.stringify({
+        executionMode: "grouped",
+        groups: [
+          {
+            name: "Test",
+            slices: [
+              {
+                number: 1,
+                title: "Slice 1",
+                why: "why",
+                files: [{ path: "src/s1.ts", action: "new" }],
+                details: "details",
+                tests: "tests",
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionPreference: "auto",
+        executionMode: "grouped",
       }),
       expect.any(Object),
     );

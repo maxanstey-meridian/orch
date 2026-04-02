@@ -321,7 +321,35 @@ const resolveExecutionMode = (executionPreference: ExecutionPreference): Executi
   }
 };
 
+const readPlanExecutionMode = (planContent: string): ExecutionMode | undefined => {
+  try {
+    const parsed: unknown = JSON.parse(planContent);
+    if (!isRecord(parsed) || parsed.executionMode === undefined) {
+      return undefined;
+    }
+
+    switch (parsed.executionMode) {
+      case "grouped":
+      case "sliced":
+        return parsed.executionMode;
+      case "direct":
+        throw new Error("Plan metadata executionMode=direct is invalid for --work.");
+      default:
+        throw new Error(
+          `Invalid plan executionMode metadata: ${String(parsed.executionMode)}.`,
+        );
+    }
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return undefined;
+    }
+
+    throw error;
+  }
+};
+
 const resolvePlannedWorkExecutionMode = (
+  planContent: string,
   executionPreference: ExecutionPreference,
 ): ExecutionMode => {
   if (executionPreference !== "auto") {
@@ -330,7 +358,7 @@ const resolvePlannedWorkExecutionMode = (
     );
   }
 
-  return "sliced";
+  return readPlanExecutionMode(planContent) ?? "sliced";
 };
 
 const resolveInventoryExecutionMode = async (opts: {
@@ -666,7 +694,13 @@ export const main = async (runtime: MainRuntime = {}) => {
   try {
     if (workMode) {
       planPath = resolve(workPath!);
-      executionMode = resolvePlannedWorkExecutionMode(executionPreference);
+      if (executionPreference !== "auto") {
+        throw new Error(
+          "Execution mode overrides are not supported with --work until plan metadata is available.",
+        );
+      }
+      planContent = readFileSync(planPath, "utf-8");
+      executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
       printExecutionModeBanner(log, executionMode);
     } else {
       const inputPath = resolve(inventoryPath!);
