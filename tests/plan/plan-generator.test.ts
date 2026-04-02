@@ -668,6 +668,29 @@ describe("doGeneratePlan", () => {
     expect(written).toContain('"Auth"');
   });
 
+  it("writes grouped executionMode metadata when explicitly generating a grouped plan", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_PLAN);
+    const log = () => {};
+
+    const planPath = await doGeneratePlan(
+      inventoryPath,
+      "",
+      outputDir,
+      log,
+      () => agent,
+      "grouped",
+    );
+
+    const written = JSON.parse(readFileSync(planPath, "utf-8")) as {
+      executionMode?: string;
+    };
+    expect(written.executionMode).toBe("grouped");
+    expect(() => PlanSchema.parse(written)).not.toThrow();
+  });
+
   it("logs group names and slice titles", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");

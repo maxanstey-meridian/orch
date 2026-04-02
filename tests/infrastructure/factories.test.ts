@@ -4,6 +4,10 @@ import type { OrchestratorConfig } from "#domain/config.js";
 import type { Hud } from "#ui/hud.js";
 
 const spawnMock = vi.fn(() => ({}));
+const codexPromptHandle = vi.hoisted(() => ({
+  send: vi.fn(),
+  kill: vi.fn(),
+}));
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -35,7 +39,7 @@ vi.mock("../../src/infrastructure/codex/codex-agent-spawner.js", () => ({
 
     spawn() {
       this.processFactory();
-      return { send: vi.fn(), kill: vi.fn() };
+      return codexPromptHandle;
     }
   },
 }));
@@ -259,8 +263,40 @@ describe("requestTriageSpawnerFactory", () => {
     );
   });
 
+  it("forwards send and kill to the underlying claude triage handle", async () => {
+    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
+    const spawnClaudePlanAgent = vi.mocked(mockModule.spawnClaudePlanAgent);
+    const handle = {
+      send: vi.fn().mockResolvedValue("triage-result"),
+      kill: vi.fn(),
+    };
+    spawnClaudePlanAgent.mockClear();
+    spawnClaudePlanAgent.mockReturnValue(handle as never);
+
+    const { requestTriageSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = requestTriageSpawnerFactory({
+      agentConfig: {
+        ...AGENT_DEFAULTS,
+        triage: {
+          provider: "claude",
+          model: "claude-haiku-4-5-20251001",
+        },
+      },
+      cwd: "/tmp/request-triage",
+    });
+
+    const agent = spawner();
+    await agent.send("classify");
+    agent.kill();
+
+    expect(handle.send).toHaveBeenCalledWith("classify");
+    expect(handle.kill).toHaveBeenCalledTimes(1);
+  });
+
   it("returns a prompt agent for codex triage and uses the configured model", async () => {
     spawnMock.mockClear();
+    codexPromptHandle.send.mockReset();
+    codexPromptHandle.kill.mockReset();
 
     const { requestTriageSpawnerFactory } = await import("../../src/infrastructure/factories.js");
     const spawner = requestTriageSpawnerFactory({
@@ -286,6 +322,32 @@ describe("requestTriageSpawnerFactory", () => {
         stdio: ["pipe", "pipe", "pipe"],
       }),
     );
+  });
+
+  it("forwards send and kill to the underlying codex triage handle", async () => {
+    spawnMock.mockClear();
+    codexPromptHandle.send.mockReset();
+    codexPromptHandle.kill.mockReset();
+    codexPromptHandle.send.mockResolvedValue("triage-result");
+
+    const { requestTriageSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = requestTriageSpawnerFactory({
+      agentConfig: {
+        ...AGENT_DEFAULTS,
+        triage: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+      },
+      cwd: "/tmp/request-triage",
+    });
+
+    const agent = spawner();
+    await agent.send("classify");
+    agent.kill();
+
+    expect(codexPromptHandle.send).toHaveBeenCalledWith("classify");
+    expect(codexPromptHandle.kill).toHaveBeenCalledTimes(1);
   });
 });
 
