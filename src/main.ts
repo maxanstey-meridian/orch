@@ -51,6 +51,7 @@ import {
   isPlanFormat,
   ensureCanonicalPlan,
   doGeneratePlan,
+  planFileName,
   resolvePlanId,
 } from "#infrastructure/plan/plan-generator.js";
 import { parsePlan } from "#infrastructure/plan/plan-parser.js";
@@ -367,6 +368,32 @@ const buildDirectExecutionGroups = (requestContent: string, inventoryPath: strin
     ],
   },
 ];
+
+const writeDirectPlanArtifact = (opts: {
+  orchDir: string;
+  planId: string;
+  requestContent: string;
+  inventoryPath: string;
+}): string => {
+  const planPath = resolve(opts.orchDir, planFileName(opts.planId));
+  const directGroups = buildDirectExecutionGroups(opts.requestContent, opts.inventoryPath);
+  const planDocument = {
+    groups: directGroups.map((group) => ({
+      name: group.name,
+      slices: group.slices.map((slice) => ({
+        number: slice.number,
+        title: slice.title,
+        why: slice.why,
+        files: slice.files,
+        details: slice.details,
+        tests: slice.tests,
+      })),
+    })),
+  };
+  mkdirSync(opts.orchDir, { recursive: true });
+  writeFileSync(planPath, JSON.stringify(planDocument, null, 2));
+  return planPath;
+};
 
 const resolvePlannedWorkExecutionMode = (
   planContent: string,
@@ -766,6 +793,15 @@ export const main = async (runtime: MainRuntime = {}) => {
     executionMode === "direct"
       ? resolvePlanId(planPath)
       : ensureCanonicalPlan(planPath, orchDir);
+  const registryPlanPath =
+    executionMode === "direct"
+      ? writeDirectPlanArtifact({
+          orchDir,
+          planId: activePlanId,
+          requestContent: planContent ?? "",
+          inventoryPath: planPath,
+        })
+      : planPath;
   const branchName = parseBranchFlag(args, activePlanId);
   const stateFile = statePathForPlan(orchDir, activePlanId);
   let cleanup = () => {};
@@ -810,7 +846,7 @@ export const main = async (runtime: MainRuntime = {}) => {
       id: runId,
       pid: process.pid,
       repo: cwd,
-      planPath,
+      planPath: registryPlanPath,
       statePath: stateFile,
       branch: branchName,
       startedAt: new Date().toISOString(),

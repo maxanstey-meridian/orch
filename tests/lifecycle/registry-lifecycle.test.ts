@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   parseExecutionPreference: vi.fn(),
   parsePlan: vi.fn(),
   parseProviderFlag: vi.fn(),
+  planFileName: vi.fn(),
   resolvePlanId: vi.fn(),
   resolveAllAgentConfigs: vi.fn(),
   resolveSkillValue: vi.fn(),
@@ -73,6 +74,7 @@ vi.mock("#infrastructure/plan/plan-generator.js", () => ({
   ensureCanonicalPlan: mocks.ensureCanonicalPlan,
   isPlanFormat: mocks.isPlanFormat,
   planGeneratorSpawnerFactory: vi.fn(),
+  planFileName: mocks.planFileName,
   resolvePlanId: mocks.resolvePlanId,
 }));
 
@@ -190,6 +192,7 @@ beforeEach(async () => {
   mocks.parseProviderFlag.mockReturnValue("claude");
   mocks.parseExecutionPreference.mockReturnValue("auto");
   mocks.resolveAllAgentConfigs.mockReturnValue({});
+  mocks.planFileName.mockImplementation((id: string) => `plan-${id}.json`);
   mocks.resolvePlanId.mockReturnValue("abc123");
   mocks.ensureCanonicalPlan.mockReturnValue("abc123");
   mocks.parseBranchFlag.mockReturnValue("feature/test");
@@ -469,7 +472,19 @@ describe("registry lifecycle", () => {
 
     const entries = await readRegistry(registryPath);
     expect(entries).toHaveLength(1);
-    expect(entries[0]).toEqual(expect.objectContaining({ planPath: inventoryPath }));
+    expect(entries[0]).toEqual(
+      expect.objectContaining({
+        planPath: expect.stringMatching(/\.orch\/plan-abc123\.json$/),
+      }),
+    );
+    const registeredPlan = JSON.parse(await readFile(entries[0].planPath, "utf-8")) as {
+      readonly groups: ReadonlyArray<{
+        readonly name: string;
+        readonly slices: ReadonlyArray<{ readonly title: string }>;
+      }>;
+    };
+    expect(registeredPlan.groups[0]?.name).toBe("Direct");
+    expect(registeredPlan.groups[0]?.slices[0]?.title).toBe("Direct request");
     expect(signalHandlers.has("SIGTERM")).toBe(true);
 
     signalHandlers.get("SIGTERM")?.();
