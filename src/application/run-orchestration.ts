@@ -1,13 +1,19 @@
 import type { AgentResult, AgentRole } from "#domain/agent-types.js";
 import { detectApiError } from "#domain/api-errors.js";
-import type { OrchestratorConfig } from "#domain/config.js";
+import type { ApiError } from "#domain/api-errors.js";
+import type { OrchestratorConfig, Provider } from "#domain/config.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
 import type { Phase } from "#domain/phase.js";
 import type { Group } from "#domain/plan.js";
 import type { Slice } from "#domain/plan.js";
 import { isCleanReview } from "#domain/review-check.js";
 import { shouldReview } from "#domain/review.js";
-import type { OrchestratorState, PersistedPhase, StateEvent } from "#domain/state.js";
+import type {
+  OrchestratorState,
+  PersistedAgentSession,
+  PersistedPhase,
+  StateEvent,
+} from "#domain/state.js";
 import { advanceState } from "#domain/state.js";
 import { isAlreadyImplemented } from "#domain/transition.js";
 import { transition } from "#domain/transition.js";
@@ -49,6 +55,8 @@ export class RunOrchestration {
   reviewAgent: AgentHandle | null = null;
   verifyAgent: AgentHandle | null = null;
   retryDelayMs = 5_000;
+  usageProbeDelayMs = 60_000;
+  usageProbeMaxDelayMs = 300_000;
   tddIsFirst = true;
   reviewIsFirst = true;
   sliceSkipFlag = false;
@@ -114,6 +122,78 @@ export class RunOrchestration {
     return this.state.currentSlice ?? this.state.lastCompletedSlice ?? defaultSliceNumber;
   }
 
+  private currentProvider(): Provider {
+    return this.config.defaultProvider;
+  }
+
+  private sessionForRole(role: "tdd" | "review"): PersistedAgentSession | undefined {
+    const session = role === "tdd" ? this.state.tddSession : this.state.reviewSession;
+    if (session?.provider !== this.currentProvider()) {
+      return undefined;
+    }
+    return session;
+  }
+
+  private currentSession(role: "tdd" | "review"): PersistedAgentSession {
+    const agent = role === "tdd" ? this.tddAgent : this.reviewAgent;
+    if (!agent) {
+      throw new Error(`Missing ${role} agent`);
+    }
+    return { provider: this.currentProvider(), id: agent.sessionId };
+  }
+
+  private async sendRulesReminder(role: "tdd" | "review"): Promise<void> {
+    const agent = role === "tdd" ? this.tddAgent : this.reviewAgent;
+    if (!agent) {
+      throw new Error(`Missing ${role} agent`);
+    }
+    await agent.sendQuiet(this.prompts.rulesReminder(role));
+  }
+
+  private async respawnReview(): Promise<void> {
+    if (this.reviewAgent) {
+      this.reviewAgent.kill();
+    }
+    this.reviewAgent = this.agents.spawn("review", { cwd: this.config.cwd });
+    this.pipeToSink(this.reviewAgent, "review");
+    await this.sendRulesReminder("review");
+    this.reviewIsFirst = true;
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "review",
+      session: this.currentSession("review"),
+    });
+    await this.persistence.save(this.state);
+  }
+
+  private async validateOrRefreshResumedAgent(
+    role: "tdd" | "review",
+  ): Promise<"resumed" | "fresh" | "none"> {
+    const session = this.sessionForRole(role);
+    if (!session) {
+      return "none";
+    }
+
+    const agent = role === "tdd" ? this.tddAgent : this.reviewAgent;
+    if (!agent) {
+      throw new Error(`Missing ${role} agent`);
+    }
+
+    try {
+      await agent.sendQuiet("Reply with exactly OK.");
+      return "resumed";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logOrch(`Failed to resume ${role} session for ${session.provider}; starting fresh (${message})`);
+      if (role === "tdd") {
+        await this.respawnTdd();
+      } else {
+        await this.respawnReview();
+      }
+      return "fresh";
+    }
+  }
+
   dispose(): void {
     if (this.tddAgent) {
       this.tddAgent.kill();
@@ -140,32 +220,40 @@ export class RunOrchestration {
 
       this.state = await this.persistence.load();
 
+      if (this.state.tddSession && this.state.tddSession.provider !== this.currentProvider()) {
+        this.state = { ...this.state, tddSession: undefined };
+      }
+      if (this.state.reviewSession && this.state.reviewSession.provider !== this.currentProvider()) {
+        this.state = { ...this.state, reviewSession: undefined };
+      }
+
       // Spawn initial agents
       this.tddAgent = this.agents.spawn("tdd", {
-        resumeSessionId: this.state.tddSessionId,
+        resumeSessionId: this.sessionForRole("tdd")?.id,
         cwd: this.config.cwd,
       });
       this.reviewAgent = this.agents.spawn("review", {
-        resumeSessionId: this.state.reviewSessionId,
+        resumeSessionId: this.sessionForRole("review")?.id,
         cwd: this.config.cwd,
       });
       this.pipeToSink(this.tddAgent, "tdd");
       this.pipeToSink(this.reviewAgent, "review");
 
-      // Send rules reminders (skip if resuming)
-      const reminders: Promise<string>[] = [];
-      if (!this.state.tddSessionId) {
-        reminders.push(this.tddAgent.sendQuiet(this.prompts.rulesReminder("tdd")));
+      const resumedTdd = await this.validateOrRefreshResumedAgent("tdd");
+      const resumedReview = await this.validateOrRefreshResumedAgent("review");
+      const reminders: Promise<void>[] = [];
+      if (resumedTdd === "none") {
+        reminders.push(this.sendRulesReminder("tdd"));
       }
-      if (!this.state.reviewSessionId) {
-        reminders.push(this.reviewAgent.sendQuiet(this.prompts.rulesReminder("review")));
+      if (resumedReview === "none") {
+        reminders.push(this.sendRulesReminder("review"));
       }
       await Promise.all(reminders);
 
-      if (this.state.tddSessionId) {
+      if (resumedTdd === "resumed") {
         this.tddIsFirst = false;
       }
-      if (this.state.reviewSessionId) {
+      if (resumedReview === "resumed") {
         this.reviewIsFirst = false;
       }
 
@@ -206,174 +294,177 @@ export class RunOrchestration {
       for (let i = 0; i < groups.length; i++) {
         const group = groups[i];
 
-      // Skip entire group if all its slices are already completed
-      const allSlicesDone =
-        this.state.lastCompletedSlice !== undefined &&
-        group.slices.every((s) => s.number <= this.state.lastCompletedSlice!);
-      if (allSlicesDone) {
-        this.slicesCompleted += group.slices.length;
-        this.progressSink.updateProgress({ completedSlices: this.slicesCompleted });
-        continue;
-      }
-
-      // ── Slice loop ──
-      this.progressSink.updateProgress({
-        groupName: group.name,
-        groupSliceCount: group.slices.length,
-        groupCompleted: 0,
-      });
-      this.state = advanceState(this.state, {
-        kind: "agentSpawned",
-        role: "tdd",
-        sessionId: this.tddAgent.sessionId,
-      });
-      this.state = advanceState(this.state, {
-        kind: "agentSpawned",
-        role: "review",
-        sessionId: this.reviewAgent!.sessionId,
-      });
-      await this.persistence.save(this.state);
-      const groupBaseSha = await this.git.captureRef();
-      let reviewBase = groupBaseSha;
-      let groupCompleted = 0;
-
-      for (const slice of group.slices) {
-        // Reset skip state from previous slice
-        this.sliceSkipFlag = false;
-        this.progressSink.clearSkipping();
-
-        if (this.quitRequested) {
-          return;
-        }
-
-        if (
+        const allSlicesDone =
           this.state.lastCompletedSlice !== undefined &&
-          slice.number <= this.state.lastCompletedSlice
-        ) {
-          this.slicesCompleted++;
-          groupCompleted++;
-          this.progressSink.updateProgress({
-            completedSlices: this.slicesCompleted,
-            groupCompleted,
-          });
+          group.slices.every((s) => s.number <= this.state.lastCompletedSlice!);
+        const groupAlreadyFinalized = this.state.lastCompletedGroup === group.name;
+
+        // Skip entire group only when its slices and its post-slice group work are already complete
+        if (allSlicesDone && groupAlreadyFinalized) {
+          this.slicesCompleted += group.slices.length;
+          this.progressSink.updateProgress({ completedSlices: this.slicesCompleted });
           continue;
         }
 
-        this.logOrch(`Starting slice ${slice.number} (${group.name})`);
-        await this.persistStateEvent({
-          kind: "sliceStarted",
-          sliceNumber: slice.number,
-          groupName: group.name,
-        });
-
+        // ── Slice loop ──
         this.progressSink.updateProgress({
-          currentSlice: { number: slice.number },
-          completedSlices: this.slicesCompleted,
+          groupName: group.name,
+          groupSliceCount: group.slices.length,
+          groupCompleted: 0,
         });
+        this.state = advanceState(this.state, {
+          kind: "agentSpawned",
+          role: "tdd",
+          session: this.currentSession("tdd"),
+        });
+        this.state = advanceState(this.state, {
+          kind: "agentSpawned",
+          role: "review",
+          session: this.currentSession("review"),
+        });
+        await this.persistence.save(this.state);
+        const groupBaseSha = await this.git.captureRef();
+        let reviewBase = groupBaseSha;
+        let groupCompleted = 0;
 
-        this.progressSink.logSliceIntro(slice);
+        for (const slice of group.slices) {
+          // Reset skip state from previous slice
+          this.sliceSkipFlag = false;
+          this.progressSink.clearSkipping();
 
-        const verifyBaseSha = await this.git.captureRef();
-
-        // Plan-then-execute with replan loop
-        this.phase = transition(this.phase, { kind: "StartPlanning", sliceNumber: slice.number });
-        let replanAttempts = 0;
-        let pteResult: PlanThenExecuteResult;
-        do {
-          pteResult = await this.planThenExecute(slice.content, slice.number);
-          replanAttempts++;
-        } while (pteResult.replan && replanAttempts < this.config.maxReplans);
-
-        // After max replans, auto-accept
-        if (pteResult.replan) {
-          pteResult = await this.planThenExecute(slice.content, slice.number, true);
-        }
-
-        if (pteResult.skipped) {
-          this.failIncompleteSlice(slice, "execution was skipped before delivery");
-        }
-
-        let tddResult = pteResult.tddResult;
-
-        // Hard interrupt: agent was killed during plan or execute phase
-        if (pteResult.hardInterrupt) {
-          const guidance = pteResult.hardInterrupt;
-          this.hardInterruptPending = null;
-          await this.respawnTdd();
-          this.progressSink.logBadge("tdd", "implementing...");
-          await this.enterPhase("tdd", slice.number);
-          tddResult = await this.withRetry(
-            () => this.tddAgent!.send(this.prompts.withBrief(guidance)),
-            this.tddAgent!,
-            "tdd-interrupt",
-          );
-          this.phase = { kind: "Verifying", sliceNumber: slice.number };
-        }
-
-        this.tddIsFirst = false;
-
-        if (tddResult.needsInput) {
-          await this.followUp(tddResult, this.tddAgent!);
-        }
-
-        // Commit sweep
-        await this.commitSweep(`Slice ${slice.number}`);
-
-        // Triage: classify the diff to decide which pipeline phases to run
-        const triage = await this.triageDiff(verifyBaseSha);
-
-        // Completeness check
-        if (triage.runCompleteness) {
-          await this.completenessCheck(slice, verifyBaseSha);
-        }
-
-        // Post-TDD pipeline: verify → review → summary
-        const sliceResult = await this.runSlice(
-          slice,
-          reviewBase,
-          tddResult,
-          verifyBaseSha,
-          triage,
-        );
-        reviewBase = sliceResult.reviewBase;
-        this.phase = { kind: "Idle" };
-
-        if (sliceResult.skipped) {
-          this.failIncompleteSlice(slice, "verification or review did not complete");
-        }
-
-        if (!sliceResult.skipped) {
-          groupCompleted++;
-          this.progressSink.updateProgress({
-            completedSlices: this.slicesCompleted,
-            groupCompleted,
-          });
-        }
-      }
-
-      // Gap analysis
-      await this.gapAnalysis(group, groupBaseSha);
-
-      // Commit sweep
-      await this.commitSweep(group.name);
-
-      // Mark group complete
-      this.state = advanceState(this.state, { kind: "groupDone", groupName: group.name });
-      await this.persistence.save(this.state);
-
-      // Inter-group transition
-      if (i < groups.length - 1) {
-        await this.respawnBoth();
-
-        if (!this.config.auto) {
-          const next = groups[i + 1];
-          const nextLabel = `${next.name} (${next.slices.map((s) => `Slice ${s.number}`).join(", ")})`;
-          const proceed = await this.gate.confirmNextGroup(nextLabel);
-          if (!proceed) {
+          if (this.quitRequested) {
             return;
           }
+
+          if (
+            this.state.lastCompletedSlice !== undefined &&
+            slice.number <= this.state.lastCompletedSlice
+          ) {
+            this.slicesCompleted++;
+            groupCompleted++;
+            this.progressSink.updateProgress({
+              completedSlices: this.slicesCompleted,
+              groupCompleted,
+            });
+            continue;
+          }
+
+          this.logOrch(`Starting slice ${slice.number} (${group.name})`);
+          await this.persistStateEvent({
+            kind: "sliceStarted",
+            sliceNumber: slice.number,
+            groupName: group.name,
+          });
+
+          this.progressSink.updateProgress({
+            currentSlice: { number: slice.number },
+            completedSlices: this.slicesCompleted,
+          });
+
+          this.progressSink.logSliceIntro(slice);
+
+          const verifyBaseSha = await this.git.captureRef();
+
+          // Plan-then-execute with replan loop
+          this.phase = transition(this.phase, { kind: "StartPlanning", sliceNumber: slice.number });
+          let replanAttempts = 0;
+          let pteResult: PlanThenExecuteResult;
+          do {
+            pteResult = await this.planThenExecute(slice.content, slice.number);
+            replanAttempts++;
+          } while (pteResult.replan && replanAttempts < this.config.maxReplans);
+
+          // After max replans, auto-accept
+          if (pteResult.replan) {
+            pteResult = await this.planThenExecute(slice.content, slice.number, true);
+          }
+
+          if (pteResult.skipped) {
+            this.failIncompleteSlice(slice, "execution was skipped before delivery");
+          }
+
+          let tddResult = pteResult.tddResult;
+
+          // Hard interrupt: agent was killed during plan or execute phase
+          if (pteResult.hardInterrupt) {
+            const guidance = pteResult.hardInterrupt;
+            this.hardInterruptPending = null;
+            await this.respawnTdd();
+            this.progressSink.logBadge("tdd", "implementing...");
+            await this.enterPhase("tdd", slice.number);
+            tddResult = await this.withRetry(
+              () => this.tddAgent!.send(this.prompts.withBrief(guidance)),
+              this.tddAgent!,
+              "tdd",
+              "tdd-interrupt",
+            );
+            this.phase = { kind: "Verifying", sliceNumber: slice.number };
+          }
+
+          this.tddIsFirst = false;
+
+          if (tddResult.needsInput) {
+            await this.followUp(tddResult, this.tddAgent!);
+          }
+
+          // Commit sweep
+          await this.commitSweep(`Slice ${slice.number}`);
+
+          // Triage: classify the diff to decide which pipeline phases to run
+          const triage = await this.triageDiff(verifyBaseSha);
+
+          // Completeness check
+          if (triage.runCompleteness) {
+            await this.completenessCheck(slice, verifyBaseSha);
+          }
+
+          // Post-TDD pipeline: verify → review → summary
+          const sliceResult = await this.runSlice(
+            slice,
+            reviewBase,
+            tddResult,
+            verifyBaseSha,
+            triage,
+          );
+          reviewBase = sliceResult.reviewBase;
+          this.phase = { kind: "Idle" };
+
+          if (sliceResult.skipped) {
+            this.failIncompleteSlice(slice, "verification or review did not complete");
+          }
+
+          if (!sliceResult.skipped) {
+            groupCompleted++;
+            this.progressSink.updateProgress({
+              completedSlices: this.slicesCompleted,
+              groupCompleted,
+            });
+          }
         }
-      }
+
+        // Gap analysis
+        await this.gapAnalysis(group, groupBaseSha);
+
+        // Commit sweep
+        await this.commitSweep(group.name);
+
+        // Mark group complete
+        this.state = advanceState(this.state, { kind: "groupDone", groupName: group.name });
+        await this.persistence.save(this.state);
+
+        // Inter-group transition
+        if (i < groups.length - 1) {
+          await this.respawnBoth();
+
+          if (!this.config.auto) {
+            const next = groups[i + 1];
+            const nextLabel = `${next.name} (${next.slices.map((s) => `Slice ${s.number}`).join(", ")})`;
+            const proceed = await this.gate.confirmNextGroup(nextLabel);
+            if (!proceed) {
+              return;
+            }
+          }
+        }
       }
 
       // Final passes
@@ -403,6 +494,7 @@ export class RunOrchestration {
       const tddResult = await this.withRetry(
         () => this.tddAgent!.send(prompt),
         this.tddAgent!,
+        "tdd",
         "tdd-direct",
       );
       this.tddIsFirst = false;
@@ -416,7 +508,7 @@ export class RunOrchestration {
     this.pipeToSink(planAgent, "plan");
     this.progressSink.logBadge("plan", "planning...");
     await this.enterPhase("plan", sliceNumber);
-    const planResult = await this.withRetry(() => planAgent.send(planPrompt), planAgent, "plan");
+    const planResult = await this.withRetry(() => planAgent.send(planPrompt), planAgent, "plan", "plan");
 
     const plan = planResult.planText ?? planResult.assistantText ?? "";
 
@@ -470,6 +562,7 @@ export class RunOrchestration {
     const tddResult = await this.withRetry(
       () => this.tddAgent!.send(executePrompt),
       this.tddAgent!,
+      "tdd",
       "tdd-execute",
     );
 
@@ -486,6 +579,7 @@ export class RunOrchestration {
       const retryResult = await this.withRetry(
         () => this.tddAgent!.send(executePrompt),
         this.tddAgent!,
+        "tdd",
         "tdd-execute-retry",
       );
       this.phase = transition(this.phase, { kind: "ExecutionDone" });
@@ -616,6 +710,7 @@ export class RunOrchestration {
         () => this.reviewAgent!.send(reviewPrompt),
         this.reviewAgent!,
         "review",
+        "review",
       );
       this.reviewIsFirst = false;
       const reviewText = reviewResult.assistantText;
@@ -633,6 +728,7 @@ export class RunOrchestration {
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt),
         this.tddAgent!,
+        "tdd",
         "review-fix",
       );
       this.tddIsFirst = false;
@@ -658,49 +754,57 @@ export class RunOrchestration {
     }
 
     const prompt = this.prompts.completeness(slice.content, baseSha, slice.number);
-    const checkAgent = this.agents.spawn("completeness", { cwd: this.config.cwd });
-    this.pipeToSink(checkAgent, "completeness");
-    await this.enterPhase("verify", slice.number);
-    const result = await this.withRetry(
-      () => checkAgent.send(prompt),
-      checkAgent,
-      "completeness-check",
-    );
-    checkAgent.kill();
 
-    const text = result.assistantText ?? "";
-    const hasMissing = text.includes("❌") || text.includes("MISSING");
-    if (text.includes("SLICE_COMPLETE") && !hasMissing) {
-      return;
+    for (let cycle = 1; cycle <= this.config.maxReviewCycles; cycle++) {
+      const checkAgent = this.agents.spawn("completeness", { cwd: this.config.cwd });
+      this.pipeToSink(checkAgent, "completeness");
+      await this.enterPhase("verify", slice.number);
+      const result = await this.withRetry(
+        () => checkAgent.send(prompt),
+        checkAgent,
+        "completeness",
+        "completeness-check",
+      );
+      checkAgent.kill();
+
+      const text = result.assistantText ?? "";
+      const hasMissing = text.includes("❌") || text.includes("MISSING");
+      if (text.includes("SLICE_COMPLETE") && !hasMissing) {
+        return;
+      }
+
+      // Phase: Verifying → CompletenessCheck → Executing (issues found)
+      this.phase = transition(this.phase, { kind: "VerifyPassed" });
+      this.phase = transition(this.phase, { kind: "CompletenessIssues" });
+
+      const fixPrompt = this.prompts.tdd(
+        slice.content,
+        `A completeness check found that your implementation does not fully match the plan. Fix ALL issues below.\n\n## Completeness Findings\n${text}\n\nRules:\n- ❌ MISSING items are HARD FAILURES. The plan is the contract. Code that works but doesn't implement the plan's specified approach is NOT complete. You must implement what the plan says, not an alternative that passes tests.\n- ⚠️ DIVERGENT items mean your approach differs from the plan's intent. Change your implementation to match the plan, not the other way around.\n- If the plan says "use function X" or "call Y", your code must actually import and call X/Y. Passing tests are necessary but NOT sufficient — the plan's architectural requirements are equally binding.\n- Do NOT argue that your approach is equivalent. Do NOT skip items because tests pass without them. Implement what the plan says.`,
+        slice.number,
+      );
+      const preFixSha = await this.git.captureRef();
+      this.progressSink.logBadge("tdd", "implementing...");
+      await this.enterPhase("tdd", slice.number);
+      const fixResult = await this.withRetry(
+        () => this.tddAgent!.send(this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt),
+        this.tddAgent!,
+        "tdd",
+        "completeness-fix",
+      );
+      this.tddIsFirst = false;
+
+      if (fixResult.needsInput) {
+        await this.followUp(fixResult, this.tddAgent!);
+      }
+
+      this.phase = transition(this.phase, { kind: "ExecutionDone" });
+
+      if (await this.git.hasChanges(preFixSha)) {
+        await this.commitSweep(`Slice ${slice.number} completeness fix`);
+      }
     }
 
-    // Phase: Verifying → CompletenessCheck → Executing (issues found)
-    this.phase = transition(this.phase, { kind: "VerifyPassed" });
-    this.phase = transition(this.phase, { kind: "CompletenessIssues" });
-
-    // Send findings to TDD for fixing
-    const fixPrompt = this.prompts.tdd(
-      slice.content,
-      `A completeness check found that your implementation does not fully match the plan. Fix ALL issues below.\n\n## Completeness Findings\n${text}\n\nRules:\n- ❌ MISSING items are HARD FAILURES. The plan is the contract. Code that works but doesn't implement the plan's specified approach is NOT complete. You must implement what the plan says, not an alternative that passes tests.\n- ⚠️ DIVERGENT items mean your approach differs from the plan's intent. Change your implementation to match the plan, not the other way around.\n- If the plan says "use function X" or "call Y", your code must actually import and call X/Y. Passing tests are necessary but NOT sufficient — the plan's architectural requirements are equally binding.\n- Do NOT argue that your approach is equivalent. Do NOT skip items because tests pass without them. Implement what the plan says.`,
-      slice.number,
-    );
-    this.progressSink.logBadge("tdd", "implementing...");
-    await this.enterPhase("tdd", slice.number);
-    const fixResult = await this.withRetry(
-      () => this.tddAgent!.send(this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt),
-      this.tddAgent!,
-      "completeness-fix",
-    );
-    this.tddIsFirst = false;
-
-    if (fixResult.needsInput) {
-      await this.followUp(fixResult, this.tddAgent!);
-    }
-
-    // Phase: Executing → Verifying (ready for runSlice)
-    this.phase = transition(this.phase, { kind: "ExecutionDone" });
-
-    await this.commitSweep(`Slice ${slice.number} completeness fix`);
+    throw new IncompleteRunError(`Slice ${slice.number} completeness failed after retry budget`);
   }
 
   async verify(slice: Slice, verifyBaseSha: string): Promise<boolean> {
@@ -711,19 +815,18 @@ export class RunOrchestration {
       this.pipeToSink(this.verifyAgent, "verify");
     }
 
-    const verifyPrompt = this.prompts.withBrief(
-      `Verify the changes since commit ${verifyBaseSha}. Context: TDD implementation of Slice ${slice.number}.`,
-    );
+    const verifyPrompt = this.prompts.verify(verifyBaseSha, slice.number);
     this.progressSink.logBadge("verify", "verifying...");
     await this.enterPhase("verify", slice.number);
     const verifyResult = await this.withRetry(
       () => this.verifyAgent!.send(verifyPrompt),
       this.verifyAgent,
       "verify",
+      "verify",
     );
     let parsed = parseVerifyResult(verifyResult.assistantText ?? "");
 
-    while (!parsed.passed) {
+    for (let cycle = 1; !parsed.passed && cycle <= this.config.maxReviewCycles; cycle++) {
       this.phase = transition(this.phase, { kind: "VerifyFailed" });
 
       const failureContext =
@@ -739,14 +842,16 @@ export class RunOrchestration {
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(retryPrompt),
         this.tddAgent!,
+        "tdd",
         "verify-fix",
       );
-      await this.checkCredit(fixResult, this.tddAgent!);
+      await this.checkCredit(fixResult, this.tddAgent!, "tdd");
 
       this.phase = transition(this.phase, { kind: "ExecutionDone" });
 
-      // If TDD made no changes, surface to operator — don't re-verify endlessly
-      if (!(await this.git.hasChanges(preFixSha))) {
+      const tddMadeChanges = await this.git.hasChanges(preFixSha);
+
+      if (!tddMadeChanges && !this.config.auto) {
         const failSummary =
           parsed.newFailures.join("\n") || "Verification issues remain but TDD made no changes.";
         const decision = await this.gate.verifyFailed(slice.number, failSummary);
@@ -767,16 +872,14 @@ export class RunOrchestration {
       this.progressSink.logBadge("verify", "verifying...");
       await this.enterPhase("verify", slice.number);
       const reVerifyResult = await this.withRetry(
-        () =>
-          this.verifyAgent!.send(
-            `Re-verify changes since ${verifyBaseSha}. The TDD bot made the following fixes:\n\n${fixSummary}\n\nCheck if the original issues are resolved.`,
-          ),
+        () => this.verifyAgent!.send(this.prompts.verify(verifyBaseSha, slice.number, fixSummary)),
         this.verifyAgent!,
+        "verify",
         "re-verify",
       );
       parsed = parseVerifyResult(reVerifyResult.assistantText ?? "");
 
-      if (!parsed.passed) {
+      if (!parsed.passed && !this.config.auto) {
         const failSummary =
           parsed.newFailures.join("\n") || "Checks still failing after fix attempt.";
         const decision = await this.gate.verifyFailed(slice.number, failSummary);
@@ -793,6 +896,12 @@ export class RunOrchestration {
       }
     }
 
+    if (!parsed.passed) {
+      throw new IncompleteRunError(
+        `Slice ${slice.number} verification failed after retry budget`,
+      );
+    }
+
     return true;
   }
 
@@ -806,47 +915,60 @@ export class RunOrchestration {
     const passes = this.prompts.finalPasses(runBaseSha);
 
     for (const pass of passes) {
-      const finalAgent = this.agents.spawn("final", { cwd: this.config.cwd });
-      this.pipeToSink(finalAgent, "final");
-      const finalPrompt = this.prompts.withBrief(pass.prompt);
-      this.progressSink.logBadge("final", "finalising...");
-      await this.enterPhase("final", this.currentSliceNumber());
-      const finalResult = await this.withRetry(
-        () => finalAgent.send(finalPrompt),
-        finalAgent,
-        "final-pass",
-      );
-      finalAgent.kill();
+      let passClean = false;
 
-      if (finalResult.exitCode !== 0) {
-        continue;
+      for (let cycle = 1; cycle <= this.config.maxReviewCycles; cycle++) {
+        const finalAgent = this.agents.spawn("final", { cwd: this.config.cwd });
+        this.pipeToSink(finalAgent, "final");
+        const finalPrompt = this.prompts.withBrief(pass.prompt);
+        this.progressSink.logBadge("final", "finalising...");
+        await this.enterPhase("final", this.currentSliceNumber());
+        const finalResult = await this.withRetry(
+          () => finalAgent.send(finalPrompt),
+          finalAgent,
+          "final",
+          "final-pass",
+        );
+        finalAgent.kill();
+
+        if (finalResult.exitCode !== 0) {
+          continue;
+        }
+        const findings = finalResult.assistantText ?? "";
+        if (!findings || findings.includes("NO_ISSUES_FOUND")) {
+          passClean = true;
+          break;
+        }
+
+        const fixPrompt = this.prompts.tdd(
+          this.config.planContent,
+          `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
+        );
+        const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
+        const preFixSha = await this.git.captureRef();
+        this.progressSink.logBadge("tdd", "implementing...");
+        await this.enterPhase("tdd", this.currentSliceNumber());
+        const fixResult = await this.withRetry(
+          () => this.tddAgent!.send(actualFixPrompt),
+          this.tddAgent!,
+          "tdd",
+          "final-fix",
+        );
+        this.tddIsFirst = false;
+        await this.checkCredit(fixResult, this.tddAgent!, "tdd");
+
+        if (fixResult.needsInput) {
+          await this.followUp(fixResult, this.tddAgent!);
+        }
+
+        if (await this.git.hasChanges(preFixSha)) {
+          await this.commitSweep(`${pass.name} final fix`);
+        }
       }
-      const findings = finalResult.assistantText ?? "";
-      if (!findings || findings.includes("NO_ISSUES_FOUND")) {
-        continue;
+
+      if (!passClean) {
+        throw new IncompleteRunError(`Final pass "${pass.name}" failed after retry budget`);
       }
-
-      // Fix cycle
-      const fixPrompt = this.prompts.tdd(
-        this.config.planContent,
-        `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
-      );
-      const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
-      this.progressSink.logBadge("tdd", "implementing...");
-      await this.enterPhase("tdd", this.currentSliceNumber());
-      const fixResult = await this.withRetry(
-        () => this.tddAgent!.send(actualFixPrompt),
-        this.tddAgent!,
-        "final-fix",
-      );
-      this.tddIsFirst = false;
-      await this.checkCredit(fixResult, this.tddAgent!);
-
-      if (fixResult.needsInput) {
-        await this.followUp(fixResult, this.tddAgent!);
-      }
-
-      await this.commitSweep(`${pass.name} final fix`);
     }
 
     this.phase = transition(this.phase, { kind: "AllPassesDone" });
@@ -864,51 +986,61 @@ export class RunOrchestration {
     this.phase = transition(this.phase, { kind: "StartGap", groupName: group.name });
 
     const groupContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
-    const gapAgent = this.agents.spawn("gap", { cwd: this.config.cwd });
-    this.pipeToSink(gapAgent, "gap");
     const gapPrompt = this.prompts.withBrief(this.prompts.gap(groupContent, groupBaseSha));
-    this.progressSink.logBadge("gap", "filling gaps...");
-    await this.enterPhase(
-      "gap",
-      this.currentSliceNumber(group.slices[group.slices.length - 1]?.number ?? 0),
-    );
-    const gapResult = await this.withRetry(() => gapAgent.send(gapPrompt), gapAgent, "gap");
 
-    const gapText = gapResult.assistantText ?? "";
-
-    if (gapResult.exitCode !== 0 || gapText.includes("NO_GAPS_FOUND")) {
+    for (let cycle = 1; cycle <= this.config.maxReviewCycles; cycle++) {
+      const gapAgent = this.agents.spawn("gap", { cwd: this.config.cwd });
+      this.pipeToSink(gapAgent, "gap");
+      this.progressSink.logBadge("gap", "filling gaps...");
+      await this.enterPhase(
+        "gap",
+        this.currentSliceNumber(group.slices[group.slices.length - 1]?.number ?? 0),
+      );
+      const gapResult = await this.withRetry(
+        () => gapAgent.send(gapPrompt),
+        gapAgent,
+        "gap",
+        "gap",
+      );
       gapAgent.kill();
-      this.phase = transition(this.phase, { kind: "GapDone" });
-      return;
+
+      const gapText = gapResult.assistantText ?? "";
+
+      if (gapResult.exitCode !== 0 || gapText.includes("NO_GAPS_FOUND")) {
+        this.phase = transition(this.phase, { kind: "GapDone" });
+        return;
+      }
+
+      const fixPrompt = this.prompts.tdd(
+        groupContent,
+        `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
+      );
+      const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
+      const preFixSha = await this.git.captureRef();
+      this.progressSink.logBadge("tdd", "implementing...");
+      await this.enterPhase(
+        "tdd",
+        this.currentSliceNumber(group.slices[group.slices.length - 1]?.number ?? 0),
+      );
+      const fixResult = await this.withRetry(
+        () => this.tddAgent!.send(actualFixPrompt),
+        this.tddAgent!,
+        "tdd",
+        "gap-fix",
+      );
+      this.tddIsFirst = false;
+      await this.checkCredit(fixResult, this.tddAgent!, "tdd");
+
+      if (fixResult.needsInput) {
+        await this.followUp(fixResult, this.tddAgent!);
+      }
+
+      if (await this.git.hasChanges(preFixSha)) {
+        await this.commitSweep(`${group.name} gap fixes`);
+      }
     }
 
-    // Fix cycle
-    const fixPrompt = this.prompts.tdd(
-      groupContent,
-      `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
-    );
-    const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
-    this.progressSink.logBadge("tdd", "implementing...");
-    await this.enterPhase(
-      "tdd",
-      this.currentSliceNumber(group.slices[group.slices.length - 1]?.number ?? 0),
-    );
-    const fixResult = await this.withRetry(
-      () => this.tddAgent!.send(actualFixPrompt),
-      this.tddAgent!,
-      "gap-fix",
-    );
-    this.tddIsFirst = false;
-    await this.checkCredit(fixResult, this.tddAgent!);
-
-    if (fixResult.needsInput) {
-      await this.followUp(fixResult, this.tddAgent!);
-    }
-
-    await this.commitSweep(`${group.name} gap fixes`);
-
-    gapAgent.kill();
-    this.phase = transition(this.phase, { kind: "GapDone" });
+    throw new IncompleteRunError(`${group.name} gap analysis failed after retry budget`);
   }
 
   async triageDiff(baseSha: string): Promise<TriageResult> {
@@ -942,6 +1074,7 @@ export class RunOrchestration {
     const result = await this.withRetry(
       () => this.tddAgent!.send(prompt),
       this.tddAgent,
+      "tdd",
       "commit-sweep",
     );
 
@@ -950,7 +1083,12 @@ export class RunOrchestration {
     }
   }
 
-  async followUp(result: AgentResult, agent: AgentHandle, maxFollowUps = 3): Promise<AgentResult> {
+  async followUp(
+    result: AgentResult,
+    agent: AgentHandle,
+    role: AgentRole = "tdd",
+    maxFollowUps = 3,
+  ): Promise<AgentResult> {
     let current = result;
     let followUps = 0;
 
@@ -964,7 +1102,7 @@ export class RunOrchestration {
       } else {
         current = await agent.send(answer);
       }
-      await this.checkCredit(current, agent);
+      await this.checkCredit(current, agent, role);
       followUps++;
     }
 
@@ -974,6 +1112,7 @@ export class RunOrchestration {
   async withRetry(
     fn: () => Promise<AgentResult>,
     agent: AgentHandle,
+    role: AgentRole,
     label: string,
     maxRetries = 2,
     delayMs = this.retryDelayMs,
@@ -990,6 +1129,9 @@ export class RunOrchestration {
       }
 
       if (!apiError.retryable) {
+        if (await this.waitForUsageAvailability(apiError, role, label)) {
+          continue;
+        }
         await this.persistence.save(this.state);
         const decision = await this.gate.creditExhausted(
           label,
@@ -1015,9 +1157,54 @@ export class RunOrchestration {
     }
   }
 
-  async checkCredit(result: AgentResult, agent: AgentHandle, label = "post-send"): Promise<void> {
+  private async waitForUsageAvailability(
+    apiError: ApiError,
+    role: AgentRole,
+    label: string,
+  ): Promise<boolean> {
+    if (!this.config.auto || apiError.kind !== "credit-exhausted") {
+      return false;
+    }
+
+    let attempt = 0;
+    while (true) {
+      const waitMs = Math.min(
+        this.usageProbeDelayMs * 2 ** attempt,
+        this.usageProbeMaxDelayMs,
+      );
+      this.logOrch(`Auto mode blocked by usage limit during ${label}; probing again after ${waitMs}ms`);
+      this.progressSink.setActivity(`usage limited; probing ${role} again in ${Math.round(waitMs / 1000)}s`);
+      await this.persistence.save(this.state);
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, waitMs));
+
+      const probe = this.agents.spawn(role, { cwd: this.config.cwd });
+      try {
+        const probeResult = await probe.send("Reply with exactly OK.");
+        const probeError = detectApiError(probeResult, probe.stderr);
+        if (probeError === null) {
+          this.logOrch(`Usage probe succeeded for ${label}; retrying`);
+          this.progressSink.setActivity(`usage available again; retrying ${label}...`);
+          return true;
+        }
+      } finally {
+        probe.kill();
+      }
+
+      attempt++;
+    }
+  }
+
+  async checkCredit(
+    result: AgentResult,
+    agent: AgentHandle,
+    role: AgentRole,
+    label = "post-send",
+  ): Promise<void> {
     const apiError = detectApiError(result, agent.stderr);
     if (!apiError || apiError.retryable) {
+      return;
+    }
+    if (await this.waitForUsageAvailability(apiError, role, label)) {
       return;
     }
     await this.persistence.save(this.state);
@@ -1045,7 +1232,7 @@ export class RunOrchestration {
     this.state = advanceState(this.state, {
       kind: "agentSpawned",
       role: "tdd",
-      sessionId: this.tddAgent.sessionId,
+      session: this.currentSession("tdd"),
     });
     await this.persistence.save(this.state);
   }
@@ -1074,12 +1261,12 @@ export class RunOrchestration {
     this.state = advanceState(this.state, {
       kind: "agentSpawned",
       role: "tdd",
-      sessionId: this.tddAgent.sessionId,
+      session: this.currentSession("tdd"),
     });
     this.state = advanceState(this.state, {
       kind: "agentSpawned",
       role: "review",
-      sessionId: this.reviewAgent.sessionId,
+      session: this.currentSession("review"),
     });
     await this.persistence.save(this.state);
   }

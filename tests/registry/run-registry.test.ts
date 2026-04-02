@@ -130,7 +130,7 @@ describe("run registry", () => {
     await expect(readRegistry(registryPath)).resolves.toEqual([]);
   });
 
-  it("pruneDeadEntries separates alive from dead PIDs", async () => {
+  it("pruneDeadEntries separates alive from dead PIDs without deleting dead entries", async () => {
     const registryPath = join(tempDir, "runs.json");
     const aliveEntry = makeEntry({ id: "alive", pid: process.pid });
     const deadEntry = makeEntry({ id: "dead", pid: 999999 });
@@ -143,7 +143,7 @@ describe("run registry", () => {
       alive: [aliveEntry],
       dead: [deadEntry],
     });
-    await expect(readRegistry(registryPath)).resolves.toEqual([aliveEntry]);
+    await expect(readRegistry(registryPath)).resolves.toEqual([aliveEntry, deadEntry]);
   });
 
   it("writeRegistry creates parent directories if missing", async () => {

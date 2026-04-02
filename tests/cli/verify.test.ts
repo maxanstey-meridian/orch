@@ -85,6 +85,20 @@ None
     expect(result.newFailures[0]).toContain("couldn't figure out");
   });
 
+  it("treats strong clean prose without a VERIFY_RESULT block as passing fallback", () => {
+    const text = `No findings.
+
+The original issues are resolved.
+
+Fresh verification:
+- pnpm test -> passed
+- pnpm run build -> passed`;
+
+    const result = parseVerifyResult(text);
+    expect(result.passed).toBe(true);
+    expect(result.newFailures).toEqual([]);
+  });
+
   it("treats missing status line as FAIL", () => {
     const text = `### VERIFY_RESULT
 

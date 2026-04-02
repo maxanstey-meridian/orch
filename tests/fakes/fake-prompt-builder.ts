@@ -17,6 +17,10 @@ export class PassthroughPromptBuilder extends PromptBuilder {
     return `[EXEC:${sliceNumber}] ${planText}${operatorGuidance ? ` GUIDANCE: ${operatorGuidance}` : ""}`;
   }
 
+  verify(baseSha: string, sliceNumber: number, fixSummary?: string): string {
+    return `[VERIFY:${sliceNumber}] from=${baseSha}${fixSummary ? ` FIX: ${fixSummary}` : ""}`;
+  }
+
   review(content: string, baseSha: string, priorFindings?: string): string {
     return `[REVIEW] from=${baseSha}${priorFindings ? ` PRIOR: ${priorFindings}` : ""}`;
   }

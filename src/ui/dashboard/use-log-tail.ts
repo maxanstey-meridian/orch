@@ -9,10 +9,7 @@ const missingLogPathError = "Log file not available";
 const missingFileError = "Log file not found yet";
 
 const isErrorWithCode = (value: unknown): value is { readonly code: string } =>
-  typeof value === "object" &&
-  value !== null &&
-  "code" in value &&
-  typeof value.code === "string";
+  typeof value === "object" && value !== null && "code" in value && typeof value.code === "string";
 
 const capLines = (lines: readonly string[]): string[] => lines.slice(-maxLines);
 
@@ -41,9 +38,7 @@ const readChunk = async (filePath: string, offset: number, length: number): Prom
   }
 };
 
-export const useLogTail = (
-  logPath: string | undefined,
-): { lines: string[]; error?: string } => {
+export const useLogTail = (logPath: string | undefined): { lines: string[]; error?: string } => {
   const [lines, setLines] = useState<string[]>([]);
   const [error, setError] = useState<string | undefined>(undefined);
 

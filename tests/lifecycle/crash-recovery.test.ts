@@ -20,8 +20,8 @@ describe("Crash recovery lifecycle", () => {
       config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
       state: {
         lastCompletedSlice: 2,
-        tddSessionId: "old-tdd-session",
-        reviewSessionId: "old-review-session",
+        tddSession: { provider: "claude", id: "old-tdd-session" },
+        reviewSession: { provider: "claude", id: "old-review-session" },
       },
       auto: true,
     });
@@ -54,6 +54,30 @@ describe("Crash recovery lifecycle", () => {
 
     const reviewSpawn = spawner.spawned.find((s) => s.role === "review");
     expect(reviewSpawn?.opts?.resumeSessionId).toBe("old-review-session");
+  });
+
+  it("drops persisted sessions when they belong to a different provider", async () => {
+    const { uc, spawner, persistence } = createTestHarness({
+      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true, defaultProvider: "codex" },
+      state: {
+        lastCompletedSlice: 2,
+        tddSession: { provider: "claude", id: "old-tdd-session" },
+        reviewSession: { provider: "claude", id: "old-review-session" },
+      },
+      auto: true,
+    });
+
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "slice 3 done" }));
+    spawner.onNextSpawn("review");
+
+    await uc.execute([makeGroup("G1", [makeSlice(1), makeSlice(2), makeSlice(3)])]);
+
+    const tddSpawn = spawner.spawned.find((s) => s.role === "tdd");
+    const reviewSpawn = spawner.spawned.find((s) => s.role === "review");
+    expect(tddSpawn?.opts?.resumeSessionId).toBeUndefined();
+    expect(reviewSpawn?.opts?.resumeSessionId).toBeUndefined();
+    expect(persistence.current.tddSession).toEqual({ provider: "codex", id: expect.any(String) });
+    expect(persistence.current.reviewSession).toEqual({ provider: "codex", id: expect.any(String) });
   });
 
   it("state persisted incrementally after each slice", async () => {

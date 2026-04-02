@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { parseProviderFlag } from "#infrastructure/cli/cli-args.js";
 
 describe("parseProviderFlag", () => {
-  it("returns claude when no --provider flag is present", () => {
-    expect(parseProviderFlag([])).toBe("claude");
+  it("returns codex when no --provider flag is present", () => {
+    expect(parseProviderFlag([])).toBe("codex");
   });
 
   it("returns claude when --provider claude is passed", () => {

@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, rm, writeFile, readFile } from "fs/promises";
 import { join, resolve } from "path";
 import { tmpdir } from "os";
 import { execSync, spawnSync } from "child_process";
+import { parseExecutionPreference } from "#infrastructure/cli/cli-args.js";
 import { loadState, saveState, clearState, statePathForPlan } from "#infrastructure/state/state.js";
 import { resolvePlanId } from "#infrastructure/plan/plan-generator.js";
 import { logPathForPlan } from "#infrastructure/log/log-writer.js";
@@ -108,6 +109,30 @@ describe("SHA-256 fallback plan ID derivation", () => {
     const id = resolvePlanId("/repo/plan.md");
     const statePath = statePathForPlan("/repo/.orch", id);
     expect(statePath).toMatch(/\.orch\/state\/plan-[0-9a-f]{6}\.json$/);
+  });
+});
+
+describe("execution preference parsing", () => {
+  it("returns auto when no execution mode flag is present", () => {
+    expect(parseExecutionPreference([])).toBe("auto");
+  });
+
+  it("returns quick for --quick", () => {
+    expect(parseExecutionPreference(["--quick"])).toBe("quick");
+  });
+
+  it("returns grouped for --grouped", () => {
+    expect(parseExecutionPreference(["--grouped"])).toBe("grouped");
+  });
+
+  it("returns long for --long", () => {
+    expect(parseExecutionPreference(["--long"])).toBe("long");
+  });
+
+  it("throws when multiple execution mode flags are combined", () => {
+    expect(() => parseExecutionPreference(["--quick", "--grouped"])).toThrow(
+      /mutually exclusive.*--quick.*--grouped/i,
+    );
   });
 });
 
@@ -871,6 +896,31 @@ describeIntegration("CLI flag wiring", () => {
     expect(after).toEqual({});
   }, 15_000);
 
+  it("--work plan.md leaves per-plan state in place after a successful run", async () => {
+    initGitRepo(tempDir);
+    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
+
+    const planPath = join(tempDir, "plan.md");
+    const expectedId = resolvePlanId(planPath);
+    const orchDir = join(tempDir, ".orch");
+    const perPlanState = statePathForPlan(orchDir, expectedId);
+
+    const result = spawnSync("npx", [
+      "tsx", mainPath,
+      "--work", planPath,
+      "--skip-fingerprint", "--no-interaction", "--auto",
+    ], {
+      cwd: tempDir,
+      encoding: "utf-8",
+      timeout: 8_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    expect(result.status).toBe(0);
+    const after = await loadState(perPlanState);
+    expect(after.lastCompletedSlice).toBe(1);
+  }, 15_000);
+
   it("--work plan.md --auto starts without inter-group prompts", async () => {
     initGitRepo(tempDir);
     const multiGroupPlan = `## Group: A\n### Slice 1: S1\nDo A.\n\n## Group: B\n### Slice 2: S2\nDo B.\n`;
@@ -1161,6 +1211,8 @@ const makeTestConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorCo
   planPath: "/tmp/plan.json",
   planContent: "plan content",
   brief: "brief text",
+  executionMode: "sliced",
+  executionPreference: "auto",
   auto: false,
   reviewThreshold: 0,
   maxReviewCycles: 3,
@@ -1196,6 +1248,223 @@ const makeTestAgent = (): AgentHandle => ({
   inject: vi.fn(),
   kill: vi.fn(),
   pipe: vi.fn(),
+});
+
+const runMainWithWorkPlanMocks = async (args: string[]) => {
+  const planPath = join(tempDir, "plan.md");
+  await writeFile(planPath, MINIMAL_PLAN);
+  const createContainer = vi.fn(() => ({
+    resolve: vi.fn(() => ({
+      execute: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+    })),
+  }));
+
+  vi.resetModules();
+  vi.doMock("../src/composition-root.js", () => ({
+    createContainer,
+  }));
+  vi.doMock("#infrastructure/git/repo-check.js", () => ({
+    assertGitRepo: vi.fn().mockResolvedValue(undefined),
+  }));
+  vi.doMock("#infrastructure/config/orchrc.js", () => ({
+    loadAndResolveOrchrConfig: vi.fn(() => ({
+      skills: {
+        tdd: { enabled: true, value: "tdd skill" },
+        review: { enabled: true, value: "review skill" },
+        verify: { enabled: true, value: "verify skill" },
+        gap: { disabled: true },
+        plan: { disabled: true },
+      },
+      config: {},
+      rules: { tdd: undefined, review: undefined },
+      agents: {},
+    })),
+    resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
+    buildOrchrSummary: vi.fn(() => "summary"),
+  }));
+  vi.doMock("#domain/agent-config.js", async () => {
+    const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
+    return {
+      ...actual,
+      resolveAllAgentConfigs: vi.fn(() => actual.AGENT_DEFAULTS),
+    };
+  });
+  vi.doMock("#infrastructure/fingerprint.js", () => ({
+    runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+  }));
+  vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
+    parsePlan: vi.fn().mockResolvedValue([
+      {
+        name: "Test",
+        slices: [{
+          number: 1,
+          title: "Slice 1",
+          content: "content",
+          why: "why",
+          files: [{ path: "src/s1.ts", action: "new" }],
+          details: "details",
+          tests: "tests",
+        }],
+      },
+    ]),
+  }));
+  vi.doMock("#infrastructure/git/worktree.js", () => ({
+    checkWorktreeResume: vi.fn().mockResolvedValue({ ok: true }),
+    runCleanup: vi.fn(),
+  }));
+  vi.doMock("#infrastructure/git/worktree-setup.js", () => ({
+    resolveWorktree: vi.fn().mockResolvedValue({
+      cwd: tempDir,
+      worktreeInfo: null,
+      skipStash: true,
+    }),
+  }));
+  vi.doMock("#infrastructure/git/git.js", () => ({
+    getStatus: vi.fn().mockResolvedValue(""),
+    stashBackup: vi.fn().mockResolvedValue(false),
+  }));
+  vi.doMock("#ui/hud.js", () => ({
+    createHud: vi.fn(() => ({
+      update: vi.fn(),
+      wrapLog: vi.fn((logger: (...args: unknown[]) => void) => logger),
+      teardown: vi.fn(),
+      setActivity: vi.fn(),
+      onKey: vi.fn(),
+      onInterruptSubmit: vi.fn(),
+      startPrompt: vi.fn(),
+      createWriter: vi.fn(),
+      setSkipping: vi.fn(),
+    })),
+  }));
+  vi.doMock("#ui/display.js", async () => {
+    const actual = await vi.importActual<typeof import("#ui/display.js")>("#ui/display.js");
+    return {
+      ...actual,
+      logSection: vi.fn(),
+      printStartupBanner: vi.fn(),
+      formatPlanSummary: vi.fn(),
+    };
+  });
+
+  const exit = vi.fn();
+  const previousArgv = process.argv;
+  const previousCwd = process.cwd();
+  process.argv = [
+    "node",
+    "main.ts",
+    "--work",
+    planPath,
+    "--skip-fingerprint",
+    "--no-interaction",
+    ...args,
+  ];
+  process.chdir(tempDir);
+
+  try {
+    const { main } = await import("../src/main.js");
+    await main({
+      registryPath: join(tempDir, "registry", "runs.json"),
+      onSignal: vi.fn(() => process),
+      exit,
+    });
+  } finally {
+    process.argv = previousArgv;
+    process.chdir(previousCwd);
+    vi.doUnmock("../src/composition-root.js");
+    vi.doUnmock("#infrastructure/git/repo-check.js");
+    vi.doUnmock("#infrastructure/config/orchrc.js");
+    vi.doUnmock("#domain/agent-config.js");
+    vi.doUnmock("#infrastructure/fingerprint.js");
+    vi.doUnmock("#infrastructure/plan/plan-parser.js");
+    vi.doUnmock("#infrastructure/git/worktree.js");
+    vi.doUnmock("#infrastructure/git/worktree-setup.js");
+    vi.doUnmock("#infrastructure/git/git.js");
+    vi.doUnmock("#ui/hud.js");
+    vi.doUnmock("#ui/display.js");
+    vi.resetModules();
+  }
+
+  return { createContainer, exit, planPath };
+};
+
+describe("main execution preference wiring", () => {
+  it("passes auto and sliced into createContainer when no execution mode override is present", async () => {
+    const { createContainer, exit } = await runMainWithWorkPlanMocks([]);
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionPreference: "auto",
+        executionMode: "sliced",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it.each([
+    { flag: "--quick", executionPreference: "quick", executionMode: "direct" },
+    { flag: "--grouped", executionPreference: "grouped", executionMode: "grouped" },
+    { flag: "--long", executionPreference: "long", executionMode: "sliced" },
+  ])(
+    "maps $flag to executionPreference=$executionPreference and executionMode=$executionMode",
+    async ({ flag, executionPreference, executionMode }) => {
+      const { createContainer, exit } = await runMainWithWorkPlanMocks([flag]);
+
+      expect(exit).not.toHaveBeenCalledWith(1);
+      expect(createContainer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executionPreference,
+          executionMode,
+        }),
+        expect.any(Object),
+      );
+    },
+  );
+
+  it("fails fast for mutually exclusive work execution mode flags", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exit = vi.fn();
+    const previousArgv = process.argv;
+    process.argv = ["node", "main.ts", "--work", "plan.md", "--quick", "--grouped"];
+
+    try {
+      vi.resetModules();
+      const { main } = await import("../src/main.js");
+      await main({ exit });
+    } finally {
+      process.argv = previousArgv;
+      vi.resetModules();
+    }
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/mutually exclusive.*--quick, --grouped.*--quick, --grouped, or --long/i),
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+    errorSpy.mockRestore();
+  });
+
+  it("fails fast for mutually exclusive plan execution mode flags", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exit = vi.fn();
+    const previousArgv = process.argv;
+    process.argv = ["node", "main.ts", "--plan", "inventory.md", "--quick", "--long"];
+
+    try {
+      vi.resetModules();
+      const { main } = await import("../src/main.js");
+      await main({ exit });
+    } finally {
+      process.argv = previousArgv;
+      vi.resetModules();
+    }
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/mutually exclusive.*--quick, --long.*--quick, --grouped, or --long/i),
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+    errorSpy.mockRestore();
+  });
 });
 
 describe("main log path wiring", () => {
@@ -1342,6 +1611,245 @@ describe("main log path wiring", () => {
       }),
       expect.any(Object),
     );
+  });
+
+  it("keeps the run registered after a successful execution so the dashboard can classify it later", async () => {
+    const planPath = join(tempDir, "plan.md");
+    await writeFile(planPath, MINIMAL_PLAN);
+    const registryPath = join(tempDir, "registry", "runs.json");
+
+    const createContainer = vi.fn(() => ({
+      resolve: vi.fn(() => ({
+        execute: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      })),
+    }));
+
+    vi.resetModules();
+    vi.doMock("../src/composition-root.js", () => ({
+      createContainer,
+    }));
+    vi.doMock("#infrastructure/git/repo-check.js", () => ({
+      assertGitRepo: vi.fn().mockResolvedValue(undefined),
+    }));
+    vi.doMock("#infrastructure/config/orchrc.js", () => ({
+      loadAndResolveOrchrConfig: vi.fn(() => ({
+        skills: {
+          tdd: { enabled: true, value: "tdd skill" },
+          review: { enabled: true, value: "review skill" },
+          verify: { enabled: true, value: "verify skill" },
+          gap: { disabled: true },
+          plan: { disabled: true },
+        },
+        config: {},
+        rules: { tdd: undefined, review: undefined },
+        agents: {},
+      })),
+      resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
+      buildOrchrSummary: vi.fn(() => "summary"),
+    }));
+    vi.doMock("#domain/agent-config.js", async () => {
+      const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
+      return {
+        ...actual,
+        resolveAllAgentConfigs: vi.fn(() => actual.AGENT_DEFAULTS),
+      };
+    });
+    vi.doMock("#infrastructure/fingerprint.js", () => ({
+      runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+    }));
+    vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
+      parsePlan: vi.fn().mockResolvedValue([
+        {
+          name: "Test",
+          slices: [{
+            number: 1,
+            title: "Slice 1",
+            content: "content",
+            why: "why",
+            files: [{ path: "src/s1.ts", action: "new" }],
+            details: "details",
+            tests: "tests",
+          }],
+        },
+      ]),
+    }));
+    vi.doMock("#infrastructure/git/worktree.js", () => ({
+      checkWorktreeResume: vi.fn().mockResolvedValue({ ok: true }),
+      runCleanup: vi.fn(),
+    }));
+    vi.doMock("#infrastructure/git/worktree-setup.js", () => ({
+      resolveWorktree: vi.fn().mockResolvedValue({
+        cwd: tempDir,
+        worktreeInfo: null,
+        skipStash: true,
+      }),
+    }));
+    vi.doMock("#infrastructure/git/git.js", () => ({
+      getStatus: vi.fn().mockResolvedValue(""),
+      stashBackup: vi.fn().mockResolvedValue(false),
+    }));
+    vi.doMock("#ui/hud.js", () => ({
+      createHud: vi.fn(() => ({
+        update: vi.fn(),
+        wrapLog: vi.fn((logger: (...args: unknown[]) => void) => logger),
+        teardown: vi.fn(),
+        setActivity: vi.fn(),
+        onKey: vi.fn(),
+        onInterruptSubmit: vi.fn(),
+        startPrompt: vi.fn(),
+        createWriter: vi.fn(),
+        setSkipping: vi.fn(),
+      })),
+    }));
+    vi.doMock("#ui/display.js", async () => {
+      const actual = await vi.importActual<typeof import("#ui/display.js")>("#ui/display.js");
+      return {
+        ...actual,
+        logSection: vi.fn(),
+        printStartupBanner: vi.fn(),
+        formatPlanSummary: vi.fn(),
+      };
+    });
+
+    const previousArgv = process.argv;
+    const previousCwd = process.cwd();
+    process.argv = [
+      "node",
+      "main.ts",
+      "--work",
+      planPath,
+      "--skip-fingerprint",
+      "--no-interaction",
+    ];
+    process.chdir(tempDir);
+
+    try {
+      const { main } = await import("../src/main.js");
+      await main({
+        registryPath,
+        onSignal: vi.fn(() => process),
+        exit: vi.fn(),
+      });
+    } finally {
+      process.argv = previousArgv;
+      process.chdir(previousCwd);
+      vi.doUnmock("../src/composition-root.js");
+      vi.doUnmock("#infrastructure/git/repo-check.js");
+      vi.doUnmock("#infrastructure/config/orchrc.js");
+      vi.doUnmock("#domain/agent-config.js");
+      vi.doUnmock("#infrastructure/fingerprint.js");
+      vi.doUnmock("#infrastructure/plan/plan-parser.js");
+      vi.doUnmock("#infrastructure/git/worktree.js");
+      vi.doUnmock("#infrastructure/git/worktree-setup.js");
+      vi.doUnmock("#infrastructure/git/git.js");
+      vi.doUnmock("#ui/hud.js");
+      vi.doUnmock("#ui/display.js");
+      vi.resetModules();
+    }
+
+    const registryEntries = JSON.parse(await readFile(registryPath, "utf-8")) as Array<{
+      readonly planPath: string;
+      readonly statePath: string;
+    }>;
+
+    expect(registryEntries).toHaveLength(1);
+    expect(registryEntries[0]).toMatchObject({
+      planPath,
+    });
+  });
+
+  it("keeps a run registered and writes preflight state when plan parsing fails", async () => {
+    const planPath = join(tempDir, "broken-plan.json");
+    const registryPath = join(tempDir, "registry", "runs.json");
+    const orchDir = join(tempDir, ".orch");
+    const planId = resolvePlanId(planPath);
+    const statePath = statePathForPlan(orchDir, planId);
+
+    await writeFile(planPath, "{ definitely-not-json");
+
+    vi.resetModules();
+    vi.doMock("#infrastructure/git/repo-check.js", () => ({
+      assertGitRepo: vi.fn().mockResolvedValue(undefined),
+    }));
+    vi.doMock("#infrastructure/config/orchrc.js", () => ({
+      loadAndResolveOrchrConfig: vi.fn(() => ({
+        skills: {
+          tdd: { enabled: true, value: "tdd skill" },
+          review: { enabled: true, value: "review skill" },
+          verify: { enabled: true, value: "verify skill" },
+          gap: { disabled: true },
+          plan: { disabled: true },
+        },
+        config: {},
+        rules: { tdd: undefined, review: undefined },
+        agents: {},
+      })),
+      resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
+      buildOrchrSummary: vi.fn(() => "summary"),
+    }));
+    vi.doMock("#domain/agent-config.js", async () => {
+      const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
+      return {
+        ...actual,
+        resolveAllAgentConfigs: vi.fn(() => actual.AGENT_DEFAULTS),
+      };
+    });
+    vi.doMock("#infrastructure/fingerprint.js", () => ({
+      runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+    }));
+    vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
+      parsePlan: vi.fn().mockRejectedValue(new Error("Invalid plan")),
+    }));
+
+    const previousArgv = process.argv;
+    const previousCwd = process.cwd();
+    process.argv = [
+      "node",
+      "main.ts",
+      "--work",
+      planPath,
+      "--skip-fingerprint",
+      "--no-interaction",
+    ];
+    process.chdir(tempDir);
+
+    try {
+      const { main } = await import("../src/main.js");
+      await expect(
+        main({
+          registryPath,
+          onSignal: vi.fn(() => process),
+          exit: vi.fn(),
+        }),
+      ).rejects.toThrow("Invalid plan");
+    } finally {
+      process.argv = previousArgv;
+      process.chdir(previousCwd);
+      vi.doUnmock("#infrastructure/git/repo-check.js");
+      vi.doUnmock("#infrastructure/config/orchrc.js");
+      vi.doUnmock("#domain/agent-config.js");
+      vi.doUnmock("#infrastructure/fingerprint.js");
+      vi.doUnmock("#infrastructure/plan/plan-parser.js");
+      vi.resetModules();
+    }
+
+    const registryEntries = JSON.parse(await readFile(registryPath, "utf-8")) as Array<{
+      readonly planPath: string;
+      readonly statePath: string;
+    }>;
+    expect(registryEntries).toHaveLength(1);
+    expect(registryEntries[0]).toMatchObject({
+      planPath,
+      statePath: expect.stringMatching(new RegExp(`${planId}\\.json$`)),
+    });
+
+    const state = JSON.parse(await readFile(statePath, "utf-8")) as {
+      readonly startedAt?: string;
+      readonly currentPhase?: string;
+    };
+    expect(state.startedAt).toEqual(expect.any(String));
+    expect(state.currentPhase).toBe("plan");
   });
 });
 

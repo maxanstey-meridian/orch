@@ -110,6 +110,8 @@ describe('runtimeInteractionGateFactory', () => {
     planPath: '',
     planContent: '',
     brief: '',
+    executionMode: 'sliced',
+    executionPreference: 'auto',
     reviewThreshold: 0,
     maxReviewCycles: 0,
     stateFile: '',

@@ -20,6 +20,8 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   planPath: "/tmp/plan.json",
   planContent: "plan content",
   brief: "brief text",
+  executionMode: "sliced",
+  executionPreference: "auto",
   auto: true,
   reviewThreshold: 30,
   maxReviewCycles: 3,

@@ -25,6 +25,10 @@ describe("buildTddPrompt", () => {
     const result = buildTddPrompt("slice", "fix this");
     expect(result).toContain("fix this");
     expect(result).toContain("Review Feedback");
+    expect(result).toContain("Fix Discipline");
+    expect(result).toContain("implementation obligation");
+    expect(result).toContain("expected-failing test");
+    expect(result).toContain("If the reviewer/gap pass tells you to implement a non-egregious fix, do it");
   });
 });
 

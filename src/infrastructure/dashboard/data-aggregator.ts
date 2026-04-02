@@ -153,7 +153,9 @@ const buildCompletedRun = async (entry: RunEntry): Promise<DashboardRun> => {
   ]);
   const status =
     plan.groups === undefined
-      ? "dead"
+      ? state.startedAt !== undefined || state.currentPhase !== undefined
+        ? "failed"
+        : "dead"
       : (state.lastCompletedSlice ?? 0) === plan.totalSlices
         ? "completed"
         : "failed";

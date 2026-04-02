@@ -3,6 +3,16 @@ import { AGENT_DEFAULTS } from "#domain/agent-config.js";
 import type { OrchestratorConfig } from "#domain/config.js";
 import type { Hud } from "#ui/hud.js";
 
+const spawnMock = vi.fn(() => ({}));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    spawn: spawnMock,
+  };
+});
+
 vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
   spawnClaudeAgent: vi.fn(),
   spawnClaudePlanAgent: vi.fn(),
@@ -12,6 +22,22 @@ vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
   buildRulesReminder: vi.fn((base: string, custom?: string) =>
     custom ? `${base}\n${custom}` : base,
   ),
+}));
+
+vi.mock("../../src/infrastructure/codex/codex-agent-spawner.js", () => ({
+  CodexAgentSpawner: class {
+    constructor(
+      private readonly _cwd: string,
+      private readonly _config: { readonly auto: boolean },
+      private readonly processFactory: () => unknown,
+      private readonly _gate: unknown,
+    ) {}
+
+    spawn() {
+      this.processFactory();
+      return { send: vi.fn(), kill: vi.fn() };
+    }
+  },
 }));
 
 import { SilentRuntimeInteractionGate } from "#ui/ink-runtime-interaction-gate.js";
@@ -36,6 +62,8 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   planPath: "/tmp/plan.json",
   planContent: "plan content",
   brief: "brief text",
+  executionMode: "sliced",
+  executionPreference: "auto",
   auto: false,
   reviewThreshold: 30,
   maxReviewCycles: 3,
@@ -154,14 +182,13 @@ describe("planGeneratorSpawnerFactory", () => {
     expect(typeof spawner).toBe("function");
   });
 
-  it("throws for codex provider", async () => {
+  it("returns a spawner function for codex provider", async () => {
     const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
-    expect(() =>
-      planGeneratorSpawnerFactory({
-        agentConfig: { ...AGENT_DEFAULTS, plan: { provider: "codex" } },
-        cwd: "/tmp",
-      }),
-    ).toThrow("not yet implemented");
+    const spawner = planGeneratorSpawnerFactory({
+      agentConfig: { ...AGENT_DEFAULTS, plan: { provider: "codex" } },
+      cwd: "/tmp",
+    });
+    expect(typeof spawner).toBe("function");
   });
 
   it("returned spawner produces an object with send and kill", async () => {
@@ -173,6 +200,27 @@ describe("planGeneratorSpawnerFactory", () => {
     expect(agent).toHaveProperty("kill");
     expect(typeof agent.send).toBe("function");
     expect(typeof agent.kill).toBe("function");
+  });
+
+  it("uses the default codex app-server model for codex plan generation", async () => {
+    spawnMock.mockClear();
+
+    const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = planGeneratorSpawnerFactory({
+      agentConfig: { ...AGENT_DEFAULTS, plan: { provider: "codex" } },
+      cwd: "/tmp",
+    });
+
+    spawner();
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      "codex",
+      ["app-server"],
+      expect.objectContaining({
+        cwd: "/tmp",
+        stdio: ["pipe", "pipe", "pipe"],
+      }),
+    );
   });
 
 });

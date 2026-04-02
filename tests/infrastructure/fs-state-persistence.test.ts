@@ -24,8 +24,8 @@ describe("FsStatePersistence", () => {
       lastCompletedGroup: "Domain",
       lastSliceImplemented: 3,
       reviewBaseSha: "abc123",
-      tddSessionId: "tdd-sess",
-      reviewSessionId: "rev-sess",
+      tddSession: { provider: "codex" as const, id: "tdd-sess" },
+      reviewSession: { provider: "claude" as const, id: "rev-sess" },
       worktree: { path: "/tmp/wt", branch: "feat", baseSha: "def456" },
     };
     await adapter.save(full);
@@ -43,11 +43,14 @@ describe("FsStatePersistence", () => {
 
   it("save replaces — fields from prior save are absent", async () => {
     const adapter = new FsStatePersistence(testPath);
-    await adapter.save({ lastCompletedSlice: 1, tddSessionId: "old-sess" });
+    await adapter.save({
+      lastCompletedSlice: 1,
+      tddSession: { provider: "codex", id: "old-sess" },
+    });
     await adapter.save({ reviewBaseSha: "abc" });
     const loaded = await adapter.load();
     expect(loaded).toEqual({ reviewBaseSha: "abc" });
-    expect(loaded).not.toHaveProperty("tddSessionId");
+    expect(loaded).not.toHaveProperty("tddSession");
     expect(loaded).not.toHaveProperty("lastCompletedSlice");
   });
 

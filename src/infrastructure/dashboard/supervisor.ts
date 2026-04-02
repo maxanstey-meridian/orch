@@ -57,11 +57,16 @@ const hasResolvedBranchFlag = (flags: readonly string[]): boolean => {
   return typeof branchValue === "string" && branchValue.length > 0 && !branchValue.startsWith("-");
 };
 
-const buildWorkCommandArgs = (
-  launchArgs: readonly string[],
-  entry: QueueEntry,
-): string[] => {
-  const flags = [...entry.flags];
+const ensureDetachedRunFlags = (flags: readonly string[]): string[] => {
+  if (flags.includes("--auto")) {
+    return [...flags];
+  }
+
+  return ["--auto", ...flags];
+};
+
+const buildWorkCommandArgs = (launchArgs: readonly string[], entry: QueueEntry): string[] => {
+  const flags = ensureDetachedRunFlags(entry.flags);
   if (entry.branch !== undefined && !hasResolvedBranchFlag(flags)) {
     flags.push("--branch", entry.branch);
   }
@@ -178,8 +183,7 @@ class DashboardSupervisor implements Supervisor {
 
       const alivePids = alive.map((entry) => entry.pid);
       const activeRunCount =
-        alive.length +
-        countTrackedChildrenMissingFromRegistry(alivePids, this.#spawnedChildPids);
+        alive.length + countTrackedChildrenMissingFromRegistry(alivePids, this.#spawnedChildPids);
       if (activeRunCount >= this.#concurrencyLimit) {
         return;
       }
@@ -195,11 +199,15 @@ class DashboardSupervisor implements Supervisor {
 
       let child: ChildProcess;
       try {
-        child = this.#spawnChild(this.#launchCommand, buildWorkCommandArgs(this.#launchArgs, nextEntry), {
-          cwd: nextEntry.repo,
-          stdio: "ignore",
-          detached: true,
-        });
+        child = this.#spawnChild(
+          this.#launchCommand,
+          buildWorkCommandArgs(this.#launchArgs, nextEntry),
+          {
+            cwd: nextEntry.repo,
+            stdio: "ignore",
+            detached: true,
+          },
+        );
       } catch (error) {
         await addToQueue(this.#queuePath, nextEntry);
         throw error;
@@ -376,9 +384,7 @@ class DashboardSupervisor implements Supervisor {
   }
 }
 
-export const createSupervisor = (
-  options: CreateSupervisorOptions,
-): Supervisor => {
+export const createSupervisor = (options: CreateSupervisorOptions): Supervisor => {
   return new DashboardSupervisor(options, {
     spawnChild: (command, args, spawnOptions) => spawn(command, [...args], spawnOptions),
   });

@@ -16,6 +16,8 @@ const DEFAULT_CONFIG: OrchestratorConfig = {
   planPath: "/tmp/plan.json",
   planContent: "plan content",
   brief: "brief",
+  executionMode: "sliced",
+  executionPreference: "auto",
   auto: false,
   reviewThreshold: 30,
   maxReviewCycles: 3,
@@ -61,7 +63,11 @@ export const createTestHarness = (opts?: {
     ? new SilentOperatorGate(hud)
     : new InkOperatorGate(hud);
 
-  const config: OrchestratorConfig = { ...DEFAULT_CONFIG, ...opts?.config };
+  const config: OrchestratorConfig = {
+    ...DEFAULT_CONFIG,
+    ...opts?.config,
+    ...(opts?.auto === undefined ? {} : { auto: opts.auto }),
+  };
 
   const uc = new RunOrchestration(
     spawner,

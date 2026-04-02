@@ -9,6 +9,25 @@ const flushEffects = async (): Promise<void> =>
     setTimeout(resolvePromise, 0);
   });
 
+const waitForFrame = async (
+  getFrame: () => string,
+  matcher: (frame: string) => boolean,
+  timeoutMs = 1_000,
+): Promise<string> => {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const frame = getFrame();
+    if (matcher(frame)) {
+      return frame;
+    }
+
+    await flushEffects();
+  }
+
+  return getFrame();
+};
+
 const typeText = async (
   app: { stdin: { write: (value: string) => void } },
   value: string,
@@ -41,7 +60,7 @@ describe("QueuePrompt", () => {
     expect(frame).toContain(`Repo: ${process.cwd()}`);
     expect(frame).toContain("Plan:");
     expect(frame).toContain("Branch:");
-    expect(frame).toContain("Flags:");
+    expect(frame).toContain("Flags: --auto");
 
     app.unmount();
   });
@@ -61,7 +80,11 @@ describe("QueuePrompt", () => {
     );
 
     await typeText(app, "plans/demo.json");
-    expect(app.lastFrame()).toContain("Plan: plans/demo.json");
+    const filledFrame = await waitForFrame(
+      () => app.lastFrame() ?? "",
+      (frame) => frame.includes("Plan: plans/demo.json"),
+    );
+    expect(filledFrame).toContain("Plan: plans/demo.json");
     app.stdin.write("\r");
     await flushEffects();
     await flushEffects();
@@ -71,9 +94,56 @@ describe("QueuePrompt", () => {
       expect.objectContaining({
         repo: resolve(process.cwd()),
         planPath: resolve("plans/demo.json"),
-        flags: [],
+        flags: ["--auto"],
         addedAt: "2026-04-10T10:00:00.000Z",
         id: "queue-id",
+      }),
+    );
+    expect(onDone).toHaveBeenCalledTimes(1);
+
+    app.unmount();
+  });
+
+  it("enforces --auto even when the flags field is cleared before submit", async () => {
+    const addToQueue = vi.fn().mockResolvedValue(undefined);
+    const onDone = vi.fn();
+    const app = render(
+      <QueuePrompt
+        queuePath="/tmp/queue.json"
+        onDone={onDone}
+        onCancel={vi.fn()}
+        addToQueueFn={addToQueue}
+        createId={() => "queue-id"}
+        now={() => "2026-04-10T10:00:00.000Z"}
+      />,
+    );
+
+    app.stdin.write("\t");
+    await flushEffects();
+    app.stdin.write("\t");
+    await flushEffects();
+    app.stdin.write("\t");
+    await flushEffects();
+    for (let index = 0; index < "--auto".length; index += 1) {
+      app.stdin.write("\u007F");
+    }
+    await flushEffects();
+    await typeText(app, "plans/demo.json");
+    app.stdin.write("\u001B[A");
+    await flushEffects();
+    app.stdin.write("\u001B[A");
+    await flushEffects();
+    app.stdin.write("\u001B[A");
+    await flushEffects();
+    app.stdin.write("\r");
+    await flushEffects();
+    await flushEffects();
+
+    expect(addToQueue).toHaveBeenCalledWith(
+      "/tmp/queue.json",
+      expect.objectContaining({
+        planPath: resolve("plans/demo.json"),
+        flags: ["--auto"],
       }),
     );
     expect(onDone).toHaveBeenCalledTimes(1);
@@ -93,6 +163,24 @@ describe("QueuePrompt", () => {
     );
 
     app.stdin.write("\u001B");
+    await flushEffects();
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    app.unmount();
+  });
+
+  it("left arrow triggers onCancel without adding to the queue", async () => {
+    const onCancel = vi.fn();
+    const app = render(
+      <QueuePrompt
+        queuePath="/tmp/queue.json"
+        onDone={vi.fn()}
+        onCancel={onCancel}
+        addToQueueFn={vi.fn()}
+      />,
+    );
+
+    app.stdin.write("\u001B[D");
     await flushEffects();
 
     expect(onCancel).toHaveBeenCalledTimes(1);
