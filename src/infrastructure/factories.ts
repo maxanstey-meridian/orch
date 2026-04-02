@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { type AgentSpawner } from "#application/ports/agent-spawner.port.js";
+import { type AgentSpawner, type PromptAgent } from "#application/ports/agent-spawner.port.js";
 import type { OperatorGate } from "#application/ports/operator-gate.port.js";
 import type { ProgressSink } from "#application/ports/progress-sink.port.js";
 import type { RuntimeInteractionGate } from "#application/ports/runtime-interaction.port.js";
@@ -14,9 +14,13 @@ import {
   SilentRuntimeInteractionGate,
   InkRuntimeInteractionGate,
 } from "#ui/ink-runtime-interaction-gate.js";
+import { ROLE_STYLES } from "#ui/agent-role-styles.js";
 import { ChildProcessGitOps } from "./child-process-git-ops.js";
 import { ClaudeAgentSpawner } from "./claude-agent-spawner.js";
-import { spawnClaudeGeneratePlanAgent } from "./claude/claude-agent-factory.js";
+import {
+  spawnClaudeGeneratePlanAgent,
+  spawnClaudePlanAgent,
+} from "./claude/claude-agent-factory.js";
 import { CodexAgentSpawner } from "./codex/codex-agent-spawner.js";
 import { DefaultPromptBuilder } from "./default-prompt-builder.js";
 import { FsStatePersistence } from "./fs-state-persistence.js";
@@ -116,6 +120,32 @@ export const runtimeInteractionGateFactory = (
   config.auto ? new SilentRuntimeInteractionGate() : new InkRuntimeInteractionGate(hud);
 runtimeInteractionGateFactory.inject = ["config", "hud"] as const;
 
+const createCodexPromptAgent = (opts: {
+  cwd: string;
+  model?: string;
+  role: AgentRole;
+}): PromptAgent => {
+  const spawner = new CodexAgentSpawner(
+    opts.cwd,
+    { auto: true },
+    () =>
+      spawn(
+        "codex",
+        opts.model === undefined ? ["app-server"] : ["app-server", "-c", `model="${opts.model}"`],
+        {
+          cwd: opts.cwd,
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      ),
+    new SilentRuntimeInteractionGate(),
+  );
+  const handle = spawner.spawn(opts.role, { cwd: opts.cwd });
+  return {
+    send: (prompt: string) => handle.send(prompt),
+    kill: () => handle.kill(),
+  };
+};
+
 export const planGeneratorSpawnerFactory = (opts: {
   agentConfig: Record<AgentRole, ResolvedAgentConfig>;
   cwd: string;
@@ -146,6 +176,28 @@ export const planGeneratorSpawnerFactory = (opts: {
           kill: () => handle.kill(),
         };
       };
+    default: {
+      const _exhaustive: never = provider;
+      throw new Error(`Unknown provider: ${_exhaustive}`);
+    }
+  }
+};
+
+export const requestTriageSpawnerFactory = (opts: {
+  agentConfig: Record<AgentRole, ResolvedAgentConfig>;
+  cwd: string;
+}): (() => PromptAgent) => {
+  const { provider, model } = opts.agentConfig.triage;
+  switch (provider) {
+    case "claude":
+      return () => spawnClaudePlanAgent(ROLE_STYLES.triage, undefined, opts.cwd, model);
+    case "codex":
+      return () =>
+        createCodexPromptAgent({
+          cwd: opts.cwd,
+          model,
+          role: "triage",
+        });
     default: {
       const _exhaustive: never = provider;
       throw new Error(`Unknown provider: ${_exhaustive}`);

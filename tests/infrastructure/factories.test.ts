@@ -225,6 +225,70 @@ describe("planGeneratorSpawnerFactory", () => {
 
 });
 
+describe("requestTriageSpawnerFactory", () => {
+  it("returns a prompt agent for claude triage and forwards the configured model", async () => {
+    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
+    const spawnClaudePlanAgent = vi.mocked(mockModule.spawnClaudePlanAgent);
+    spawnClaudePlanAgent.mockClear();
+    spawnClaudePlanAgent.mockReturnValue({
+      send: vi.fn(),
+      kill: vi.fn(),
+    } as never);
+
+    const { requestTriageSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = requestTriageSpawnerFactory({
+      agentConfig: {
+        ...AGENT_DEFAULTS,
+        triage: {
+          provider: "claude",
+          model: "claude-haiku-4-5-20251001",
+        },
+      },
+      cwd: "/tmp/request-triage",
+    });
+
+    const agent = spawner();
+
+    expect(agent).toHaveProperty("send");
+    expect(agent).toHaveProperty("kill");
+    expect(spawnClaudePlanAgent).toHaveBeenCalledWith(
+      expect.anything(),
+      undefined,
+      "/tmp/request-triage",
+      "claude-haiku-4-5-20251001",
+    );
+  });
+
+  it("returns a prompt agent for codex triage and uses the configured model", async () => {
+    spawnMock.mockClear();
+
+    const { requestTriageSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = requestTriageSpawnerFactory({
+      agentConfig: {
+        ...AGENT_DEFAULTS,
+        triage: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+      },
+      cwd: "/tmp/request-triage",
+    });
+
+    const agent = spawner();
+
+    expect(agent).toHaveProperty("send");
+    expect(agent).toHaveProperty("kill");
+    expect(spawnMock).toHaveBeenCalledWith(
+      "codex",
+      ["app-server", "-c", 'model="gpt-5.4"'],
+      expect.objectContaining({
+        cwd: "/tmp/request-triage",
+        stdio: ["pipe", "pipe", "pipe"],
+      }),
+    );
+  });
+});
+
 describe("promptBuilderFactory", () => {
   it("creates DefaultPromptBuilder from config brief, planContent, and rules", async () => {
     const { promptBuilderFactory } = await import("../../src/infrastructure/factories.js");

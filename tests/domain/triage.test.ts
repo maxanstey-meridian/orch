@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { FULL_TRIAGE } from "#domain/triage.js";
+import { FULL_TRIAGE, formatRequestTriageSummary } from "#domain/triage.js";
 import { buildTriagePrompt, parseTriageResult } from "#infrastructure/diff-triage.js";
+import {
+  buildRequestTriagePrompt,
+  parseRequestTriageResult,
+} from "#infrastructure/request-triage.js";
 
 describe("FULL_TRIAGE", () => {
   it("enables every pipeline stage with the default reason", () => {
@@ -153,5 +157,74 @@ describe("buildTriagePrompt", () => {
     expect(prompt).toContain(
       "Decide whether the pipeline should run completeness, verify, review, and gap analysis",
     );
+  });
+});
+
+describe("parseRequestTriageResult", () => {
+  it("parses direct request triage JSON", () => {
+    expect(
+      parseRequestTriageResult('{"mode":"direct","reason":"bounded local change"}'),
+    ).toEqual({
+      mode: "direct",
+      reason: "bounded local change",
+    });
+  });
+
+  it.each([
+    {
+      text: '{"mode":"grouped","reason":"meaningful intermediate units"}',
+      expected: { mode: "grouped", reason: "meaningful intermediate units" },
+    },
+    {
+      text: '{"mode":"sliced","reason":"resume granularity matters"}',
+      expected: { mode: "sliced", reason: "resume granularity matters" },
+    },
+  ])("accepts valid request triage JSON for $expected.mode", ({ text, expected }) => {
+    expect(parseRequestTriageResult(text)).toEqual(expected);
+  });
+
+  it.each([
+    "",
+    "definitely not JSON",
+    '{"mode":"direct"}',
+    '{"reason":"missing mode"}',
+    '{"mode":true,"reason":"wrong mode type"}',
+    '{"mode":"direct","reason":false}',
+    'Here is the result: {"mode":"direct","reason":"wrapped in prose"}',
+  ])("falls back to sliced for invalid request triage input: %s", (text) => {
+    expect(parseRequestTriageResult(text)).toEqual({
+      mode: "sliced",
+      reason: expect.any(String),
+    });
+  });
+});
+
+describe("formatRequestTriageSummary", () => {
+  it("formats the request triage mode for operator-facing summaries", () => {
+    expect(
+      formatRequestTriageSummary({
+        mode: "grouped",
+        reason: "shared dependency ordering across several units",
+      }),
+    ).toBe("mode=grouped");
+  });
+});
+
+describe("buildRequestTriagePrompt", () => {
+  it("requires raw JSON only and explains the direct/grouped/sliced boundaries", () => {
+    const request = "Add execution mode triage before bootstrap.";
+    const prompt = buildRequestTriagePrompt(request);
+
+    expect(prompt).toContain(request);
+    expect(prompt).toContain("Output ONLY raw JSON");
+    expect(prompt).toContain('"mode"');
+    expect(prompt).toContain('"reason"');
+    expect(prompt).toContain("direct");
+    expect(prompt).toContain("grouped");
+    expect(prompt).toContain("sliced");
+    expect(prompt).toContain("breadth of change");
+    expect(prompt).toContain("dependency ordering");
+    expect(prompt).toContain("meaningful intermediate units");
+    expect(prompt).toContain("slice-granularity resume value");
   });
 });
