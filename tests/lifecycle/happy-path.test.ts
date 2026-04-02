@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createTestHarness, okResult } from "../fakes/harness.js";
 import type { Group, Slice } from "#domain/plan.js";
+import { formatExecutionModeSummary } from "#ui/display.js";
 
 const makeSlice = (n: number, title = `Slice ${n}`): Slice => ({
   number: n,
@@ -471,7 +472,7 @@ describe("Happy path lifecycle", () => {
 
     await uc.execute([makeGroup("G1", [makeSlice(1)])]);
 
-    expect(hud.logs.map(stripAnsi).some((line) => line.includes("Execution direct"))).toBe(true);
+    expect(hud.logs.map(stripAnsi)).toContain(formatExecutionModeSummary("direct"));
     expect(spawner.agentsForRole("plan")).toHaveLength(0);
     expect(spawner.agentsForRole("tdd")[0]?.sentPrompts.some((prompt) => prompt.includes("[PLAN:"))).toBe(false);
   });

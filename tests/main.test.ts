@@ -1396,9 +1396,14 @@ const runMainWithInventoryPlanMocks = async (options?: {
   requestTriageResult?: { mode: "direct" | "grouped" | "sliced"; reason: string };
   requestTriageText?: string;
   parsedRequestTriageResult?: { mode: "direct" | "grouped" | "sliced"; reason: string };
+  inputAlreadyPlan?: boolean;
+  inventoryContent?: string;
 }) => {
   const inventoryPath = join(tempDir, "inventory.md");
-  await writeFile(inventoryPath, "# Feature Inventory\n\n- Add authentication\n");
+  await writeFile(
+    inventoryPath,
+    options?.inventoryContent ?? "# Feature Inventory\n\n- Add authentication\n",
+  );
 
   const generatedPlanPath = join(tempDir, ".orch", "plan-generated.json");
   await mkdir(join(tempDir, ".orch"), { recursive: true });
@@ -1485,7 +1490,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
       );
     return {
       ...actual,
-      isPlanFormat: vi.fn(() => false),
+      isPlanFormat: vi.fn(() => options?.inputAlreadyPlan ?? false),
       doGeneratePlan,
     };
   });
@@ -1843,6 +1848,56 @@ describe("main execution preference wiring", () => {
       );
     },
   );
+
+  it("treats inventory input that is already a plan as plan-authoritative for execution mode", async () => {
+    const groupedPlan = JSON.stringify({
+      executionMode: "grouped",
+      groups: [
+        {
+          name: "Test",
+          slices: [
+            {
+              number: 1,
+              title: "Slice 1",
+              why: "why",
+              files: [{ path: "src/s1.ts", action: "new" }],
+              details: "details",
+              tests: "tests",
+            },
+          ],
+        },
+      ],
+    });
+    const {
+      createContainer,
+      doGeneratePlan,
+      requestTriageSpawnerFactory,
+      buildRequestTriagePrompt,
+      parseRequestTriageResult,
+      hudLogs,
+      inventoryPath,
+      exit,
+    } = await runMainWithInventoryPlanMocks({
+      inputAlreadyPlan: true,
+      inventoryContent: groupedPlan,
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(requestTriageSpawnerFactory).not.toHaveBeenCalled();
+    expect(buildRequestTriagePrompt).not.toHaveBeenCalled();
+    expect(parseRequestTriageResult).not.toHaveBeenCalled();
+    expect(doGeneratePlan).not.toHaveBeenCalled();
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        planPath: inventoryPath,
+        planContent: groupedPlan,
+        executionPreference: "auto",
+        executionMode: "grouped",
+      }),
+      expect.any(Object),
+    );
+    expect(hudLogs.join("\n")).toContain("Execution grouped");
+  });
 
   it("errors when --work is combined with an execution mode override before plan metadata exists", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

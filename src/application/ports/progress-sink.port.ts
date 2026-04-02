@@ -1,3 +1,4 @@
+import type { ExecutionMode } from "#domain/config.js";
 import type { AgentRole } from "#domain/agent-types.js";
 import type { Slice } from "#domain/plan.js";
 
@@ -25,6 +26,7 @@ export abstract class ProgressSink {
   abstract updateProgress(update: ProgressUpdate): void;
   abstract setActivity(summary: string): void;
   abstract log(text: string): void;
+  abstract logExecutionMode(executionMode: ExecutionMode): void;
   abstract createStreamer(role: AgentRole): (text: string) => void;
   abstract logSliceIntro(slice: Slice): void;
   abstract logBadge(role: AgentRole, phase: string): void;

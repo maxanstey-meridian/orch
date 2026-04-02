@@ -710,7 +710,7 @@ export const main = async (runtime: MainRuntime = {}) => {
         log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
         planPath = inputPath;
         planContent = srcContent;
-        executionMode = resolvePlannedWorkExecutionMode(executionPreference);
+        executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
         printExecutionModeBanner(log, executionMode);
       } else {
         executionMode = await resolveInventoryExecutionMode({

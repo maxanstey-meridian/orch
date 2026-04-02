@@ -9,11 +9,12 @@ import {
   type InterruptHandler,
   type ProgressUpdate,
 } from "#application/ports/progress-sink.port.js";
+import type { ExecutionMode } from "#domain/config.js";
 import type { AgentRole, AgentStyle } from "#domain/agent-types.js";
 import type { Slice } from "#domain/plan.js";
 import { makeStreamer } from "#infrastructure/agent/streamer.js";
 import { ROLE_STYLES } from "./agent-role-styles.js";
-import { printSliceIntro } from "./display.js";
+import { printExecutionModeBanner, printSliceIntro } from "./display.js";
 import type { Hud } from "./hud.js";
 
 export class SilentOperatorGate implements OperatorGate {
@@ -69,6 +70,8 @@ export class SilentProgressSink implements ProgressSink {
   setActivity(_summary: string): void {}
 
   log(_text: string): void {}
+
+  logExecutionMode(_executionMode: ExecutionMode): void {}
 
   createStreamer(_role: AgentRole): (text: string) => void {
     return () => {};
@@ -205,6 +208,10 @@ export class InkProgressSink implements ProgressSink {
 
   log(text: string): void {
     this.writer(text);
+  }
+
+  logExecutionMode(executionMode: ExecutionMode): void {
+    printExecutionModeBanner(this.logFn, executionMode);
   }
 
   createStreamer(role: AgentRole): (text: string) => void {

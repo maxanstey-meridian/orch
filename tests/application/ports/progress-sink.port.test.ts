@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { ProgressSink } from "#application/ports/progress-sink.port.js";
 import type { InterruptHandler, ProgressUpdate } from "#application/ports/progress-sink.port.js";
 import type { AgentRole } from "#domain/agent-types.js";
+import type { ExecutionMode } from "#domain/config.js";
 import type { Slice } from "#domain/plan.js";
 import { styleForRole } from "#ui/ink-operator-gate.js";
 
@@ -12,6 +13,7 @@ class TestProgressSink extends ProgressSink {
   updateProgress(_update: ProgressUpdate): void {}
   setActivity(_summary: string): void {}
   log(_text: string): void {}
+  logExecutionMode(_executionMode: ExecutionMode): void {}
   createStreamer(_role: AgentRole): (text: string) => void {
     return () => {};
   }
@@ -71,6 +73,11 @@ describe("logBadge", () => {
   it("logBadge is callable", () => {
     const sink = new TestProgressSink();
     sink.logBadge("tdd", "implementing...");
+  });
+
+  it("logExecutionMode is callable", () => {
+    const sink = new TestProgressSink();
+    sink.logExecutionMode("grouped");
   });
 });
 
