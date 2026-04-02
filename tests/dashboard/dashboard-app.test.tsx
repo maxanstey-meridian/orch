@@ -6,6 +6,7 @@ import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
 import type { QueueEntry } from "#domain/queue.js";
 import { createSupervisor } from "#infrastructure/dashboard/supervisor.js";
 import { removeFromQueue } from "#infrastructure/queue/queue-store.js";
+import { removeRunFromRegistry } from "#infrastructure/registry/run-registry.js";
 import { DashboardApp } from "#ui/dashboard/dashboard-app.js";
 import type { DashboardAppProps } from "#ui/dashboard/dashboard-app.js";
 import { useDashboardData } from "#ui/dashboard/use-dashboard-data.js";
@@ -17,6 +18,16 @@ vi.mock("#ui/dashboard/use-dashboard-data.js", () => ({
 vi.mock("#infrastructure/queue/queue-store.js", () => ({
   removeFromQueue: vi.fn(),
 }));
+
+vi.mock("#infrastructure/registry/run-registry.js", async () => {
+  const actual = await vi.importActual<typeof import("#infrastructure/registry/run-registry.js")>(
+    "#infrastructure/registry/run-registry.js",
+  );
+  return {
+    ...actual,
+    removeRunFromRegistry: vi.fn(),
+  };
+});
 
 const supervisorState = vi.hoisted(() => ({
   latest: undefined as
@@ -83,6 +94,7 @@ vi.mock("#ui/dashboard/queue-prompt.js", () => ({
 
 const useDashboardDataMock = vi.mocked(useDashboardData);
 const removeFromQueueMock = vi.mocked(removeFromQueue);
+const removeRunFromRegistryMock = vi.mocked(removeRunFromRegistry);
 const createSupervisorMock = vi.mocked(createSupervisor);
 const defaultDashboardAppProps: DashboardAppProps = {
   registryPath: "/tmp/runs.json",
@@ -564,6 +576,7 @@ describe("DashboardApp", () => {
   });
 
   it("keeps a deleted completed row hidden without touching the queue store", async () => {
+    removeRunFromRegistryMock.mockResolvedValue(undefined);
     useDashboardDataMock.mockReturnValue(
       makeHookResult({
         model: makeModel({
@@ -583,6 +596,7 @@ describe("DashboardApp", () => {
     await flushEffects();
 
     expect(removeFromQueueMock).not.toHaveBeenCalled();
+    expect(removeRunFromRegistryMock).toHaveBeenCalledWith("/tmp/runs.json", "run-done-789");
     expect(app.lastFrame()).not.toContain("run-do");
 
     app.unmount();

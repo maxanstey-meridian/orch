@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
-import { resolve } from "path";
 import { Box, Text, useInput } from "ink";
+import { resolve } from "path";
 import React, { useMemo, useRef, useState } from "react";
 import { addToQueue } from "#infrastructure/queue/queue-store.js";
 
@@ -31,6 +31,14 @@ const splitFlags = (value: string): string[] =>
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
 
+const ensureQueuedRunFlags = (flags: readonly string[]): string[] => {
+  if (flags.includes("--auto")) {
+    return [...flags];
+  }
+
+  return ["--auto", ...flags];
+};
+
 const moveField = (currentField: FieldId, direction: 1 | -1): FieldId => {
   const currentIndex = fieldOrder.indexOf(currentField);
   const nextIndex = (currentIndex + direction + fieldOrder.length) % fieldOrder.length;
@@ -50,14 +58,14 @@ export const QueuePrompt = ({
   const [repoValue, setRepoValue] = useState(defaultRepo);
   const [planValue, setPlanValue] = useState("");
   const [branchValue, setBranchValue] = useState("");
-  const [flagsValue, setFlagsValue] = useState("");
+  const [flagsValue, setFlagsValue] = useState("--auto");
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const formStateRef = useRef({
     repoValue: defaultRepo,
     planValue: "",
     branchValue: "",
-    flagsValue: "",
+    flagsValue: "--auto",
   });
 
   formStateRef.current = {
@@ -111,7 +119,7 @@ export const QueuePrompt = ({
         ...(currentForm.branchValue.trim().length === 0
           ? {}
           : { branch: currentForm.branchValue.trim() }),
-        flags: splitFlags(currentForm.flagsValue),
+        flags: ensureQueuedRunFlags(splitFlags(currentForm.flagsValue)),
         addedAt: now(),
       });
       onDone();
@@ -123,7 +131,7 @@ export const QueuePrompt = ({
   };
 
   useInput((input, key) => {
-    if (key.escape) {
+    if (key.escape || key.leftArrow) {
       if (!submitting) {
         onCancel();
       }
@@ -163,17 +171,13 @@ export const QueuePrompt = ({
   return (
     <Box flexDirection="column">
       <Text>Queue plan</Text>
-      <Text dimColor>↑↓ change field  Enter submit  Esc cancel</Text>
+      <Text dimColor>↑↓ change field Enter submit ←/Esc cancel</Text>
       {fieldOrder.map((fieldId) => {
         const isActive = fieldId === activeField;
         const value = fields[fieldId].value;
 
         return (
-          <Text
-            key={fieldId}
-            bold={isActive}
-            inverse={isActive}
-          >
+          <Text key={fieldId} bold={isActive} inverse={isActive}>
             {`${isActive ? ">" : " "} ${fieldLabel[fieldId]}: ${value}${isActive ? "█" : ""}`}
           </Text>
         );

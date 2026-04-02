@@ -28,6 +28,29 @@ const VALID_PLAN = JSON.stringify({
   ],
 });
 
+const VALID_PLAN_WITH_CONTEXT = JSON.stringify({
+  context: {
+    architecture: "Vue frontend with generated API client and thin integration seams.",
+    keyFiles: {
+      "src/embed/config.ts": "Embed contract and runtime config.",
+    },
+    concepts: {
+      runtimeComposition: "The embed owns runtime wiring and host only supplies config.",
+    },
+    conventions: {
+      testingBias: "Prefer seam-level tests over DOM-heavy ceremony.",
+    },
+  },
+  groups: [
+    {
+      name: "Auth",
+      slices: [
+        { number: 1, title: "User login", why: "Users need to log in.", files: [{ path: "src/auth.ts", action: "new" }], details: "Implement login flow.", tests: "Login works." },
+      ],
+    },
+  ],
+});
+
 const PLAN_WITH_PREAMBLE = `Here's the plan I generated:\n${VALID_PLAN}\nLet me know if you'd like changes.`;
 
 const mockAgent = (responseText: string): PromptAgent => ({
@@ -318,6 +341,23 @@ describe("generatePlan", () => {
     expect(parsed.groups[1].slices).toHaveLength(1);
   });
 
+  it("preserves optional top-level context when the generated plan includes it", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_PLAN_WITH_CONTEXT);
+
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
+
+    const written = readFileSync(planPath, "utf-8");
+    const parsed = PlanSchema.parse(JSON.parse(written));
+    expect(parsed.context?.architecture).toContain("generated API client");
+    expect(parsed.context?.keyFiles?.["src/embed/config.ts"]).toBe("Embed contract and runtime config.");
+    expect(parsed.context?.concepts?.runtimeComposition).toContain("host only supplies config");
+    expect(parsed.context?.conventions?.testingBias).toContain("seam-level tests");
+  });
+
   it("prefers planText from ExitPlanMode over assistantText", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
@@ -540,11 +580,12 @@ describe("generatePlan", () => {
     await generatePlan(inventoryPath, "", agent, outputDir);
 
     // Must reference JSON schema fields
-    for (const field of ["groups", "slices", "number", "title", "why", "files", "action", "details", "tests"]) {
+    for (const field of ["context", "architecture", "keyFiles", "concepts", "conventions", "groups", "slices", "number", "title", "why", "files", "action", "details", "tests"]) {
       expect(capturedPrompt).toContain(`"${field}"`);
     }
     // Must instruct JSON output
     expect(capturedPrompt).toContain("valid JSON");
+    expect(capturedPrompt).toContain("stable repo knowledge only");
     // Must NOT contain old markdown format instructions
     expect(capturedPrompt).not.toContain("## Group:");
     expect(capturedPrompt).not.toContain("### Slice");

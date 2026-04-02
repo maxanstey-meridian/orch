@@ -61,7 +61,11 @@ export const createTestHarness = (opts?: {
     ? new SilentOperatorGate(hud)
     : new InkOperatorGate(hud);
 
-  const config: OrchestratorConfig = { ...DEFAULT_CONFIG, ...opts?.config };
+  const config: OrchestratorConfig = {
+    ...DEFAULT_CONFIG,
+    ...opts?.config,
+    ...(opts?.auto === undefined ? {} : { auto: opts.auto }),
+  };
 
   const uc = new RunOrchestration(
     spawner,

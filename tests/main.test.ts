@@ -871,6 +871,31 @@ describeIntegration("CLI flag wiring", () => {
     expect(after).toEqual({});
   }, 15_000);
 
+  it("--work plan.md leaves per-plan state in place after a successful run", async () => {
+    initGitRepo(tempDir);
+    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
+
+    const planPath = join(tempDir, "plan.md");
+    const expectedId = resolvePlanId(planPath);
+    const orchDir = join(tempDir, ".orch");
+    const perPlanState = statePathForPlan(orchDir, expectedId);
+
+    const result = spawnSync("npx", [
+      "tsx", mainPath,
+      "--work", planPath,
+      "--skip-fingerprint", "--no-interaction", "--auto",
+    ], {
+      cwd: tempDir,
+      encoding: "utf-8",
+      timeout: 8_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    expect(result.status).toBe(0);
+    const after = await loadState(perPlanState);
+    expect(after.lastCompletedSlice).toBe(1);
+  }, 15_000);
+
   it("--work plan.md --auto starts without inter-group prompts", async () => {
     initGitRepo(tempDir);
     const multiGroupPlan = `## Group: A\n### Slice 1: S1\nDo A.\n\n## Group: B\n### Slice 2: S2\nDo B.\n`;
@@ -1342,6 +1367,245 @@ describe("main log path wiring", () => {
       }),
       expect.any(Object),
     );
+  });
+
+  it("keeps the run registered after a successful execution so the dashboard can classify it later", async () => {
+    const planPath = join(tempDir, "plan.md");
+    await writeFile(planPath, MINIMAL_PLAN);
+    const registryPath = join(tempDir, "registry", "runs.json");
+
+    const createContainer = vi.fn(() => ({
+      resolve: vi.fn(() => ({
+        execute: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      })),
+    }));
+
+    vi.resetModules();
+    vi.doMock("../src/composition-root.js", () => ({
+      createContainer,
+    }));
+    vi.doMock("#infrastructure/git/repo-check.js", () => ({
+      assertGitRepo: vi.fn().mockResolvedValue(undefined),
+    }));
+    vi.doMock("#infrastructure/config/orchrc.js", () => ({
+      loadAndResolveOrchrConfig: vi.fn(() => ({
+        skills: {
+          tdd: { enabled: true, value: "tdd skill" },
+          review: { enabled: true, value: "review skill" },
+          verify: { enabled: true, value: "verify skill" },
+          gap: { disabled: true },
+          plan: { disabled: true },
+        },
+        config: {},
+        rules: { tdd: undefined, review: undefined },
+        agents: {},
+      })),
+      resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
+      buildOrchrSummary: vi.fn(() => "summary"),
+    }));
+    vi.doMock("#domain/agent-config.js", async () => {
+      const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
+      return {
+        ...actual,
+        resolveAllAgentConfigs: vi.fn(() => actual.AGENT_DEFAULTS),
+      };
+    });
+    vi.doMock("#infrastructure/fingerprint.js", () => ({
+      runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+    }));
+    vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
+      parsePlan: vi.fn().mockResolvedValue([
+        {
+          name: "Test",
+          slices: [{
+            number: 1,
+            title: "Slice 1",
+            content: "content",
+            why: "why",
+            files: [{ path: "src/s1.ts", action: "new" }],
+            details: "details",
+            tests: "tests",
+          }],
+        },
+      ]),
+    }));
+    vi.doMock("#infrastructure/git/worktree.js", () => ({
+      checkWorktreeResume: vi.fn().mockResolvedValue({ ok: true }),
+      runCleanup: vi.fn(),
+    }));
+    vi.doMock("#infrastructure/git/worktree-setup.js", () => ({
+      resolveWorktree: vi.fn().mockResolvedValue({
+        cwd: tempDir,
+        worktreeInfo: null,
+        skipStash: true,
+      }),
+    }));
+    vi.doMock("#infrastructure/git/git.js", () => ({
+      getStatus: vi.fn().mockResolvedValue(""),
+      stashBackup: vi.fn().mockResolvedValue(false),
+    }));
+    vi.doMock("#ui/hud.js", () => ({
+      createHud: vi.fn(() => ({
+        update: vi.fn(),
+        wrapLog: vi.fn((logger: (...args: unknown[]) => void) => logger),
+        teardown: vi.fn(),
+        setActivity: vi.fn(),
+        onKey: vi.fn(),
+        onInterruptSubmit: vi.fn(),
+        startPrompt: vi.fn(),
+        createWriter: vi.fn(),
+        setSkipping: vi.fn(),
+      })),
+    }));
+    vi.doMock("#ui/display.js", async () => {
+      const actual = await vi.importActual<typeof import("#ui/display.js")>("#ui/display.js");
+      return {
+        ...actual,
+        logSection: vi.fn(),
+        printStartupBanner: vi.fn(),
+        formatPlanSummary: vi.fn(),
+      };
+    });
+
+    const previousArgv = process.argv;
+    const previousCwd = process.cwd();
+    process.argv = [
+      "node",
+      "main.ts",
+      "--work",
+      planPath,
+      "--skip-fingerprint",
+      "--no-interaction",
+    ];
+    process.chdir(tempDir);
+
+    try {
+      const { main } = await import("../src/main.js");
+      await main({
+        registryPath,
+        onSignal: vi.fn(() => process),
+        exit: vi.fn(),
+      });
+    } finally {
+      process.argv = previousArgv;
+      process.chdir(previousCwd);
+      vi.doUnmock("../src/composition-root.js");
+      vi.doUnmock("#infrastructure/git/repo-check.js");
+      vi.doUnmock("#infrastructure/config/orchrc.js");
+      vi.doUnmock("#domain/agent-config.js");
+      vi.doUnmock("#infrastructure/fingerprint.js");
+      vi.doUnmock("#infrastructure/plan/plan-parser.js");
+      vi.doUnmock("#infrastructure/git/worktree.js");
+      vi.doUnmock("#infrastructure/git/worktree-setup.js");
+      vi.doUnmock("#infrastructure/git/git.js");
+      vi.doUnmock("#ui/hud.js");
+      vi.doUnmock("#ui/display.js");
+      vi.resetModules();
+    }
+
+    const registryEntries = JSON.parse(await readFile(registryPath, "utf-8")) as Array<{
+      readonly planPath: string;
+      readonly statePath: string;
+    }>;
+
+    expect(registryEntries).toHaveLength(1);
+    expect(registryEntries[0]).toMatchObject({
+      planPath,
+    });
+  });
+
+  it("keeps a run registered and writes preflight state when plan parsing fails", async () => {
+    const planPath = join(tempDir, "broken-plan.json");
+    const registryPath = join(tempDir, "registry", "runs.json");
+    const orchDir = join(tempDir, ".orch");
+    const planId = resolvePlanId(planPath);
+    const statePath = statePathForPlan(orchDir, planId);
+
+    await writeFile(planPath, "{ definitely-not-json");
+
+    vi.resetModules();
+    vi.doMock("#infrastructure/git/repo-check.js", () => ({
+      assertGitRepo: vi.fn().mockResolvedValue(undefined),
+    }));
+    vi.doMock("#infrastructure/config/orchrc.js", () => ({
+      loadAndResolveOrchrConfig: vi.fn(() => ({
+        skills: {
+          tdd: { enabled: true, value: "tdd skill" },
+          review: { enabled: true, value: "review skill" },
+          verify: { enabled: true, value: "verify skill" },
+          gap: { disabled: true },
+          plan: { disabled: true },
+        },
+        config: {},
+        rules: { tdd: undefined, review: undefined },
+        agents: {},
+      })),
+      resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
+      buildOrchrSummary: vi.fn(() => "summary"),
+    }));
+    vi.doMock("#domain/agent-config.js", async () => {
+      const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
+      return {
+        ...actual,
+        resolveAllAgentConfigs: vi.fn(() => actual.AGENT_DEFAULTS),
+      };
+    });
+    vi.doMock("#infrastructure/fingerprint.js", () => ({
+      runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+    }));
+    vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
+      parsePlan: vi.fn().mockRejectedValue(new Error("Invalid plan")),
+    }));
+
+    const previousArgv = process.argv;
+    const previousCwd = process.cwd();
+    process.argv = [
+      "node",
+      "main.ts",
+      "--work",
+      planPath,
+      "--skip-fingerprint",
+      "--no-interaction",
+    ];
+    process.chdir(tempDir);
+
+    try {
+      const { main } = await import("../src/main.js");
+      await expect(
+        main({
+          registryPath,
+          onSignal: vi.fn(() => process),
+          exit: vi.fn(),
+        }),
+      ).rejects.toThrow("Invalid plan");
+    } finally {
+      process.argv = previousArgv;
+      process.chdir(previousCwd);
+      vi.doUnmock("#infrastructure/git/repo-check.js");
+      vi.doUnmock("#infrastructure/config/orchrc.js");
+      vi.doUnmock("#domain/agent-config.js");
+      vi.doUnmock("#infrastructure/fingerprint.js");
+      vi.doUnmock("#infrastructure/plan/plan-parser.js");
+      vi.resetModules();
+    }
+
+    const registryEntries = JSON.parse(await readFile(registryPath, "utf-8")) as Array<{
+      readonly planPath: string;
+      readonly statePath: string;
+    }>;
+    expect(registryEntries).toHaveLength(1);
+    expect(registryEntries[0]).toMatchObject({
+      planPath,
+      statePath: expect.stringMatching(new RegExp(`${planId}\\.json$`)),
+    });
+
+    const state = JSON.parse(await readFile(statePath, "utf-8")) as {
+      readonly startedAt?: string;
+      readonly currentPhase?: string;
+    };
+    expect(state.startedAt).toEqual(expect.any(String));
+    expect(state.currentPhase).toBe("plan");
   });
 });
 

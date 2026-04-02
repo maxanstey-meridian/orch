@@ -7,6 +7,7 @@ type DetailViewProps = {
   readonly run: DashboardRun;
   readonly onBack: () => void;
   readonly onTail: () => void;
+  readonly onDelete?: (runId: string) => void;
 };
 
 type SliceStatus = NonNullable<DashboardRun["groups"]>[number]["slices"][number]["status"];
@@ -14,10 +15,7 @@ type SliceStatus = NonNullable<DashboardRun["groups"]>[number]["slices"][number]
 const formatHeaderValue = (value: string | undefined): string => value ?? "-";
 
 const isErrorWithCode = (value: unknown): value is { readonly code: string } =>
-  typeof value === "object" &&
-  value !== null &&
-  "code" in value &&
-  typeof value.code === "string";
+  typeof value === "object" && value !== null && "code" in value && typeof value.code === "string";
 
 const getStatusPresentation = (
   status: SliceStatus,
@@ -34,7 +32,7 @@ const getStatusPresentation = (
   }
 };
 
-export const DetailView = ({ run, onBack, onTail }: DetailViewProps) => {
+export const DetailView = ({ run, onBack, onTail, onDelete }: DetailViewProps) => {
   useInput((input, key) => {
     if (key.escape || key.leftArrow) {
       onBack();
@@ -46,16 +44,24 @@ export const DetailView = ({ run, onBack, onTail }: DetailViewProps) => {
       return;
     }
 
-    if (input === "k" && run.status === "active" && run.pid > 0) {
-      try {
-        process.kill(run.pid, "SIGTERM");
-      } catch (error) {
-        if (isErrorWithCode(error) && error.code === "ESRCH") {
-          onBack();
-          return;
-        }
+    if (input === "k") {
+      if (run.status === "active" && run.pid > 0) {
+        try {
+          process.kill(run.pid, "SIGTERM");
+        } catch (error) {
+          if (isErrorWithCode(error) && error.code === "ESRCH") {
+            onBack();
+            return;
+          }
 
-        throw error;
+          throw error;
+        }
+        return;
+      }
+
+      if (run.status !== "active") {
+        onDelete?.(run.id);
+        onBack();
       }
     }
   });
@@ -70,21 +76,14 @@ export const DetailView = ({ run, onBack, onTail }: DetailViewProps) => {
         <Text>No plan details available</Text>
       ) : (
         run.groups.map((group) => (
-          <Box
-            key={group.name}
-            flexDirection="column"
-            marginTop={1}
-          >
+          <Box key={group.name} flexDirection="column" marginTop={1}>
             <Text>{group.name}</Text>
             {group.slices.map((slice) => {
               const presentation = getStatusPresentation(slice.status);
 
               return (
                 <Text key={slice.number}>
-                  <Text
-                    color={presentation.color}
-                    dimColor={presentation.dimColor}
-                  >
+                  <Text color={presentation.color} dimColor={presentation.dimColor}>
                     {presentation.symbol}
                   </Text>
                   {` S${slice.number} ${slice.title}${slice.elapsed === undefined ? "" : ` ${slice.elapsed}`}`}
@@ -94,7 +93,7 @@ export const DetailView = ({ run, onBack, onTail }: DetailViewProps) => {
           </Box>
         ))
       )}
-      <KeyBar text="←/Esc back  f tail  k kill" />
+      <KeyBar text="←/Esc back  f tail  k kill/dismiss" />
     </Box>
   );
 };

@@ -51,7 +51,9 @@ const lockPathForQueue = (queuePath: string): string => `${queuePath}.lock`;
 const tempPathForQueue = (queuePath: string): string =>
   `${queuePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
 
-const isLockMetadata = (value: unknown): value is { readonly pid: number; readonly createdAtMs: number } => {
+const isLockMetadata = (
+  value: unknown,
+): value is { readonly pid: number; readonly createdAtMs: number } => {
   if (!isRecord(value)) {
     return false;
   }
@@ -206,10 +208,7 @@ export const readQueue = async (queuePath: string): Promise<QueueEntry[]> => {
   return loadQueue(queuePath, { throwOnCorrupt: false });
 };
 
-const withFileLock = async <T>(
-  queuePath: string,
-  operation: () => Promise<T>,
-): Promise<T> => {
+const withFileLock = async <T>(queuePath: string, operation: () => Promise<T>): Promise<T> => {
   const lockPath = lockPathForQueue(queuePath);
   await mkdir(dirname(queuePath), { recursive: true });
 
@@ -236,10 +235,7 @@ const withFileLock = async <T>(
   }
 };
 
-const withMutationLock = async <T>(
-  queuePath: string,
-  operation: () => Promise<T>,
-): Promise<T> => {
+const withMutationLock = async <T>(queuePath: string, operation: () => Promise<T>): Promise<T> => {
   const previousMutation = pendingMutations.get(queuePath) ?? Promise.resolve();
   let releaseMutation!: () => void;
   const currentMutation = new Promise<void>((resolve) => {
@@ -278,7 +274,11 @@ export const removeFromQueue = async (queuePath: string, id: string): Promise<vo
   });
 };
 
-export const moveInQueue = async (queuePath: string, id: string, position: number): Promise<void> => {
+export const moveInQueue = async (
+  queuePath: string,
+  id: string,
+  position: number,
+): Promise<void> => {
   await withMutationLock(queuePath, async () => {
     const entries = await loadQueue(queuePath, { throwOnCorrupt: true });
     const entryIndex = entries.findIndex((entry) => entry.id === id);

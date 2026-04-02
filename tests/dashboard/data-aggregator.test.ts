@@ -555,7 +555,7 @@ describe("data aggregator", () => {
     vi.useRealTimers();
   });
 
-  it("completed run is pruned after the first poll", async () => {
+  it("completed run remains visible across polls", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
 
@@ -582,7 +582,7 @@ describe("data aggregator", () => {
     const secondResult = await aggregateDashboard(registryPath, queuePath);
 
     expect(firstResult.completed.map((run) => run.id)).toEqual(["run-second-poll"]);
-    expect(secondResult.completed).toEqual([]);
+    expect(secondResult.completed.map((run) => run.id)).toEqual(["run-second-poll"]);
 
     vi.useRealTimers();
   });
@@ -708,7 +708,7 @@ describe("data aggregator", () => {
     vi.useRealTimers();
   });
 
-  it("dead PID with corrupt plan is classified as dead", async () => {
+  it("dead PID with corrupt plan and persisted preflight state is classified as failed", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
 
@@ -738,7 +738,7 @@ describe("data aggregator", () => {
     expect(result.completed[0]).toMatchObject({
       id: "run-dead-corrupt-plan",
       planName: "broken-plan",
-      status: "dead",
+      status: "failed",
       sliceProgress: "S1/0",
       elapsed: "2h",
     });

@@ -206,13 +206,16 @@ describe("DetailView", () => {
     app.unmount();
   });
 
-  it("does not try to kill completed runs", async () => {
+  it("dismisses completed runs when k is pressed", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const onDelete = vi.fn();
+    const onBack = vi.fn();
     const app = render(
       <DetailView
         run={makeRun({ status: "completed", pid: 321 })}
-        onBack={vi.fn()}
+        onBack={onBack}
         onTail={vi.fn()}
+        onDelete={onDelete}
       />,
     );
 
@@ -220,7 +223,8 @@ describe("DetailView", () => {
     await flushEffects();
 
     expect(killSpy).not.toHaveBeenCalled();
-    expect(app.lastFrame()).toContain("Plan: Dashboard");
+    expect(onDelete).toHaveBeenCalledWith("run-1");
+    expect(onBack).toHaveBeenCalledTimes(1);
 
     app.unmount();
   });

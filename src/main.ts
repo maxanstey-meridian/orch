@@ -19,11 +19,11 @@ import { randomUUID } from "crypto";
 import { readFileSync, mkdirSync, watch, writeFileSync, existsSync } from "fs";
 import { mkdir, readFile, rm, stat, writeFile } from "fs/promises";
 import { basename, dirname, join, resolve } from "path";
-import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
-import type { QueueEntry } from "#domain/queue.js";
 import { resolveAllAgentConfigs } from "#domain/agent-config.js";
 import type { OrchestratorConfig } from "#domain/config.js";
+import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
+import type { QueueEntry } from "#domain/queue.js";
 import { parseBranchFlag, parseProviderFlag } from "#infrastructure/cli/cli-args.js";
 import { parseSubcommand } from "#infrastructure/cli/subcommands.js";
 import {
@@ -38,6 +38,7 @@ import { getStatus, stashBackup } from "#infrastructure/git/git.js";
 import { assertGitRepo } from "#infrastructure/git/repo-check.js";
 import { resolveWorktree } from "#infrastructure/git/worktree-setup.js";
 import { checkWorktreeResume, runCleanup } from "#infrastructure/git/worktree.js";
+import { logPathForPlan } from "#infrastructure/log/log-writer.js";
 import {
   isPlanFormat,
   ensureCanonicalPlan,
@@ -53,18 +54,17 @@ import {
 } from "#infrastructure/queue/queue-store.js";
 import {
   defaultRegistryPath,
-  deregisterRun,
   registerRun,
 } from "#infrastructure/registry/run-registry.js";
-import { logPathForPlan } from "#infrastructure/log/log-writer.js";
 import {
   loadState,
+  saveState,
   clearState,
   statePathForPlan,
   type OrchestratorState,
 } from "#infrastructure/state/state.js";
-import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "#ui/display.js";
 import { renderDashboard } from "#ui/dashboard/dashboard-app.js";
+import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "#ui/display.js";
 import { createHud } from "#ui/hud.js";
 import { runInit, profileToMarkdown } from "#ui/init.js";
 import { createContainer } from "./composition-root.js";
@@ -89,10 +89,7 @@ type RegistryLockOwner = {
 };
 
 const hasCode = (value: unknown): value is { readonly code: string } =>
-  typeof value === "object" &&
-  value !== null &&
-  "code" in value &&
-  typeof value.code === "string";
+  typeof value === "object" && value !== null && "code" in value && typeof value.code === "string";
 
 const delay = async (ms: number): Promise<void> =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
@@ -129,9 +126,7 @@ const resolveDashboardLaunch = (
     };
   }
 
-  throw new Error(
-    "Cannot resolve a runnable orch entrypoint for dashboard queue execution.",
-  );
+  throw new Error("Cannot resolve a runnable orch entrypoint for dashboard queue execution.");
 };
 
 const isRegistryLockOwner = (value: unknown): value is RegistryLockOwner =>
@@ -238,10 +233,7 @@ const printLines = (lines: readonly string[]): void => {
   }
 };
 
-const formatStatusTable = (
-  title: string,
-  rows: readonly string[],
-): string[] => {
+const formatStatusTable = (title: string, rows: readonly string[]): string[] => {
   if (rows.length === 0) {
     return [title, "  (none)"];
   }
@@ -283,7 +275,8 @@ const formatDetailLines = (run: DashboardRun): string[] => {
     ...run.groups.flatMap((group) => [
       group.name,
       ...group.slices.map(
-        (slice) => `  ${slice.status} S${slice.number} ${slice.title}${slice.elapsed ? ` ${slice.elapsed}` : ""}`,
+        (slice) =>
+          `  ${slice.status} S${slice.number} ${slice.title}${slice.elapsed ? ` ${slice.elapsed}` : ""}`,
       ),
     ]),
   ];
@@ -368,7 +361,9 @@ const followLogFile = async (logPath: string): Promise<never> => {
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 export const main = async (runtime: MainRuntime = {}) => {
-  const onSignal = runtime.onSignal ?? ((signal: "SIGINT" | "SIGTERM", handler: () => void) => process.on(signal, handler));
+  const onSignal =
+    runtime.onSignal ??
+    ((signal: "SIGINT" | "SIGTERM", handler: () => void) => process.on(signal, handler));
   const exit = runtime.exit ?? process.exit;
   const argv = runtime.argv ?? process.argv;
   const queuePath = runtime.queuePath ?? defaultQueuePath();
@@ -430,7 +425,9 @@ export const main = async (runtime: MainRuntime = {}) => {
     }
 
     if (subcommand.action === "list") {
-      printLines(formatStatusTable("Queue", (await readQueue(queuePath)).map(formatQueueSummaryRow)));
+      printLines(
+        formatStatusTable("Queue", (await readQueue(queuePath)).map(formatQueueSummaryRow)),
+      );
       return;
     }
 
@@ -462,7 +459,9 @@ export const main = async (runtime: MainRuntime = {}) => {
       return;
     }
 
-    printLines(entry.kind === "run" ? formatDetailLines(entry.run) : formatQueuedDetail(entry.entry));
+    printLines(
+      entry.kind === "run" ? formatDetailLines(entry.run) : formatQueuedDetail(entry.entry),
+    );
     return;
   }
 
@@ -637,53 +636,15 @@ export const main = async (runtime: MainRuntime = {}) => {
     return;
   }
 
-  // 5. Parse plan + HUD
-  const groups = await parsePlan(planPath);
-
-  if (showPlan) {
-    for (const line of earlyLog) {
-      origLog(line);
-    }
-    formatPlanSummary(origLog, groups);
-    exit(0);
-    return;
-  }
-
-  const totalSlices = groups.reduce((n, g) => n + g.slices.length, 0);
-  const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
-  const hud = createHud(isTTY);
-  hud.update({ totalSlices, completedSlices: 0, startTime: Date.now() });
-  log = hud.wrapLog(origLog);
-  for (const line of earlyLog) {
-    log(line);
-  }
-
-  // 6. Load per-plan state + resume mismatch guard + resolve worktree
-  const state: OrchestratorState = await loadState(stateFile);
-  const resumeCheck = await checkWorktreeResume(branchName, state);
-  if (!resumeCheck.ok) {
-    origLog(resumeCheck.message);
-    exit(1);
-    return;
-  }
-  // resolveWorktree persists worktree state to disk before returning,
-  // so RunOrchestration.execute() will pick it up via persistence.load().
-  const {
-    cwd: effectiveCwd,
-    worktreeInfo,
-    skipStash,
-  } = await resolveWorktree({
-    branchName,
-    cwd,
-    activePlanId,
-    state,
-    stateFile,
-    log,
-  });
-  const interactive = !auto && isTTY;
-
   const runId = randomUUID();
   let registered = false;
+  let executionStarted = false;
+  let cleanup = () => {};
+  await saveState(stateFile, {
+    ...(await loadState(stateFile)),
+    startedAt: new Date().toISOString(),
+    currentPhase: "plan",
+  });
   await withRegistryLock(registryPath, async () => {
     await registerRun(registryPath, {
       id: runId,
@@ -696,24 +657,10 @@ export const main = async (runtime: MainRuntime = {}) => {
     });
   });
   registered = true;
-  const deregisterSelf = async (): Promise<void> => {
-    if (!registered) {
-      return;
-    }
 
-    await withRegistryLock(registryPath, async () => {
-      await deregisterRun(registryPath, runId);
-    });
-    registered = false;
-  };
-
-  // 7. Signal handlers + cleanup
-  // cleanup is set to hud.teardown initially, then upgraded to orch.dispose()
-  // after the container is created (kills agents + tears down HUD).
-  let cleanup = () => hud.teardown();
+  // 5. Parse plan + HUD
   const exitWithCleanup = async (code: number): Promise<void> => {
     cleanup();
-    await deregisterSelf();
     exit(code);
   };
   onSignal("SIGINT", () => {
@@ -724,13 +671,60 @@ export const main = async (runtime: MainRuntime = {}) => {
   });
 
   try {
+    const groups = await parsePlan(planPath);
+
+    if (showPlan) {
+      for (const line of earlyLog) {
+        origLog(line);
+      }
+      formatPlanSummary(origLog, groups);
+      exit(0);
+      return;
+    }
+
+    const totalSlices = groups.reduce((n, g) => n + g.slices.length, 0);
+    const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
+    const hud = createHud(isTTY);
+    hud.update({ totalSlices, completedSlices: 0, startTime: Date.now() });
+    log = hud.wrapLog(origLog);
+    for (const line of earlyLog) {
+      log(line);
+    }
+    cleanup = () => hud.teardown();
+
+    // 6. Load per-plan state + resume mismatch guard + resolve worktree
+    const state: OrchestratorState = await loadState(stateFile);
+    const resumeCheck = await checkWorktreeResume(branchName, state);
+    if (!resumeCheck.ok) {
+      origLog(resumeCheck.message);
+      exit(1);
+      return;
+    }
+    // resolveWorktree persists worktree state to disk before returning,
+    // so RunOrchestration.execute() will pick it up via persistence.load().
+    const {
+      cwd: effectiveCwd,
+      worktreeInfo,
+      skipStash,
+    } = await resolveWorktree({
+      branchName,
+      cwd,
+      activePlanId,
+      state,
+      stateFile,
+      log,
+    });
+    const interactive = !auto && isTTY;
+
     // 8. Validate group filter
     const startIdx = groupFilter
       ? groups.findIndex((g) => g.name.toLowerCase() === groupFilter.toLowerCase())
       : 0;
 
     if (groupFilter && startIdx === -1) {
-      console.error(`No group "${groupFilter}". Available: ${groups.map((g) => g.name).join(", ")}`);
+      console.error(
+        `No group "${groupFilter}". Available: ${groups.map((g) => g.name).join(", ")}`,
+      );
       await exitWithCleanup(1);
       return;
     }
@@ -778,6 +772,7 @@ export const main = async (runtime: MainRuntime = {}) => {
     const remaining = groups.slice(startIdx);
 
     try {
+      executionStarted = true;
       await orch.execute(remaining, {
         onReady: (info) =>
           printStartupBanner(log, {
@@ -812,11 +807,8 @@ export const main = async (runtime: MainRuntime = {}) => {
     const status = await getStatus(effectiveCwd);
     log(`\n${status}`);
     cleanup();
-    await deregisterSelf();
-    await clearState(stateFile);
   } catch (err) {
     cleanup();
-    await deregisterSelf();
     throw err;
   }
 };

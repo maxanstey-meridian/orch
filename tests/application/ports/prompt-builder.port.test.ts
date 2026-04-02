@@ -23,6 +23,9 @@ class MockPromptBuilder extends PromptBuilder {
   ): string {
     return `tddExec:${planText}:${sliceNumber}:${firstSlice}:${operatorGuidance ?? "none"}`;
   }
+  verify(baseSha: string, sliceNumber: number, fixSummary?: string): string {
+    return `verify:${baseSha}:${sliceNumber}:${fixSummary ?? "none"}`;
+  }
   review(content: string, baseSha: string, priorFindings?: string): string {
     return `review:${content}:${baseSha}:${priorFindings ?? "none"}`;
   }
@@ -89,6 +92,18 @@ describe("PromptBuilder", () => {
     const builder = new MockPromptBuilder();
     expect(builder.review("content", "abc123")).toBe(
       "review:content:abc123:none",
+    );
+  });
+
+  it("verify returns a string without fix summary", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.verify("abc123", 2)).toBe("verify:abc123:2:none");
+  });
+
+  it("verify returns a string with fix summary", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.verify("abc123", 2, "fixed the issue")).toBe(
+      "verify:abc123:2:fixed the issue",
     );
   });
 

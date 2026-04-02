@@ -1,9 +1,9 @@
-import { defaultQueuePath, removeFromQueue } from "#infrastructure/queue/queue-store.js";
-import { createSupervisor } from "#infrastructure/dashboard/supervisor.js";
-import { defaultRegistryPath } from "#infrastructure/registry/run-registry.js";
 import { render, Text } from "ink";
 import React, { useEffect, useMemo, useState } from "react";
 import type { DashboardRun } from "#domain/dashboard.js";
+import { createSupervisor } from "#infrastructure/dashboard/supervisor.js";
+import { defaultQueuePath, removeFromQueue } from "#infrastructure/queue/queue-store.js";
+import { defaultRegistryPath, removeRunFromRegistry } from "#infrastructure/registry/run-registry.js";
 import { DetailView } from "#ui/dashboard/detail-view.js";
 import { MainView } from "#ui/dashboard/main-view.js";
 import { QueuePrompt } from "#ui/dashboard/queue-prompt.js";
@@ -37,10 +37,13 @@ const runEndedDwellMs = 1_500;
 const findDetailRun = (runs: readonly DashboardRun[], runId: string): DashboardRun | undefined =>
   runs.find((run) => run.id === runId);
 
-const findTailRun = (model: {
-  readonly active: readonly DashboardRun[];
-  readonly completed: readonly DashboardRun[];
-}, runId: string): DashboardRun | undefined =>
+const findTailRun = (
+  model: {
+    readonly active: readonly DashboardRun[];
+    readonly completed: readonly DashboardRun[];
+  },
+  runId: string,
+): DashboardRun | undefined =>
   [...model.active, ...model.completed].find((run) => run.id === runId);
 
 const RunEndedView = ({ onReturn }: { readonly onReturn: () => void }) => {
@@ -133,6 +136,11 @@ export const DashboardApp = ({
           setTailLogPath(selectedRun.logPath);
           setViewState({ view: "tail", runId: selectedRun.id, returnTo: "detail" });
         }}
+        onDelete={(runId) => {
+          setDismissedRowIds((currentIds) =>
+            currentIds.includes(runId) ? currentIds : [...currentIds, runId],
+          );
+        }}
       />
     );
   }
@@ -147,13 +155,7 @@ export const DashboardApp = ({
       setViewState({ view: "main" });
     };
 
-    return (
-      <TailView
-        logPath={tailLogPath}
-        runId={viewState.runId}
-        onBack={returnToView}
-      />
-    );
+    return <TailView logPath={tailLogPath} runId={viewState.runId} onBack={returnToView} />;
   }
 
   return (
@@ -175,16 +177,23 @@ export const DashboardApp = ({
         );
 
         if (model.queued.some((entry) => entry.id === rowId)) {
-          void removeFromQueue(queuePath, rowId);
+          void removeFromQueue(queuePath, rowId).then(() => {
+            refresh();
+          });
+          return;
+        }
+
+        if (model.completed.some((run) => run.id === rowId)) {
+          void removeRunFromRegistry(registryPath, rowId).then(() => {
+            refresh();
+          });
         }
       }}
     />
   );
 };
 
-export const renderDashboard = async (
-  props: RenderDashboardOptions,
-): Promise<void> => {
+export const renderDashboard = async (props: RenderDashboardOptions): Promise<void> => {
   const instance = render(
     <DashboardApp
       registryPath={props.registryPath ?? defaultRegistryPath()}

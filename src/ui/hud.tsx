@@ -1,4 +1,5 @@
 import { render, Text, Static, useInput } from "ink";
+import { createInterface } from "node:readline";
 import React, { useState, useEffect } from "react";
 
 export type HudState = {
@@ -313,7 +314,7 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
       setActivity: () => {},
       askUser: (prompt) =>
         new Promise((resolve) => {
-          const rl = require("readline").createInterface({ input: process.stdin, output: stdout });
+          const rl = createInterface({ input: process.stdin, output: stdout });
           rl.question(prompt, (answer: string) => {
             rl.close();
             resolve(answer);

@@ -35,8 +35,8 @@ describe("StatePersistence", () => {
       lastCompletedGroup: "Domain",
       lastSliceImplemented: 2,
       reviewBaseSha: "abc123",
-      tddSessionId: "tdd-1",
-      reviewSessionId: "rev-1",
+      tddSession: { provider: "codex", id: "tdd-1" },
+      reviewSession: { provider: "claude", id: "rev-1" },
       worktree: { path: "/tmp/wt", branch: "feat", baseSha: "def456" },
     };
     await persistence.save(state);
@@ -57,14 +57,14 @@ describe("StatePersistence", () => {
     await persistence.save({
       lastCompletedSlice: 1,
       lastCompletedGroup: "Domain",
-      tddSessionId: "old",
+      tddSession: { provider: "codex", id: "old" },
     });
     const second: OrchestratorState = { lastCompletedSlice: 5 };
     await persistence.save(second);
     const loaded = await persistence.load();
     expect(loaded).toEqual({ lastCompletedSlice: 5 });
     expect((loaded as Record<string, unknown>).lastCompletedGroup).toBeUndefined();
-    expect((loaded as Record<string, unknown>).tddSessionId).toBeUndefined();
+    expect((loaded as Record<string, unknown>).tddSession).toBeUndefined();
   });
 
   it("can save again after clear", async () => {

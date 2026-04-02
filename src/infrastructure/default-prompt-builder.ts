@@ -8,6 +8,7 @@ import {
   withBrief as _withBrief,
   buildPlanPrompt,
   buildTddPrompt,
+  buildVerifyPrompt,
   buildReviewPrompt,
   buildCompletenessPrompt,
   buildCommitSweepPrompt,
@@ -46,6 +47,10 @@ export class DefaultPromptBuilder extends PromptBuilder {
       ? `${firstSliceContext}Operator guidance: ${operatorGuidance}\n\nExecute this plan for Slice ${sliceNumber}:\n\n${planText}`
       : `${firstSliceContext}Execute this plan for Slice ${sliceNumber}:\n\n${planText}`;
     return firstSlice ? _withBrief(raw, this.brief) : raw;
+  }
+
+  verify(baseSha: string, sliceNumber: number, fixSummary?: string): string {
+    return _withBrief(buildVerifyPrompt(baseSha, sliceNumber, fixSummary), this.brief);
   }
 
   review(content: string, baseSha: string, priorFindings?: string): string {

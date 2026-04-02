@@ -1,4 +1,11 @@
+import type { Provider } from "./config.js";
+
 export type PersistedPhase = "tdd" | "review" | "verify" | "gap" | "final" | "plan";
+
+export type PersistedAgentSession = {
+  readonly provider: Provider;
+  readonly id: string;
+};
 
 export type OrchestratorState = {
   readonly startedAt?: string;
@@ -14,8 +21,8 @@ export type OrchestratorState = {
   readonly lastCompletedGroup?: string;
   readonly lastSliceImplemented?: number;
   readonly reviewBaseSha?: string;
-  readonly tddSessionId?: string;
-  readonly reviewSessionId?: string;
+  readonly tddSession?: PersistedAgentSession;
+  readonly reviewSession?: PersistedAgentSession;
   readonly worktree?: {
     readonly path: string;
     readonly branch: string;
@@ -28,7 +35,11 @@ export type StateEvent =
   | { readonly kind: "phaseEntered"; readonly phase: PersistedPhase; readonly sliceNumber: number }
   | { readonly kind: "sliceDone"; readonly sliceNumber: number }
   | { readonly kind: "groupDone"; readonly groupName: string }
-  | { readonly kind: "agentSpawned"; readonly role: "tdd" | "review"; readonly sessionId: string }
+  | {
+      readonly kind: "agentSpawned";
+      readonly role: "tdd" | "review";
+      readonly session: PersistedAgentSession;
+    }
   | {
       readonly kind: "sliceImplemented";
       readonly sliceNumber: number;
@@ -72,8 +83,8 @@ export const advanceState = (state: OrchestratorState, event: StateEvent): Orche
       return { ...state, currentPhase: undefined, lastCompletedGroup: event.groupName };
     case "agentSpawned":
       return event.role === "tdd"
-        ? { ...state, tddSessionId: event.sessionId }
-        : { ...state, reviewSessionId: event.sessionId };
+        ? { ...state, tddSession: event.session }
+        : { ...state, reviewSession: event.session };
     case "sliceImplemented":
       return {
         ...state,

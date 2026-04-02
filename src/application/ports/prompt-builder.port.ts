@@ -9,6 +9,7 @@ export abstract class PromptBuilder {
     firstSlice: boolean,
     operatorGuidance?: string,
   ): string;
+  abstract verify(baseSha: string, sliceNumber: number, fixSummary?: string): string;
   abstract review(content: string, baseSha: string, priorFindings?: string): string;
   abstract completeness(sliceContent: string, baseSha: string, sliceNumber: number): string;
   abstract gap(groupContent: string, baseSha: string): string;

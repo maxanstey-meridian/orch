@@ -70,6 +70,13 @@ Only stop to ask if you are genuinely blocked — e.g. the plan is ambiguous in 
   const planAuthority = `## Plan Authority
 The plan describes the INTENT — it is the authority, not the existing code. If the plan says "filter by X" but existing code does "include everything", you must change the existing code to match the plan. Do not preserve existing behavior that contradicts the plan. Do not add the plan's feature on top of conflicting existing behavior.`;
 
+  const fixDiscipline = `## Fix Discipline
+When review, completeness, gap, or final-pass feedback identifies a concrete defect or missing behavior, treat it as an implementation obligation by default.
+Do not downgrade a real implementation finding into "tests only", an expected-failing test, a TODO, or a note that the issue remains open unless the feedback explicitly says the pass is test-only or docs-only.
+If the reviewer/gap pass tells you to implement a non-egregious fix, do it rather than arguing with it.
+If you believe a finding is wrong, prove that with code evidence and passing tests. Otherwise, apply the fix.
+"I did not change implementation code" is not an acceptable response to an implementation finding.`;
+
   if (fixInstructions) {
     return `A code review found issues with the current plan slice. Address them.
 ${planContext}
@@ -83,7 +90,9 @@ ${integration}
 
 ${autonomy}
 
-${planAuthority}`;
+${planAuthority}
+
+${fixDiscipline}`;
   }
 
   return `Implement the following plan slice using strict RED→GREEN TDD cycles.
@@ -104,6 +113,44 @@ ${autonomy}
 
 ${planAuthority}`;
 };
+
+export const buildVerifyPrompt = (
+  baseSha: string,
+  sliceNumber: number,
+  fixSummary?: string,
+): string =>
+  `Verify the changes since commit ${baseSha}. Context: TDD implementation of Slice ${sliceNumber}.
+
+${fixSummary ? `## Fix summary from the TDD bot\n${fixSummary}\n\n` : ""}## Instructions
+1. Review the changed code and run the verification commands you judge necessary.
+2. You MUST end with a structured result block in the exact format below.
+3. Do not replace the structured block with prose. You may include prose before it, but the block is mandatory.
+
+## Required output format
+
+### VERIFY_RESULT
+
+**Status:** PASS|FAIL|PASS_WITH_WARNINGS
+
+**Checks run:**
+- <check>: PASS|FAIL|WARN
+
+**New failures** (caused by recent changes):
+- <failure>
+or:
+None
+
+**Pre-existing failures** (already failing before these changes):
+- <failure>
+or:
+None
+
+**Scope rationale:** <why this verification scope was sufficient>
+
+Rules:
+- If there are no new failures, use PASS or PASS_WITH_WARNINGS.
+- "No findings" prose alone is NOT sufficient; you must include the block above.
+- Only use FAIL when there are real new failures caused by the recent changes.`;
 
 export const buildCompletenessPrompt = (
   sliceContent: string,

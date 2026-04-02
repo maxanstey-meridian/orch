@@ -19,6 +19,22 @@ const extractSection = (text: string, header: string): string[] => {
 export const parseVerifyResult = (text: string): VerifyResult => {
   const block = text.match(/### VERIFY_RESULT[\s\S]*$/);
   if (!block) {
+    const normalized = text.toLowerCase();
+    const hasCleanSignal =
+      normalized.includes("no findings") ||
+      normalized.includes("the original issues are resolved") ||
+      normalized.includes("no new failures");
+    const hasFailureSignal =
+      normalized.includes("**findings**") ||
+      normalized.includes("new failures") ||
+      normalized.includes("high:") ||
+      normalized.includes("medium:") ||
+      normalized.includes("low:");
+
+    if (hasCleanSignal && !hasFailureSignal) {
+      return { passed: true, output: text, newFailures: [] };
+    }
+
     // No structured output — treat as failure with the full text as context
     return { passed: false, output: text, newFailures: [text.slice(0, 500)] };
   }

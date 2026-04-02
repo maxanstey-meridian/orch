@@ -94,6 +94,37 @@ describe("Verify loop lifecycle", () => {
     expect(fixPrompt).toContain("test_foo");
   });
 
+  it("auto mode retries verify failures up to the shared retry budget", async () => {
+    const { uc, hud, spawner, persistence, git } = createTestHarness({
+      config: { planDisabled: true, gapDisabled: true, reviewSkill: null, maxReviewCycles: 3 },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented" }),
+      okResult({ assistantText: "fix attempt 1" }),
+      okResult({ assistantText: "fix attempt 2" }),
+      okResult({ assistantText: "fix attempt 3" }),
+    );
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn(
+      "verify",
+      okResult({ assistantText: VERIFY_FAIL }),
+      okResult({ assistantText: VERIFY_FAIL }),
+      okResult({ assistantText: VERIFY_PASS }),
+    );
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+
+    await uc.execute([makeGroup("G1", [makeSlice(1)])]);
+
+    expect(persistence.current.lastCompletedSlice).toBe(1);
+    expect(hud.askPrompts.filter((prompt) => prompt.includes("verification failed"))).toHaveLength(0);
+    expect(spawner.lastAgent("tdd").sentPrompts.length).toBeGreaterThanOrEqual(3);
+  });
+
   it("persists verify and tdd phases across a verify-fix retry", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
       config: { planDisabled: true, gapDisabled: true, reviewSkill: null },

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { DefaultPromptBuilder } from "#infrastructure/default-prompt-builder.js";
 import { PromptBuilder } from "#application/ports/prompt-builder.port.js";
-import { withBrief, buildPlanPrompt, buildTddPrompt, buildReviewPrompt, buildCompletenessPrompt, buildCommitSweepPrompt, buildGapPrompt, buildFinalPasses } from "#infrastructure/plan/prompts.js";
+import { withBrief, buildPlanPrompt, buildTddPrompt, buildVerifyPrompt, buildReviewPrompt, buildCompletenessPrompt, buildCommitSweepPrompt, buildGapPrompt, buildFinalPasses } from "#infrastructure/plan/prompts.js";
 import { TDD_RULES_REMINDER, REVIEW_RULES_REMINDER, buildRulesReminder } from "#infrastructure/claude/claude-agent-factory.js";
 
 const BRIEF = "This is a test brief";
@@ -95,6 +95,16 @@ describe("DefaultPromptBuilder", () => {
     );
     expect(builder.review("content", "sha")).toBe(
       buildReviewPrompt("content", "sha"),
+    );
+  });
+
+  it("verify wraps buildVerifyPrompt output with brief", () => {
+    const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+    expect(builder.verify("sha", 3)).toBe(
+      withBrief(buildVerifyPrompt("sha", 3), BRIEF),
+    );
+    expect(builder.verify("sha", 3, "fixed summary")).toBe(
+      withBrief(buildVerifyPrompt("sha", 3, "fixed summary"), BRIEF),
     );
   });
 

@@ -30,6 +30,18 @@ describe("detectApiError", () => {
     expect(error).toEqual({ kind: "credit-exhausted", retryable: false });
   });
 
+  it("classifies hit-your-limit messages without depending on a parsed reset time", () => {
+    const result = makeResult({
+      exitCode: 1,
+      resultText: "You've hit your limit · resets 10am (Europe/London)",
+    });
+    const error = detectApiError(result, "");
+    expect(error).toEqual({
+      kind: "credit-exhausted",
+      retryable: false,
+    });
+  });
+
   it("returns null for unknown non-zero exits", () => {
     const result = makeResult({ exitCode: 1, resultText: "something unexpected happened" });
     const error = detectApiError(result, "");

@@ -7,7 +7,7 @@ const isProvider = (v: string): v is Provider => (VALID_PROVIDERS as readonly st
 export const parseProviderFlag = (args: string[]): Provider => {
   const idx = args.indexOf("--provider");
   if (idx === -1) {
-    return "claude";
+    return "codex";
   }
   const value = args[idx + 1];
   if (!value || value.startsWith("-")) {

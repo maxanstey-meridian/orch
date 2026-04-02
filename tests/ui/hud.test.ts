@@ -1,6 +1,11 @@
+import { createInterface } from "node:readline";
 import { describe, it, expect, vi } from "vitest";
 import { HUD_MAX_LINES, appendHudLines, buildStatusLine, createHud } from "#ui/hud.js";
 import type { HudState } from "#ui/hud.js";
+
+vi.mock("node:readline", () => ({
+  createInterface: vi.fn(),
+}));
 
 const makeMockStdout = (overrides: { columns?: number; rows?: number } = {}) => {
   const written: string[] = [];
@@ -139,6 +144,25 @@ describe("appendHudLines", () => {
 // ─── createHud(false) — no-op mode ───────────────────────────────────────────
 
 describe("createHud(false) — no-op mode", () => {
+  it("askUser uses node:readline without relying on CommonJS require", async () => {
+    const close = vi.fn();
+    vi.mocked(createInterface).mockReturnValue({
+      question: (_prompt: string, callback: (answer: string) => void) => {
+        callback("queued answer");
+      },
+      close,
+    } as unknown as ReturnType<typeof createInterface>);
+
+    const hud = createHud(false);
+
+    await expect(hud.askUser("Continue? ")).resolves.toBe("queued answer");
+    expect(createInterface).toHaveBeenCalledWith({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("update() and teardown() do not throw", () => {
     const hud = createHud(false);
     expect(() => hud.update({ totalSlices: 5, completedSlices: 0 })).not.toThrow();
