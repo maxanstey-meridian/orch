@@ -1398,6 +1398,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
   parsedRequestTriageResult?: { mode: "direct" | "grouped" | "sliced"; reason: string };
   inputAlreadyPlan?: boolean;
   inventoryContent?: string;
+  generatedPlanId?: string;
 }) => {
   const inventoryPath = join(tempDir, "inventory.md");
   await writeFile(
@@ -1433,6 +1434,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     })),
   }));
   const doGeneratePlan = vi.fn().mockResolvedValue(generatedPlanPath);
+  const generatePlanId = vi.fn(() => options?.generatedPlanId ?? "direct01");
   const requestTriageSpawnerFactory = vi.fn(() => () => {
     const triageResult = options?.requestTriageResult ?? {
       mode: "direct" as const,
@@ -1491,6 +1493,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
       );
     return {
       ...actual,
+      generatePlanId,
       isPlanFormat: vi.fn(() => options?.inputAlreadyPlan ?? false),
       doGeneratePlan,
     };
@@ -1616,6 +1619,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     createContainer,
     execute,
     doGeneratePlan,
+    generatePlanId,
     requestTriageSpawnerFactory,
     buildRequestTriagePrompt,
     parseRequestTriageResult,
@@ -1757,6 +1761,21 @@ describe("main execution preference wiring", () => {
         ],
       }),
     ]);
+  });
+
+  it("uses a fresh generated plan identity for direct inventory state instead of hashing the inventory path", async () => {
+    const { createContainer, inventoryPath, generatePlanId } = await runMainWithInventoryPlanMocks({
+      args: ["--quick"],
+      generatedPlanId: "direct42",
+    });
+
+    const deterministicPlanId = resolvePlanId(inventoryPath);
+    const [config] = createContainer.mock.calls[0] ?? [];
+
+    expect(generatePlanId).toHaveBeenCalledTimes(1);
+    expect(config.stateFile).toMatch(/\.orch\/state\/plan-direct42\.json$/);
+    expect(config.logPath).toMatch(/\.orch\/logs\/plan-direct42\.log$/);
+    expect(config.stateFile).not.toMatch(new RegExp(`plan-${deterministicPlanId}\\.json$`));
   });
 
   it.each([

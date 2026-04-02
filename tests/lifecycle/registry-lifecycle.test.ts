@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   createContainer: vi.fn(),
   createHud: vi.fn(),
   ensureCanonicalPlan: vi.fn(),
+  generatePlanId: vi.fn(),
   getStatus: vi.fn(),
   isPlanFormat: vi.fn(),
   loadAndResolveOrchrConfig: vi.fn(),
@@ -72,6 +73,7 @@ vi.mock("#infrastructure/git/worktree.js", () => ({
 vi.mock("#infrastructure/plan/plan-generator.js", () => ({
   doGeneratePlan: vi.fn(),
   ensureCanonicalPlan: mocks.ensureCanonicalPlan,
+  generatePlanId: mocks.generatePlanId,
   isPlanFormat: mocks.isPlanFormat,
   planGeneratorSpawnerFactory: vi.fn(),
   planFileName: mocks.planFileName,
@@ -194,6 +196,7 @@ beforeEach(async () => {
   mocks.resolveAllAgentConfigs.mockReturnValue({});
   mocks.planFileName.mockImplementation((id: string) => `plan-${id}.json`);
   mocks.resolvePlanId.mockReturnValue("abc123");
+  mocks.generatePlanId.mockReturnValue("direct42");
   mocks.ensureCanonicalPlan.mockReturnValue("abc123");
   mocks.parseBranchFlag.mockReturnValue("feature/test");
   mocks.statePathForPlan.mockReturnValue(statePath);
@@ -474,9 +477,11 @@ describe("registry lifecycle", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toEqual(
       expect.objectContaining({
-        planPath: expect.stringMatching(/\.orch\/plan-abc123\.json$/),
+        planPath: expect.stringMatching(/\.orch\/plan-direct42\.json$/),
       }),
     );
+    expect(mocks.generatePlanId).toHaveBeenCalledTimes(1);
+    expect(mocks.resolvePlanId).not.toHaveBeenCalled();
     const registeredPlan = JSON.parse(await readFile(entries[0].planPath, "utf-8")) as {
       readonly groups: ReadonlyArray<{
         readonly name: string;

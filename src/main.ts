@@ -51,6 +51,7 @@ import {
   isPlanFormat,
   ensureCanonicalPlan,
   doGeneratePlan,
+  generatePlanId,
   planFileName,
   resolvePlanId,
 } from "#infrastructure/plan/plan-generator.js";
@@ -791,7 +792,7 @@ export const main = async (runtime: MainRuntime = {}) => {
   // 4. Derive per-plan state path
   const activePlanId =
     executionMode === "direct"
-      ? resolvePlanId(planPath)
+      ? generatePlanId()
       : ensureCanonicalPlan(planPath, orchDir);
   const registryPlanPath =
     executionMode === "direct"
