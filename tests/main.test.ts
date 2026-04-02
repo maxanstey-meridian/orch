@@ -1437,20 +1437,22 @@ const runMainWithInventoryPlanMocks = async (options?: {
   }));
   const doGeneratePlan = vi.fn().mockResolvedValue(generatedPlanPath);
   const generatePlanId = vi.fn(() => options?.generatedPlanId ?? "direct01");
+  const triageAgent = {
+    send: options?.requestTriageSendError === undefined
+      ? vi.fn().mockResolvedValue({
+          assistantText: options?.requestTriageText ?? JSON.stringify(
+            options?.requestTriageResult ?? {
+              mode: "direct" as const,
+              reason: "bounded local change",
+            },
+          ),
+          resultText: options?.requestTriageResultText ?? "",
+        })
+      : vi.fn().mockRejectedValue(options.requestTriageSendError),
+    kill: vi.fn(),
+  };
   const requestTriageSpawnerFactory = vi.fn(() => () => {
-    const triageResult = options?.requestTriageResult ?? {
-      mode: "direct" as const,
-      reason: "bounded local change",
-    };
-    return {
-      send: options?.requestTriageSendError === undefined
-        ? vi.fn().mockResolvedValue({
-            assistantText: options?.requestTriageText ?? JSON.stringify(triageResult),
-            resultText: options?.requestTriageResultText ?? "",
-          })
-        : vi.fn().mockRejectedValue(options.requestTriageSendError),
-      kill: vi.fn(),
-    };
+    return triageAgent;
   });
   const buildRequestTriagePrompt = vi.fn(() => '{"mode":"direct","reason":"bounded local change"}');
   const parseRequestTriageResult = vi.fn((text: string) =>
@@ -1580,6 +1582,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
   });
 
   const exit = vi.fn();
+  const registryPath = join(tempDir, "registry", "runs.json");
   const previousArgv = process.argv;
   const previousCwd = process.cwd();
   process.argv = [
@@ -1596,7 +1599,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
   try {
     const { main } = await import("../src/main.js");
     await main({
-      registryPath: join(tempDir, "registry", "runs.json"),
+      registryPath,
       onSignal: vi.fn(() => process),
       exit,
     });
@@ -1631,6 +1634,8 @@ const runMainWithInventoryPlanMocks = async (options?: {
     exit,
     hudLogs,
     inventoryPath,
+    registryPath,
+    triageAgent,
   };
 };
 
@@ -1828,6 +1833,7 @@ describe("main execution preference wiring", () => {
       buildRequestTriagePrompt,
       parseRequestTriageResult,
       inventoryPath,
+      triageAgent,
     } = await runMainWithInventoryPlanMocks({
       requestTriageResult: { mode: "direct", reason: "bounded local change" },
     });
@@ -1846,6 +1852,7 @@ describe("main execution preference wiring", () => {
       }),
       expect.any(Object),
     );
+    expect(triageAgent.kill).toHaveBeenCalledTimes(1);
   });
 
   it("prefers non-empty triage resultText when assistantText is empty", async () => {
@@ -1881,6 +1888,7 @@ describe("main execution preference wiring", () => {
       createContainer,
       doGeneratePlan,
       exit,
+      triageAgent,
     } = await runMainWithInventoryPlanMocks({
       requestTriageSendError: new Error("triage unavailable"),
     });
@@ -1901,6 +1909,7 @@ describe("main execution preference wiring", () => {
       }),
       expect.any(Object),
     );
+    expect(triageAgent.kill).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -1943,6 +1952,43 @@ describe("main execution preference wiring", () => {
       );
     },
   );
+
+  it("surfaces the grouped triage summary in operator output before execution starts", async () => {
+    const { hudLogs } = await runMainWithInventoryPlanMocks({
+      requestTriageResult: { mode: "grouped", reason: "few coherent milestones" },
+    });
+
+    expect(hudLogs.join("\n")).toContain("mode=grouped");
+  });
+
+  it("registers a parseable direct artifact with full slice metadata", async () => {
+    const {
+      inventoryPath,
+      registryPath,
+    } = await runMainWithInventoryPlanMocks({
+      args: ["--quick"],
+      generatedPlanId: "direct42",
+    });
+    const { readRegistry } = await import("#infrastructure/registry/run-registry.js");
+    const { parsePlan } = await import("#infrastructure/plan/plan-parser.js");
+
+    const entries = await readRegistry(registryPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.planPath).toMatch(/\.orch\/plan-direct42\.json$/);
+
+    const groups = await parsePlan(entries[0]!.planPath);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.name).toBe("Direct");
+    expect(groups[0]?.slices[0]).toEqual(
+      expect.objectContaining({
+        title: "Direct request",
+        why: "Direct execution was selected during bootstrap.",
+        files: [{ path: inventoryPath, action: "edit" }],
+        details: "Implement the inventory request directly without generated plan slices.",
+        tests: "Run the relevant tests and explain the coverage changes.",
+      }),
+    );
+  });
 
   it("treats inventory input that is already a plan as plan-authoritative for execution mode", async () => {
     const groupedPlan = JSON.stringify({
@@ -1993,6 +2039,54 @@ describe("main execution preference wiring", () => {
     );
     expect(hudLogs.join("\n")).toContain("Execution grouped");
   });
+
+  it.each(["--quick", "--grouped", "--long"])(
+    "rejects override %s when --plan input is already a plan",
+    async (flag) => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const groupedPlan = JSON.stringify({
+        executionMode: "grouped",
+        groups: [
+          {
+            name: "Test",
+            slices: [
+              {
+                number: 1,
+                title: "Slice 1",
+                why: "why",
+                files: [{ path: "src/s1.ts", action: "new" }],
+                details: "details",
+                tests: "tests",
+              },
+            ],
+          },
+        ],
+      });
+      const {
+        createContainer,
+        doGeneratePlan,
+        requestTriageSpawnerFactory,
+        buildRequestTriagePrompt,
+        parseRequestTriageResult,
+        exit,
+      } = await runMainWithInventoryPlanMocks({
+        args: [flag],
+        inputAlreadyPlan: true,
+        inventoryContent: groupedPlan,
+      });
+
+      expect(requestTriageSpawnerFactory).not.toHaveBeenCalled();
+      expect(buildRequestTriagePrompt).not.toHaveBeenCalled();
+      expect(parseRequestTriageResult).not.toHaveBeenCalled();
+      expect(doGeneratePlan).not.toHaveBeenCalled();
+      expect(createContainer).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Execution mode overrides are not supported with --work until plan metadata is available.",
+      );
+      expect(exit).toHaveBeenCalledWith(1);
+      errorSpy.mockRestore();
+    },
+  );
 
   it("errors when --work is combined with an execution mode override before plan metadata exists", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
