@@ -186,10 +186,12 @@ describe("parseRequestTriageResult", () => {
   it.each([
     "",
     "definitely not JSON",
+    '{"mode":"direct",',
     '{"mode":"direct"}',
     '{"reason":"missing mode"}',
     '{"mode":true,"reason":"wrong mode type"}',
     '{"mode":"direct","reason":false}',
+    '{"mode":"direct","reason":"extra key","extra":true}',
     'Here is the result: {"mode":"direct","reason":"wrapped in prose"}',
   ])("falls back to sliced for invalid request triage input: %s", (text) => {
     expect(parseRequestTriageResult(text)).toEqual({

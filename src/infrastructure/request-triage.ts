@@ -7,7 +7,7 @@ import {
 const requestTriageResultSchema = z.object({
   mode: z.enum(["direct", "grouped", "sliced"]),
   reason: z.string().trim().min(1),
-});
+}).strict();
 
 const buildFallbackReason = (detail: string): string =>
   `${REQUEST_TRIAGE_FALLBACK.reason}: ${detail}`;
