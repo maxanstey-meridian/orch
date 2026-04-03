@@ -37,6 +37,25 @@ describe("PlanSchema", () => {
     }
   });
 
+  it("accepts non-empty criteria when present on a slice", () => {
+    const input = {
+      groups: [validGroup("Core", [{
+        ...validSlice(1),
+        criteria: ["Parser preserves criteria", "Rendered content includes criteria section"],
+      }])],
+    };
+
+    const result = PlanSchema.safeParse(input);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.groups[0].slices[0].criteria).toEqual([
+        "Parser preserves criteria",
+        "Rendered content includes criteria section",
+      ]);
+    }
+  });
+
   it("rejects plan missing required fields", () => {
     // missing groups entirely
     expect(PlanSchema.safeParse({}).success).toBe(false);
@@ -101,6 +120,17 @@ describe("PlanSchema", () => {
         files: [],
       }])],
     };
+    expect(PlanSchema.safeParse(input).success).toBe(false);
+  });
+
+  it("rejects empty criteria array when criteria is present", () => {
+    const input = {
+      groups: [validGroup("G", [{
+        ...validSlice(1),
+        criteria: [],
+      }])],
+    };
+
     expect(PlanSchema.safeParse(input).success).toBe(false);
   });
 
@@ -195,6 +225,19 @@ describe("parsePlanJson", () => {
     expect(slice.tests).toBe("Test the thing");
     expect(slice.number).toBe(1);
     expect(slice.title).toBe("Slice 1");
+  });
+
+  it("preserves slice criteria through parsePlanJson", () => {
+    const input = {
+      groups: [validGroup("Core", [{
+        ...validSlice(1),
+        criteria: ["Criteria one", "Criteria two"],
+      }])],
+    };
+
+    const groups = parsePlanJson(makeJson(input));
+
+    expect(groups[0].slices[0].criteria).toEqual(["Criteria one", "Criteria two"]);
   });
 
   it("computes content from structured fields", () => {

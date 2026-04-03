@@ -48,9 +48,31 @@ describe("buildContent", () => {
     expect(result).toContain("`src/old.ts` (delete)");
   });
 
-  it("renders empty files array as empty file list", () => {
+  it("renders a dedicated criteria section before details and tests", () => {
     const result = buildContent({
       number: 4,
+      title: "Criteria slice",
+      why: "Need a mechanical contract",
+      files: [{ path: "src/plan.ts", action: "edit" }],
+      criteria: ["Adds schema support", "Renders criteria in slice content"],
+      details: "Implement criteria support.",
+      tests: "Cover schema and content rendering.",
+    });
+
+    const criteriaIndex = result.indexOf("**Criteria:**");
+    const detailsIndex = result.indexOf("Implement criteria support.");
+    const testsIndex = result.indexOf("**Tests:** Cover schema and content rendering.");
+
+    expect(criteriaIndex).toBeGreaterThan(-1);
+    expect(result).toContain("- Adds schema support");
+    expect(result).toContain("- Renders criteria in slice content");
+    expect(criteriaIndex).toBeLessThan(detailsIndex);
+    expect(criteriaIndex).toBeLessThan(testsIndex);
+  });
+
+  it("renders empty files array as empty file list", () => {
+    const result = buildContent({
+      number: 5,
       title: "No files",
       why: "Edge case",
       files: [],

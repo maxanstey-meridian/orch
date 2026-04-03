@@ -18,6 +18,7 @@ export type Slice = {
   readonly content: string;
   readonly why: string;
   readonly files: readonly FileAction[];
+  readonly criteria?: readonly string[];
   readonly details: string;
   readonly tests: string;
   readonly relatedFiles?: readonly string[];
@@ -49,6 +50,7 @@ export const buildContent = (s: {
   readonly title: string;
   readonly why: string;
   readonly files: readonly FileAction[];
+  readonly criteria?: readonly string[];
   readonly details: string;
   readonly tests: string;
   readonly relatedFiles?: readonly string[];
@@ -86,6 +88,10 @@ export const buildContent = (s: {
   }
   if (s.gotchas?.length) {
     parts.push(`\n\n**Gotchas:**\n${s.gotchas.map((g) => `- ${g}`).join("\n")}`);
+  }
+
+  if (s.criteria?.length) {
+    parts.push(`\n\n**Criteria:**\n${s.criteria.map((criterion) => `- ${criterion}`).join("\n")}`);
   }
 
   parts.push(`\n\n${s.details}\n\n**Tests:** ${s.tests}`);

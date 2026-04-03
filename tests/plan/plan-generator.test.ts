@@ -53,6 +53,30 @@ const VALID_PLAN_WITH_CONTEXT = JSON.stringify({
   ],
 });
 
+const VALID_PLAN_WITH_CRITERIA = JSON.stringify({
+  executionMode: "sliced",
+  groups: [
+    {
+      name: "Criteria Contracts",
+      slices: [
+        {
+          number: 1,
+          title: "Add criteria metadata",
+          why: "Evaluators need an explicit acceptance contract.",
+          files: [{ path: "src/domain/plan.ts", action: "edit" }],
+          criteria: [
+            "Plan schema accepts non-empty criteria arrays",
+            "Parsed slices preserve criteria",
+            "Slice content renders criteria before details and tests",
+          ],
+          details: "Add criteria to the slice model and render it into slice content.",
+          tests: "Assert schema round-trip, empty-array rejection, and content ordering.",
+        },
+      ],
+    },
+  ],
+});
+
 const VALID_PLAN_WITHOUT_EXECUTION_MODE = JSON.stringify({
   groups: [
     {
@@ -702,7 +726,7 @@ describe("generatePlan", () => {
     await generatePlan(inventoryPath, "", agent, outputDir);
 
     // Must reference JSON schema fields
-    for (const field of ["context", "architecture", "keyFiles", "concepts", "conventions", "groups", "slices", "number", "title", "why", "files", "action", "details", "tests"]) {
+    for (const field of ["context", "architecture", "keyFiles", "concepts", "conventions", "groups", "slices", "number", "title", "why", "files", "action", "criteria", "details", "tests"]) {
       expect(capturedPrompt).toContain(`"${field}"`);
     }
     // Must instruct JSON output
@@ -712,12 +736,48 @@ describe("generatePlan", () => {
     expect(capturedPrompt).not.toContain("## Group:");
     expect(capturedPrompt).not.toContain("### Slice");
   });
+
+  it("requires every generated slice to emit a non-empty criteria array", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Planning\nAdd criteria metadata.");
+
+    const outputDir = join(tmpDir, ".orch");
+    let capturedPrompt = "";
+    const agent: PromptAgent = {
+      ...mockAgent(VALID_PLAN_WITH_CRITERIA),
+      send: async (prompt: string) => {
+        capturedPrompt = prompt;
+        return {
+          exitCode: 0,
+          assistantText: VALID_PLAN_WITH_CRITERIA,
+          resultText: "",
+          needsInput: false,
+          sessionId: "mock",
+        };
+      },
+    };
+
+    await generatePlan(inventoryPath, "", agent, outputDir);
+
+    expect(capturedPrompt).toContain('"criteria": ["<binary acceptance criterion>"');
+    expect(capturedPrompt).toContain("Every generated slice must include a non-empty `criteria` array");
+    expect(capturedPrompt).toContain("The plan agent is the sole author of criteria in this iteration");
+  });
+
+  it("documents the criteria contract in the plan-generation skill", () => {
+    const skill = readFileSync("skills/generate-plan.md", "utf8");
+
+    expect(skill).toContain('"criteria"');
+    expect(skill).toContain("Every slice must include a non-empty `criteria` array");
+    expect(skill).toContain("binary acceptance checks");
+  });
 });
 
 // ─── planSummaryLines ──────────────────────────────────────────────────────
 
 describe("planSummaryLines", () => {
   const groups = parsePlanJson(VALID_PLAN);
+  const criteriaGroups = parsePlanJson(VALID_PLAN_WITH_CRITERIA);
 
   it("returns a line with total group and slice counts", () => {
     const lines = planSummaryLines(groups);
@@ -746,6 +806,14 @@ describe("planSummaryLines", () => {
     expect(joined).toContain("Dashboard");
     expect(joined).toContain("1 slice");
     expect(joined).toContain("Widget rendering");
+  });
+
+  it("shows per-slice criteria counts in group summary lines", () => {
+    const lines = planSummaryLines(criteriaGroups);
+    const joined = lines.join("\n");
+
+    expect(joined).toContain("#1 Add criteria metadata");
+    expect(joined).toContain("3 criteria");
   });
 });
 

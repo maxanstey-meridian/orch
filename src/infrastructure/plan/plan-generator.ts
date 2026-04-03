@@ -90,7 +90,15 @@ export const planSummaryLines = (groups: readonly Group[]): string[] => {
   ];
   for (const g of groups) {
     const n = g.slices.length;
-    const titles = g.slices.map((s) => `#${s.number} ${s.title}`).join(", ");
+    const titles = g.slices
+      .map((s) => {
+        const criteriaCount = s.criteria?.length ?? 0;
+        if (criteriaCount === 0) {
+          return `#${s.number} ${s.title}`;
+        }
+        return `#${s.number} ${s.title} (${criteriaCount} criteria)`;
+      })
+      .join(", ");
     lines.push(`  ${a.cyan}${g.name}${a.reset} (${n} slice${n === 1 ? "" : "s"}) — ${titles}`);
   }
   return lines;

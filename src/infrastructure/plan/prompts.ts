@@ -44,6 +44,7 @@ Output valid JSON matching this schema:
             { "path": "src/foo.ts", "action": "new" },
             { "path": "src/bar.ts", "action": "edit" }
           ],
+          "criteria": ["<binary acceptance criterion>"],
           "details": "<concrete implementation details — what to build, how it connects>",
           "tests": "<what to test, which file>"
         }
@@ -59,6 +60,7 @@ Output valid JSON matching this schema:
 - \`"action"\` must be one of: \`"new"\`, \`"edit"\`, \`"delete"\`.
 - \`"number"\` is a positive integer — globally unique across the entire plan.
 - \`"files"\` must have at least one entry per slice.
+- \`"criteria"\` must be a non-empty array of binary acceptance checks for that slice.
 - All string fields (\`"name"\`, \`"title"\`, \`"why"\`, \`"details"\`, \`"tests"\`) must be non-empty.
 - Top-level \`"context"\` is optional, but include it when you can infer useful repo-wide guidance that will reduce re-exploration for implementing agents.
 - Within \`"context"\`, \`"architecture"\` is an optional string and \`"keyFiles"\`, \`"concepts"\`, and \`"conventions"\` are optional string-to-string maps.
@@ -66,7 +68,9 @@ Output valid JSON matching this schema:
 ## Rules
 
 - **Slice numbers must be GLOBALLY unique and sequential across the entire plan.** Group 1 has Slices 1-3, Group 2 has Slices 4-6, etc. Do NOT restart numbering per group. The orchestrator tracks progress by slice number — duplicate numbers cause slices to be skipped.
+- Every generated slice must include a non-empty \`criteria\` array of binary acceptance checks that downstream evaluators can verify mechanically.
 - Use top-level \`"context"\` for stable repo knowledge only: architecture boundaries, authoritative files, product/runtime concepts, and conventions that apply across multiple slices. Do not duplicate slice-specific details there.
+- The plan agent is the sole author of criteria in this iteration. Do not add a separate contract-negotiation phase or defer criteria authoring to later agents.
 - The generated plan is authoritative. Do not invent compatibility shims, legacy fallback, coercion, or fail-open behavior unless the inventory explicitly requires them.
 - Future-slice wiring stays deferred. Do not pull later integration work forward just to make the current group or slice feel complete.
 - Output ONLY the raw JSON object. No markdown code fences, no \`\`\`json blocks, no preamble, no commentary, no explanation before or after. The very first character of your response must be \`{\` and the very last must be \`}\`.`;

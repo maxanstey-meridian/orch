@@ -44,6 +44,10 @@ The JSON must match this schema:
             { "path": "src/bar.ts", "action": "edit" },
             { "path": "src/old.ts", "action": "delete" }
           ],
+          "criteria": [
+            "Binary acceptance check 1",
+            "Binary acceptance check 2"
+          ],
           "details": "Concrete implementation details. What to build, how it connects to existing code, what interfaces to use. Be specific — the TDD agent will follow this literally.",
           "tests": "What to test. Describe the test cases, which file they go in, key assertions. Be specific enough that the TDD agent can write the tests without guessing."
         }
@@ -60,6 +64,7 @@ The JSON must match this schema:
   Group 2 has Slices 4-6, etc. Do NOT restart numbering per group. The orchestrator tracks progress by slice number —
   duplicates cause slices to be skipped.
 - `files` must have at least one entry per slice
+- Every slice must include a non-empty `criteria` array of binary acceptance checks that a downstream evaluator can verify mechanically
 - All string fields must be non-empty
 - `details` must be concrete and specific — not vague descriptions. Name the functions, types, patterns. Reference
   existing code by path. The TDD agent has no context beyond what you write here.
@@ -70,6 +75,7 @@ The JSON must match this schema:
 - **Explore before planning.** Read real files. Do not guess at interfaces, types, or patterns. If the inventory
   references existing code, verify it exists and note its current state.
 - **Respect dependency ordering.** If Slice 3 needs types from Slice 1, Slice 1 comes first.
+- **Write criteria yourself.** The plan generator is the sole author of criteria in this iteration; do not defer contract authoring to later agents.
 - **The plan is authoritative.** Do not invent compatibility shims, legacy fallback, coercion, or fail-open behavior
   unless the inventory explicitly requires them.
 - **Future-slice wiring stays deferred.** Do not pull later integration forward just to make the current group or slice
