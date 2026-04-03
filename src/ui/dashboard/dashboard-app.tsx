@@ -3,7 +3,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import type { DashboardRun } from "#domain/dashboard.js";
 import { createSupervisor } from "#infrastructure/dashboard/supervisor.js";
 import { defaultQueuePath, removeFromQueue } from "#infrastructure/queue/queue-store.js";
-import { defaultRegistryPath, removeRunFromRegistry } from "#infrastructure/registry/run-registry.js";
+import {
+  defaultRegistryPath,
+  removeRunFromRegistry,
+} from "#infrastructure/registry/run-registry.js";
 import { DetailView } from "#ui/dashboard/detail-view.js";
 import { MainView } from "#ui/dashboard/main-view.js";
 import { QueuePrompt } from "#ui/dashboard/queue-prompt.js";

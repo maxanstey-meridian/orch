@@ -16,6 +16,50 @@ const makeSlice = (n: number): Slice => ({
 const makeGroup = (name: string, slices: Slice[]): Group => ({ name, slices });
 
 describe("Crash recovery lifecycle", () => {
+  it("direct mode clears stale slice progress instead of pretending the run is slice-resumable", async () => {
+    const { uc, spawner, persistence } = createTestHarness({
+      config: {
+        executionMode: "direct",
+        planDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        gapDisabled: true,
+      },
+      state: {
+        executionMode: "sliced",
+        currentSlice: 2,
+        currentGroup: "Legacy",
+        lastCompletedSlice: 2,
+        lastCompletedGroup: "Legacy",
+        sliceTimings: [
+          {
+            number: 2,
+            startedAt: "2026-04-03T09:00:00.000Z",
+            completedAt: "2026-04-03T09:10:00.000Z",
+          },
+        ],
+      },
+      auto: true,
+    });
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented direct request" }),
+      okResult({ assistantText: "mandatory test pass complete" }),
+    );
+    spawner.onNextSpawn("review");
+
+    await uc.execute([makeGroup("Direct", [makeSlice(1)])]);
+
+    expect(persistence.current.executionMode).toBe("direct");
+    expect(persistence.current.currentSlice).toBeUndefined();
+    expect(persistence.current.currentGroup).toBeUndefined();
+    expect(persistence.current.lastCompletedSlice).toBeUndefined();
+    expect(persistence.current.lastCompletedGroup).toBeUndefined();
+    expect(persistence.current.sliceTimings).toBeUndefined();
+    expect(persistence.current.completedAt).toEqual(expect.any(String));
+  });
+
   it("resumes from persisted state, skips completed slices", async () => {
     const { uc, spawner, persistence } = createTestHarness({
       config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
@@ -184,5 +228,68 @@ describe("Crash recovery lifecycle", () => {
       provider: "claude",
       id: expect.any(String),
     });
+  });
+
+  it("grouped mode does not treat lastCompletedSlice alone as a completed group boundary", async () => {
+    const { uc, spawner, persistence } = createTestHarness({
+      config: {
+        executionMode: "grouped",
+        planDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        gapDisabled: true,
+      },
+      state: {
+        lastCompletedSlice: 2,
+      },
+      auto: true,
+    });
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "group rebuilt" }),
+      okResult({ assistantText: "group mandatory test pass" }),
+    );
+    spawner.onNextSpawn("review");
+
+    await uc.execute([makeGroup("Core", [makeSlice(1), makeSlice(2)])]);
+
+    const tdd = spawner.lastAgent("tdd");
+    expect(tdd.sentPrompts[0]).toContain("[GROUP_EXEC:Core]");
+    expect(persistence.current.lastCompletedGroup).toBe("Core");
+  });
+
+  it("grouped mode resumes from the last completed group boundary instead of replaying it", async () => {
+    const { uc, spawner } = createTestHarness({
+      config: {
+        executionMode: "grouped",
+        planDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        gapDisabled: true,
+      },
+      state: {
+        lastCompletedSlice: 2,
+        lastCompletedGroup: "Core",
+      },
+      auto: true,
+    });
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "next group rebuilt" }),
+      okResult({ assistantText: "next group mandatory test pass" }),
+    );
+    spawner.onNextSpawn("review");
+
+    await uc.execute([
+      makeGroup("Core", [makeSlice(1), makeSlice(2)]),
+      makeGroup("API", [makeSlice(3)]),
+    ]);
+
+    const tdd = spawner.lastAgent("tdd");
+    expect(tdd.sentPrompts).toHaveLength(2);
+    expect(tdd.sentPrompts[0]).toContain("[GROUP_EXEC:API]");
+    expect(tdd.sentPrompts[0]).not.toContain("[GROUP_EXEC:Core]");
   });
 });

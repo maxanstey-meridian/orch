@@ -1,13 +1,12 @@
 import { z } from "zod";
-import {
-  REQUEST_TRIAGE_FALLBACK,
-  type RequestTriageResult,
-} from "#domain/triage.js";
+import { REQUEST_TRIAGE_FALLBACK, type RequestTriageResult } from "#domain/triage.js";
 
-const requestTriageResultSchema = z.object({
-  mode: z.enum(["direct", "grouped", "sliced"]),
-  reason: z.string().trim().min(1),
-}).strict();
+const requestTriageResultSchema = z
+  .object({
+    mode: z.enum(["direct", "grouped", "sliced"]),
+    reason: z.string().trim().min(1),
+  })
+  .strict();
 
 const buildFallbackReason = (detail: string): string =>
   `${REQUEST_TRIAGE_FALLBACK.reason}: ${detail}`;
@@ -39,7 +38,9 @@ export const parseRequestTriageResult = (text: string): RequestTriageResult => {
   }
 };
 
-export const buildRequestTriagePrompt = (requestContent: string): string => `You are classifying an operator request before orchestration starts.
+export const buildRequestTriagePrompt = (
+  requestContent: string,
+): string => `You are classifying an operator request before orchestration starts.
 
 Choose exactly one execution mode:
 - direct: the request is a bounded local change with narrow breadth of change, little dependency ordering, and no real resume value from splitting it further.

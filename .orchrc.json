@@ -13,13 +13,13 @@
     "maxReplans": 2
   },
   "agents": {
-    "plan": "claude",
-    "tdd": "claude",
-    "review": "claude",
-    "verify": "claude",
-    "gap": "claude",
-    "completeness": "claude",
-    "final": "claude",
-    "triage": "claude"
+    "plan": "codex",
+    "tdd": "codex",
+    "review": "codex",
+    "verify": "codex",
+    "gap": "codex",
+    "completeness": "codex",
+    "final": "codex",
+    "triage": "codex"
   }
 }

@@ -11,6 +11,7 @@ import type { AgentResult } from "#domain/agent-types.js";
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const VALID_PLAN = JSON.stringify({
+  executionMode: "sliced",
   groups: [
     {
       name: "Auth",
@@ -29,6 +30,7 @@ const VALID_PLAN = JSON.stringify({
 });
 
 const VALID_PLAN_WITH_CONTEXT = JSON.stringify({
+  executionMode: "sliced",
   context: {
     architecture: "Vue frontend with generated API client and thin integration seams.",
     keyFiles: {
@@ -50,6 +52,53 @@ const VALID_PLAN_WITH_CONTEXT = JSON.stringify({
     },
   ],
 });
+
+const VALID_PLAN_WITHOUT_EXECUTION_MODE = JSON.stringify({
+  groups: [
+    {
+      name: "Auth",
+      slices: [
+        {
+          number: 1,
+          title: "User login",
+          why: "Users need to log in.",
+          files: [{ path: "src/auth.ts", action: "new" }],
+          details: "Implement login flow.",
+          tests: "Login works.",
+        },
+      ],
+    },
+  ],
+});
+
+const VALID_GROUPED_PLAN = JSON.stringify({
+  executionMode: "grouped",
+  groups: [
+    {
+      name: "Planning Contract",
+      description: "Establish grouped execution semantics and keep boundary deliverables explicit.",
+      slices: [
+        {
+          number: 1,
+          title: "Add grouped prompt contract",
+          why: "The planner needs explicit grouped instructions before generation is trustworthy.",
+          files: [{ path: "src/infrastructure/plan/prompts.ts", action: "edit" }],
+          details: "Add grouped planning guidance and make review/verify happen at group boundaries.",
+          tests: "Assert grouped prompt wording and prompt capture behavior.",
+        },
+        {
+          number: 2,
+          title: "Preserve grouped metadata",
+          why: "Grouped plans need self-describing boundaries after validation.",
+          files: [{ path: "src/domain/plan.ts", action: "edit" }],
+          details: "Carry group descriptions through schema validation and domain parsing.",
+          tests: "Assert group descriptions survive generatePlan round-trips.",
+        },
+      ],
+    },
+  ],
+});
+
 
 const PLAN_WITH_PREAMBLE = `Here's the plan I generated:\n${VALID_PLAN}\nLet me know if you'd like changes.`;
 
@@ -346,7 +395,7 @@ describe("generatePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GROUPED_PLAN);
 
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir, "grouped");
 
@@ -354,6 +403,65 @@ describe("generatePlan", () => {
     const parsed = PlanSchema.parse(JSON.parse(written));
     expect(parsed.executionMode).toBe("grouped");
   });
+
+  it("uses grouped prompt semantics instead of only injecting grouped metadata after parse", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Planning\nGrouped plan support.");
+
+    const outputDir = join(tmpDir, ".orch");
+    let capturedPrompt = "";
+    const agent: PromptAgent = {
+      ...mockAgent(VALID_GROUPED_PLAN),
+      send: async (prompt: string) => {
+        capturedPrompt = prompt;
+        return {
+          exitCode: 0,
+          assistantText: VALID_GROUPED_PLAN,
+          resultText: "",
+          needsInput: false,
+          sessionId: "mock",
+        };
+      },
+    };
+
+    await generatePlan(inventoryPath, "", agent, outputDir, "grouped");
+
+    expect(capturedPrompt).toContain('"executionMode": "grouped"');
+    expect(capturedPrompt).toContain("coarse groups with independently meaningful deliverables");
+    expect(capturedPrompt).toContain("review/verify cadence is driven by group boundaries");
+    expect(capturedPrompt).toContain("Reject micro-slice churn");
+    expect(capturedPrompt).not.toContain("Target 2-3 slices per group, max 4.");
+  });
+
+  it("retains grouped execution metadata and group descriptions through validation and parsing", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Planning\nGrouped plan support.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const result = await generatePlan(inventoryPath, "", mockAgent(VALID_GROUPED_PLAN), outputDir, "grouped");
+
+    const written = readFileSync(result.planPath, "utf-8");
+    const parsed = PlanSchema.parse(JSON.parse(written));
+    expect(parsed.executionMode).toBe("grouped");
+    expect(parsed.groups[0].description).toBe(
+      "Establish grouped execution semantics and keep boundary deliverables explicit.",
+    );
+    expect(result.groups[0].description).toBe(
+      "Establish grouped execution semantics and keep boundary deliverables explicit.",
+    );
+  });
+
+  it("rejects generated plans that omit required executionMode metadata", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+
+    await expect(
+      generatePlan(inventoryPath, "", mockAgent(VALID_PLAN_WITHOUT_EXECUTION_MODE), outputDir),
+    ).rejects.toThrow("missing required executionMode metadata");
+  });
+
 
   it("preserves optional top-level context when the generated plan includes it", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
@@ -672,7 +780,7 @@ describe("doGeneratePlan", () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GROUPED_PLAN);
     const log = () => {};
 
     const planPath = await doGeneratePlan(

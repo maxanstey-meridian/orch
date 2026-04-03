@@ -152,4 +152,102 @@ describe("Review loop lifecycle", () => {
 
     expect(persistence.current.lastCompletedSlice).toBe(1);
   });
+
+  it("grouped mode reviews the whole group once per cycle and fixes against aggregated group content", async () => {
+    const { uc, spawner, persistence, git } = createTestHarness({
+      config: { executionMode: "grouped", planDisabled: true, gapDisabled: true, verifySkill: null },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+    git.setDiffStats({ added: 50, removed: 10, total: 60 });
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented grouped increment" }),
+      okResult({ assistantText: "ran grouped mandatory test pass" }),
+      okResult({ assistantText: "fixed grouped review issues" }),
+    );
+    spawner.onNextSpawn(
+      "review",
+      okResult({ assistantText: "Found issues: missing grouped boundary assertion" }),
+      okResult({ assistantText: "REVIEW_CLEAN" }),
+    );
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "GROUP_COMPLETE" }));
+
+    await uc.execute([makeGroup("G1", [makeSlice(1), makeSlice(2)])]);
+
+    expect(persistence.current.lastCompletedSlice).toBe(2);
+    expect(
+      hasPhaseSubsequence(
+        persistence.saveHistory.map((state) => state.currentPhase),
+        ["review", "tdd", "review"],
+      ),
+    ).toBe(true);
+
+    const tdd = spawner.lastAgent("tdd");
+    expect(tdd.sentPrompts[0]).toContain("[GROUP_EXEC:G1]");
+    expect(tdd.sentPrompts[1]).toContain("[GROUP_TEST_PASS:G1]");
+    expect(tdd.sentPrompts[2]).toContain("content for slice 1");
+    expect(tdd.sentPrompts[2]).toContain("content for slice 2");
+    expect(spawner.lastAgent("review").sentPrompts).toHaveLength(2);
+    expect(spawner.lastAgent("completeness").sentPrompts[0]).toContain("[GROUP_COMPLETENESS:G1]");
+  });
+
+  it("direct mode fixes review findings against the whole request without persisting slice completion", async () => {
+    const { uc, spawner, persistence, git } = createTestHarness({
+      config: { executionMode: "direct", gapDisabled: true, verifySkill: null },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+    git.setDiffStats({ added: 50, removed: 10, total: 60 });
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented direct request" }),
+      okResult({ assistantText: "ran direct mandatory test pass" }),
+      okResult({ assistantText: "fixed direct review issues" }),
+    );
+    spawner.onNextSpawn(
+      "review",
+      okResult({ assistantText: "Found issues: missing direct request assertion" }),
+      okResult({ assistantText: "REVIEW_CLEAN" }),
+    );
+    spawner.onNextSpawn("triage", okResult({
+      assistantText: JSON.stringify({
+        completeness: true,
+        verify: false,
+        review: true,
+        gap: false,
+        reason: "direct review path",
+      }),
+    }));
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "DIRECT_COMPLETE" }));
+
+    await uc.execute([makeGroup("Direct", [makeSlice(1)])]);
+
+    expect(
+      hasPhaseSubsequence(
+        persistence.saveHistory.map((state) => state.currentPhase),
+        ["review", "tdd", "review"],
+      ),
+    ).toBe(true);
+    expect((persistence.current as Record<string, unknown>).executionMode).toBe("direct");
+    expect(persistence.current.lastCompletedSlice).toBeUndefined();
+    expect(persistence.current.lastCompletedGroup).toBeUndefined();
+
+    const tdd = spawner.lastAgent("tdd");
+    expect(tdd.sentPrompts[0]).toContain("[DIRECT]");
+    expect(tdd.sentPrompts[1]).toContain("[DIRECT_TEST_PASS]");
+    expect(tdd.sentPrompts[2]).toContain("content for slice 1");
+    expect(tdd.sentPrompts[2]).toContain("missing direct request assertion");
+    expect(tdd.sentPrompts[2]).toContain("Current direct request");
+    expect(tdd.sentPrompts[2]).not.toContain("## Plan Slice");
+    expect(spawner.lastAgent("review").sentPrompts).toHaveLength(2);
+    expect(spawner.lastAgent("review").sentPrompts[0]).toContain("Direct request");
+    expect(spawner.lastAgent("review").sentPrompts[0]).not.toContain("## Plan Slice");
+    expect(spawner.lastAgent("completeness").sentPrompts[0]).toContain("Direct request");
+    expect(spawner.lastAgent("completeness").sentPrompts[0]).not.toContain("Slice 1");
+  });
 });

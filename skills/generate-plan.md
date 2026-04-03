@@ -29,6 +29,7 @@ The JSON must match this schema:
 
 ```
 {
+  "executionMode": "grouped|sliced",
   "groups": [
     {
       "name": "Group Name",
@@ -69,9 +70,24 @@ The JSON must match this schema:
 - **Explore before planning.** Read real files. Do not guess at interfaces, types, or patterns. If the inventory
   references existing code, verify it exists and note its current state.
 - **Respect dependency ordering.** If Slice 3 needs types from Slice 1, Slice 1 comes first.
-- **Target 2-3 slices per group, max 4.** If a group has more, split it.
+- **The plan is authoritative.** Do not invent compatibility shims, legacy fallback, coercion, or fail-open behavior
+  unless the inventory explicitly requires them.
+- **Future-slice wiring stays deferred.** Do not pull later integration forward just to make the current group or slice
+  look more complete.
 - **Each slice must be independently testable.** After implementing a slice, all its tests pass without needing later
   slices.
 - **Include edge cases in tests.** Don't just test the happy path. Boundary conditions, error cases, empty inputs.
 - **Name files using the project's conventions.** Check existing file naming patterns before inventing new ones.
 - **Flag risks.** If something is ambiguous or could go wrong, note it in the slice details.
+
+## Execution Mode Rules
+
+- Always emit top-level `"executionMode"` and make it match the requested planning mode.
+- For `"grouped"`:
+  - Produce coarse groups with independently meaningful deliverables.
+  - Make it obvious that review/verify cadence is driven by group boundaries.
+  - Prefer a small number of larger internal steps with tolerance for larger internal change sets.
+  - Reject micro-slice churn; do not default to 2-3 tiny slices per group.
+- For `"sliced"`:
+  - Use finer-grained increments where tighter review/verify cadence is useful.
+  - Target 2-3 slices per group, max 4.

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { DefaultPromptBuilder } from "#infrastructure/default-prompt-builder.js";
 import { PromptBuilder } from "#application/ports/prompt-builder.port.js";
-import { withBrief, buildPlanPrompt, buildTddPrompt, buildVerifyPrompt, buildReviewPrompt, buildCompletenessPrompt, buildCommitSweepPrompt, buildGapPrompt, buildFinalPasses } from "#infrastructure/plan/prompts.js";
+import { withBrief, buildPlanPrompt, buildTddPrompt, buildDirectExecutePrompt, buildDirectTestPassPrompt, buildVerifyPrompt, buildReviewPrompt, buildCompletenessPrompt, buildCommitSweepPrompt, buildGapPrompt, buildFinalPasses } from "#infrastructure/plan/prompts.js";
 import { TDD_RULES_REMINDER, REVIEW_RULES_REMINDER, buildRulesReminder } from "#infrastructure/claude/claude-agent-factory.js";
 
 const BRIEF = "This is a test brief";
@@ -88,6 +88,49 @@ describe("DefaultPromptBuilder", () => {
     });
   });
 
+  describe("groupedExecute", () => {
+    it("firstGroup=true includes full-plan context and brief", () => {
+      const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+      const result = builder.groupedExecute("Core", "group plan", true);
+      expect(result).toContain("## Full Plan Context");
+      expect(result).toContain(PLAN_CONTENT);
+      expect(result).toContain("Execute this plan for Group Core as one bounded increment:");
+      expect(result).toContain("group plan");
+      expect(result).toContain(BRIEF);
+    });
+
+    it("firstGroup=false omits full-plan context and brief", () => {
+      const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+      const result = builder.groupedExecute("Core", "group plan", false, "focus on integration");
+      expect(result).toContain("Operator guidance: focus on integration");
+      expect(result).toContain("Execute this plan for Group Core as one bounded increment:");
+      expect(result).not.toContain("## Full Plan Context");
+      expect(result).not.toContain(BRIEF);
+    });
+  });
+
+  it("groupedTestPass builds a mandatory group test-pass prompt", () => {
+    const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+    const result = builder.groupedTestPass("Core", "group plan");
+    expect(result).toContain("mandatory test pass for Group Core");
+    expect(result).toContain("changed behavior");
+    expect(result).toContain("group plan");
+  });
+
+  it("directExecute wraps the direct execute prompt with the stored brief", () => {
+    const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+    expect(builder.directExecute("request text")).toBe(
+      withBrief(buildDirectExecutePrompt("request text"), BRIEF),
+    );
+  });
+
+  it("directTestPass wraps the direct test-pass prompt with the stored brief", () => {
+    const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+    expect(builder.directTestPass("request text")).toBe(
+      withBrief(buildDirectTestPassPrompt("request text"), BRIEF),
+    );
+  });
+
   it("review delegates to buildReviewPrompt", () => {
     const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
     expect(builder.review("content", "sha", "prior")).toBe(
@@ -101,10 +144,17 @@ describe("DefaultPromptBuilder", () => {
   it("verify wraps buildVerifyPrompt output with brief", () => {
     const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
     expect(builder.verify("sha", 3)).toBe(
-      withBrief(buildVerifyPrompt("sha", 3), BRIEF),
+      withBrief(buildVerifyPrompt("sha", "Slice 3"), BRIEF),
     );
     expect(builder.verify("sha", 3, "fixed summary")).toBe(
-      withBrief(buildVerifyPrompt("sha", 3, "fixed summary"), BRIEF),
+      withBrief(buildVerifyPrompt("sha", "Slice 3", "fixed summary"), BRIEF),
+    );
+  });
+
+  it("groupedVerify wraps buildVerifyPrompt output with brief", () => {
+    const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+    expect(builder.groupedVerify("sha", "Core")).toBe(
+      withBrief(buildVerifyPrompt("sha", "Group Core"), BRIEF),
     );
   });
 
@@ -113,6 +163,15 @@ describe("DefaultPromptBuilder", () => {
     expect(builder.completeness("slice", "sha", 3)).toBe(
       buildCompletenessPrompt("slice", "sha", PLAN_CONTENT, 3),
     );
+  });
+
+  it("groupedCompleteness builds a grouped completeness prompt", () => {
+    const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+    const result = builder.groupedCompleteness("group plan", "sha", "Core");
+    expect(result).toContain("implemented Group Core as one bounded increment");
+    expect(result).toContain("GROUP_COMPLETE");
+    expect(result).toContain("group plan");
+    expect(result).toContain(PLAN_CONTENT);
   });
 
   it("gap delegates to buildGapPrompt", () => {

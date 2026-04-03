@@ -1429,6 +1429,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
   }));
 
   const execute = vi.fn().mockResolvedValue(undefined);
+  const logSection = vi.fn();
   const createContainer = vi.fn(() => ({
     resolve: vi.fn(() => ({
       execute,
@@ -1575,7 +1576,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     const actual = await vi.importActual<typeof import("#ui/display.js")>("#ui/display.js");
     return {
       ...actual,
-      logSection: vi.fn(),
+      logSection,
       printStartupBanner: vi.fn(),
       formatPlanSummary: vi.fn(),
     };
@@ -1636,6 +1637,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     inventoryPath,
     registryPath,
     triageAgent,
+    logSection,
   };
 };
 
@@ -1780,12 +1782,14 @@ describe("main execution preference wiring", () => {
     });
 
     const deterministicPlanId = resolvePlanId(inventoryPath);
-    const [config] = createContainer.mock.calls[0] ?? [];
+    const config = (createContainer.mock.calls as unknown[][])[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
 
     expect(generatePlanId).toHaveBeenCalledTimes(1);
-    expect(config.stateFile).toMatch(/\.orch\/state\/plan-direct42\.json$/);
-    expect(config.logPath).toMatch(/\.orch\/logs\/plan-direct42\.log$/);
-    expect(config.stateFile).not.toMatch(new RegExp(`plan-${deterministicPlanId}\\.json$`));
+    expect(config!.stateFile).toMatch(/\.orch\/state\/plan-direct42\.json$/);
+    expect(config!.logPath).toMatch(/\.orch\/logs\/plan-direct42\.log$/);
+    expect(config!.stateFile).not.toMatch(new RegExp(`plan-${deterministicPlanId}\\.json$`));
   });
 
   it.each([
@@ -1990,6 +1994,17 @@ describe("main execution preference wiring", () => {
     );
   });
 
+  it("uses direct-specific completion copy after a successful direct inventory run", async () => {
+    const { logSection } = await runMainWithInventoryPlanMocks({
+      args: ["--quick"],
+    });
+
+    expect(logSection).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.stringContaining("Direct request complete + final review done"),
+    );
+  });
+
   it("treats inventory input that is already a plan as plan-authoritative for execution mode", async () => {
     const groupedPlan = JSON.stringify({
       executionMode: "grouped",
@@ -2040,12 +2055,31 @@ describe("main execution preference wiring", () => {
     expect(hudLogs.join("\n")).toContain("Execution grouped");
   });
 
-  it.each(["--quick", "--grouped", "--long"])(
-    "rejects override %s when --plan input is already a plan",
-    async (flag) => {
+  it.each([
+    {
+      flag: "--quick",
+      planExecutionMode: "grouped",
+      expectedMessage:
+        'Loaded plan declares executionMode=grouped, so override --quick is incompatible. --work uses the plan\'s declared execution mode.',
+    },
+    {
+      flag: "--long",
+      planExecutionMode: "grouped",
+      expectedMessage:
+        'Loaded plan declares executionMode=grouped, so override --long is incompatible. --work uses the plan\'s declared execution mode.',
+    },
+    {
+      flag: "--grouped",
+      planExecutionMode: "sliced",
+      expectedMessage:
+        'Loaded plan declares executionMode=sliced, so override --grouped is incompatible. --work uses the plan\'s declared execution mode.',
+    },
+  ])(
+    "rejects incompatible override $flag when --plan input is already a plan",
+    async ({ flag, planExecutionMode, expectedMessage }) => {
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       const groupedPlan = JSON.stringify({
-        executionMode: "grouped",
+        executionMode: planExecutionMode,
         groups: [
           {
             name: "Test",
@@ -2080,31 +2114,72 @@ describe("main execution preference wiring", () => {
       expect(parseRequestTriageResult).not.toHaveBeenCalled();
       expect(doGeneratePlan).not.toHaveBeenCalled();
       expect(createContainer).not.toHaveBeenCalled();
-      expect(errorSpy).toHaveBeenCalledWith(
-        "Execution mode overrides are not supported with --work until plan metadata is available.",
-      );
+      expect(errorSpy).toHaveBeenCalledWith(expectedMessage);
       expect(exit).toHaveBeenCalledWith(1);
       errorSpy.mockRestore();
     },
   );
 
-  it("errors when --work is combined with an execution mode override before plan metadata exists", async () => {
+  it("accepts a compatible --work override when it matches the loaded plan mode", async () => {
+    const groupedPlan = JSON.stringify({
+      executionMode: "grouped",
+      groups: [
+        {
+          name: "Test",
+          slices: [
+            {
+              number: 1,
+              title: "Slice 1",
+              why: "why",
+              files: [{ path: "src/s1.ts", action: "new" }],
+              details: "details",
+              tests: "tests",
+            },
+          ],
+        },
+      ],
+    });
+    const { createContainer, exit } = await runMainWithWorkPlanMocks(["--grouped"], {
+      planContent: groupedPlan,
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionPreference: "grouped",
+        executionMode: "grouped",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("errors when --work override conflicts with the loaded plan mode", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const exit = vi.fn();
-    const previousArgv = process.argv;
-    process.argv = ["node", "main.ts", "--work", "plan.md", "--quick"];
+    const groupedPlan = JSON.stringify({
+      executionMode: "grouped",
+      groups: [
+        {
+          name: "Test",
+          slices: [
+            {
+              number: 1,
+              title: "Slice 1",
+              why: "why",
+              files: [{ path: "src/s1.ts", action: "new" }],
+              details: "details",
+              tests: "tests",
+            },
+          ],
+        },
+      ],
+    });
+    const { createContainer, exit } = await runMainWithWorkPlanMocks(["--quick"], {
+      planContent: groupedPlan,
+    });
 
-    try {
-      vi.resetModules();
-      const { main } = await import("../src/main.js");
-      await main({ exit });
-    } finally {
-      process.argv = previousArgv;
-      vi.resetModules();
-    }
-
+    expect(createContainer).not.toHaveBeenCalled();
     expect(errorSpy).toHaveBeenCalledWith(
-      "Execution mode overrides are not supported with --work until plan metadata is available.",
+      'Loaded plan declares executionMode=grouped, so override --quick is incompatible. --work uses the plan\'s declared execution mode.',
     );
     expect(exit).toHaveBeenCalledWith(1);
     errorSpy.mockRestore();
@@ -2572,7 +2647,19 @@ describe("composition root integration", () => {
     const verifyAgent = {
       ...makeTestAgent(),
       send: vi.fn().mockResolvedValue(makeTestResult({
-        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+        assistantText: `### VERIFY_JSON
+\`\`\`json
+${JSON.stringify({
+  status: "PASS",
+  checks: [{ check: "npx vitest run", status: "PASS" }],
+  sliceLocalFailures: [],
+  outOfScopeFailures: [],
+  preExistingFailures: [],
+  runnerIssue: null,
+  retryable: false,
+  summary: "Verification passed.",
+}, null, 2)}
+\`\`\``,
       })),
     };
     (orch as any).agents = {

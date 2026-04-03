@@ -25,6 +25,7 @@ import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
 import type { Group } from "#domain/plan.js";
 import type { QueueEntry } from "#domain/queue.js";
+import { REQUEST_TRIAGE_FALLBACK, formatRequestTriageSummary } from "#domain/triage.js";
 import {
   parseBranchFlag,
   parseExecutionPreference,
@@ -57,19 +58,16 @@ import {
 } from "#infrastructure/plan/plan-generator.js";
 import { parsePlan } from "#infrastructure/plan/plan-parser.js";
 import {
-  buildRequestTriagePrompt,
-  parseRequestTriageResult,
-} from "#infrastructure/request-triage.js";
-import {
   defaultQueuePath,
   addToQueue,
   readQueue,
   removeFromQueue,
 } from "#infrastructure/queue/queue-store.js";
+import { defaultRegistryPath, registerRun } from "#infrastructure/registry/run-registry.js";
 import {
-  defaultRegistryPath,
-  registerRun,
-} from "#infrastructure/registry/run-registry.js";
+  buildRequestTriagePrompt,
+  parseRequestTriageResult,
+} from "#infrastructure/request-triage.js";
 import {
   loadState,
   saveState,
@@ -324,6 +322,19 @@ const resolveExecutionMode = (executionPreference: ExecutionPreference): Executi
   }
 };
 
+const executionPreferenceFlag = (
+  executionPreference: Exclude<ExecutionPreference, "auto">,
+): string => {
+  switch (executionPreference) {
+    case "quick":
+      return "--quick";
+    case "grouped":
+      return "--grouped";
+    case "long":
+      return "--long";
+  }
+};
+
 const readPlanExecutionMode = (planContent: string): ExecutionMode | undefined => {
   try {
     const parsed: unknown = JSON.parse(planContent);
@@ -340,9 +351,7 @@ const readPlanExecutionMode = (planContent: string): ExecutionMode | undefined =
       case "direct":
         throw new Error("Plan metadata executionMode=direct is invalid for --work.");
       default:
-        throw new Error(
-          `Invalid plan executionMode metadata: ${String(executionMode)}.`,
-        );
+        throw new Error(`Invalid plan executionMode metadata: ${String(executionMode)}.`);
     }
   } catch (error) {
     if (error instanceof SyntaxError) {
@@ -353,7 +362,10 @@ const readPlanExecutionMode = (planContent: string): ExecutionMode | undefined =
   }
 };
 
-const buildDirectExecutionGroups = (requestContent: string, inventoryPath: string): readonly Group[] => [
+const buildDirectExecutionGroups = (
+  requestContent: string,
+  inventoryPath: string,
+): readonly Group[] => [
   {
     name: "Direct",
     slices: [
@@ -400,13 +412,22 @@ const resolvePlannedWorkExecutionMode = (
   planContent: string,
   executionPreference: ExecutionPreference,
 ): ExecutionMode => {
-  if (executionPreference !== "auto") {
+  const planExecutionMode = readPlanExecutionMode(planContent) ?? "sliced";
+
+  if (executionPreference === "auto") {
+    return planExecutionMode;
+  }
+
+  const requestedMode = resolveExecutionMode(executionPreference);
+  if (requestedMode !== planExecutionMode) {
     throw new Error(
-      "Execution mode overrides are not supported with --work until plan metadata is available.",
+      `Loaded plan declares executionMode=${planExecutionMode}, so override ${executionPreferenceFlag(
+        executionPreference,
+      )} is incompatible. --work uses the plan's declared execution mode.`,
     );
   }
 
-  return readPlanExecutionMode(planContent) ?? "sliced";
+  return planExecutionMode;
 };
 
 const resolveInventoryExecutionMode = async (opts: {
@@ -414,6 +435,7 @@ const resolveInventoryExecutionMode = async (opts: {
   requestContent: string;
   agentConfig: ReturnType<typeof resolveAllAgentConfigs>;
   cwd: string;
+  log: (...args: unknown[]) => void;
 }): Promise<ExecutionMode> => {
   if (opts.executionPreference !== "auto") {
     return resolveExecutionMode(opts.executionPreference);
@@ -427,8 +449,15 @@ const resolveInventoryExecutionMode = async (opts: {
   try {
     const prompt = buildRequestTriagePrompt(opts.requestContent);
     const result = await triageAgent.send(prompt);
-    const triage = parseRequestTriageResult(result.assistantText ?? result.resultText ?? "");
+    const assistantText = result.assistantText.trim();
+    const resultText = result.resultText.trim();
+    const triageText = assistantText.length > 0 ? assistantText : resultText;
+    const triage = parseRequestTriageResult(triageText);
+    opts.log(formatRequestTriageSummary(triage));
     return triage.mode;
+  } catch {
+    opts.log(formatRequestTriageSummary(REQUEST_TRIAGE_FALLBACK));
+    return REQUEST_TRIAGE_FALLBACK.mode;
   } finally {
     triageAgent.kill();
   }
@@ -637,9 +666,7 @@ export const main = async (runtime: MainRuntime = {}) => {
     return;
   }
   if (args.includes("--plan-only")) {
-    exitWithError(
-      "--plan-only is no longer supported. Use --plan <inventory> instead.",
-    );
+    exitWithError("--plan-only is no longer supported. Use --plan <inventory> instead.");
     return;
   }
   const workMode = args.includes("--work");
@@ -742,11 +769,6 @@ export const main = async (runtime: MainRuntime = {}) => {
   try {
     if (workMode) {
       planPath = resolve(workPath!);
-      if (executionPreference !== "auto") {
-        throw new Error(
-          "Execution mode overrides are not supported with --work until plan metadata is available.",
-        );
-      }
       planContent = readFileSync(planPath, "utf-8");
       executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
       printExecutionModeBanner(log, executionMode);
@@ -766,6 +788,7 @@ export const main = async (runtime: MainRuntime = {}) => {
           requestContent: srcContent,
           agentConfig,
           cwd,
+          log,
         });
         printExecutionModeBanner(log, executionMode);
         const spawnPlanGenerator = planGeneratorSpawnerFactory({ agentConfig, cwd });
@@ -791,9 +814,7 @@ export const main = async (runtime: MainRuntime = {}) => {
 
   // 4. Derive per-plan state path
   const activePlanId =
-    executionMode === "direct"
-      ? generatePlanId()
-      : ensureCanonicalPlan(planPath, orchDir);
+    executionMode === "direct" ? generatePlanId() : ensureCanonicalPlan(planPath, orchDir);
   const registryPlanPath =
     executionMode === "direct"
       ? writeDirectPlanArtifact({
@@ -835,8 +856,6 @@ export const main = async (runtime: MainRuntime = {}) => {
   }
 
   const runId = randomUUID();
-  let registered = false;
-  let executionStarted = false;
   await saveState(stateFile, {
     ...(await loadState(stateFile)),
     startedAt: new Date().toISOString(),
@@ -853,7 +872,6 @@ export const main = async (runtime: MainRuntime = {}) => {
       startedAt: new Date().toISOString(),
     });
   });
-  registered = true;
 
   // 5. Parse plan + HUD
   const exitWithCleanup = async (code: number): Promise<void> => {
@@ -910,7 +928,6 @@ export const main = async (runtime: MainRuntime = {}) => {
       cleanup = () => orch.dispose();
 
       try {
-        executionStarted = true;
         await orch.execute(directGroups);
       } catch (err) {
         if (err instanceof CreditExhaustedError) {
@@ -926,7 +943,7 @@ export const main = async (runtime: MainRuntime = {}) => {
         throw err;
       }
 
-      logSection(log, `${a.green}✅ All groups complete + final review done${a.reset}`);
+      logSection(log, `${a.green}✅ Direct request complete + final review done${a.reset}`);
       const status = await getStatus(cwd);
       log(`\n${status}`);
       cleanup();
@@ -1027,12 +1044,12 @@ export const main = async (runtime: MainRuntime = {}) => {
     const remaining = groups.slice(startIdx);
 
     try {
-      executionStarted = true;
       await orch.execute(remaining, {
         onReady: (info) =>
           printStartupBanner(log, {
             planPath,
             brief,
+            executionMode,
             auto,
             interactive,
             groupFilter,

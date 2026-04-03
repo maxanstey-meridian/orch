@@ -6,6 +6,7 @@ import type { ExecutionMode } from "#domain/config.js";
 import { a, type LogFn } from "#ui/display.js";
 import type { Group } from "./plan-parser.js";
 import { PlanSchema, parsePlanJson } from "./plan-schema.js";
+import { buildPlanGenerationPrompt } from "./prompts.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -47,66 +48,6 @@ export const ensureCanonicalPlan = (planPath: string, orchDir: string): string =
     return id;
   }
 };
-
-const PLAN_INSTRUCTIONS = `Transform this feature inventory into a group-and-slice plan.
-
-**You are generating the HIGH-LEVEL plan structure, NOT per-cycle TDD plans.** Ignore the Cycle N format from your system prompt — that is for a different task.
-
-## Required format
-
-Output valid JSON matching this schema:
-
-\`\`\`json
-{
-  "context": {
-    "architecture": "<optional architecture summary>",
-    "keyFiles": {
-      "src/foo.ts": "<why this file matters>"
-    },
-    "concepts": {
-      "someConcept": "<important product/runtime concept>"
-    },
-    "conventions": {
-      "testingBias": "<important implementation or testing convention>"
-    }
-  },
-  "groups": [
-    {
-      "name": "<group name>",
-      "description": "<optional group description>",
-      "slices": [
-        {
-          "number": 1,
-          "title": "<slice title>",
-          "why": "<one sentence explaining why this slice is needed>",
-          "files": [
-            { "path": "src/foo.ts", "action": "new" },
-            { "path": "src/bar.ts", "action": "edit" }
-          ],
-          "details": "<concrete implementation details — what to build, how it connects>",
-          "tests": "<what to test, which file>"
-        }
-      ]
-    }
-  ]
-}
-\`\`\`
-
-## Field reference
-
-- \`"action"\` must be one of: \`"new"\`, \`"edit"\`, \`"delete"\`.
-- \`"number"\` is a positive integer — globally unique across the entire plan.
-- \`"files"\` must have at least one entry per slice.
-- All string fields (\`"name"\`, \`"title"\`, \`"why"\`, \`"details"\`, \`"tests"\`) must be non-empty.
-- Top-level \`"context"\` is optional, but include it when you can infer useful repo-wide guidance that will reduce re-exploration for implementing agents.
-- Within \`"context"\`, \`"architecture"\` is an optional string and \`"keyFiles"\`, \`"concepts"\`, and \`"conventions"\` are optional string-to-string maps.
-
-## Rules
-
-- **Slice numbers must be GLOBALLY unique and sequential across the entire plan.** Group 1 has Slices 1-3, Group 2 has Slices 4-6, etc. Do NOT restart numbering per group. The orchestrator tracks progress by slice number — duplicate numbers cause slices to be skipped.
-- Target 2-3 slices per group, max 4. Respect dependency ordering.
-- Use top-level \`"context"\` for stable repo knowledge only: architecture boundaries, authoritative files, product/runtime concepts, and conventions that apply across multiple slices. Do not duplicate slice-specific details there.
-- Output ONLY the raw JSON object. No markdown code fences, no \`\`\`json blocks, no preamble, no commentary, no explanation before or after. The very first character of your response must be \`{\` and the very last must be \`}\`.`;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -173,7 +114,7 @@ export const generatePlan = async (
     parts.push("## Codebase context\n\n" + briefContent);
   }
   parts.push("## Feature inventory\n\n" + inventory);
-  parts.push(PLAN_INSTRUCTIONS);
+  parts.push(buildPlanGenerationPrompt(targetExecutionMode));
 
   const prompt = parts.join("\n\n---\n\n");
   const result = await agent.send(prompt);
@@ -199,10 +140,19 @@ export const generatePlan = async (
     } catch (error) {
       throw new Error(`Invalid JSON in plan: generated plan — ${(error as Error).message}`);
     }
-    planDocument = PlanSchema.parse({
-      ...rawPlan,
-      executionMode: targetExecutionMode,
-    });
+
+    const requestedMode = rawPlan.executionMode;
+    if (requestedMode === undefined) {
+      throw new Error("Generated plan missing required executionMode metadata");
+    }
+
+    if (requestedMode !== targetExecutionMode) {
+      throw new Error(
+        `Generated plan declared executionMode "${String(requestedMode)}" but "${targetExecutionMode}" was requested`,
+      );
+    }
+
+    planDocument = PlanSchema.parse(rawPlan);
     groups = parsePlanJson(JSON.stringify(planDocument), "generated plan");
   } catch (e) {
     console.error("--- RAW AGENT OUTPUT ---");

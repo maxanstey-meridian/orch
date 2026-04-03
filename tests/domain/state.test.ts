@@ -160,6 +160,7 @@ describe("advanceState", () => {
 
   it("groupDone clears currentPhase after group work finishes", () => {
     const state: OrchestratorState = {
+      executionMode: "grouped",
       currentPhase: "gap",
       currentGroup: "G1",
       lastCompletedSlice: 2,
@@ -168,6 +169,7 @@ describe("advanceState", () => {
     const next = advanceState(state, { kind: "groupDone", groupName: "G1" });
 
     expect(next).toEqual({
+      executionMode: "grouped",
       currentGroup: "G1",
       lastCompletedSlice: 2,
       lastCompletedGroup: "G1",

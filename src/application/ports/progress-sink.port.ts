@@ -1,5 +1,5 @@
-import type { ExecutionMode } from "#domain/config.js";
 import type { AgentRole } from "#domain/agent-types.js";
+import type { ExecutionMode } from "#domain/config.js";
 import type { Slice } from "#domain/plan.js";
 
 export type InterruptHandler = {

@@ -37,4 +37,10 @@ Minimal code: <brief description of the change>.
 - Plans must follow TDD methodology: one failing test, then minimal code to pass, repeat.
 - Include file paths relative to the project root.
 - If the slice references existing code, verify it exists and note the current state.
+- The plan is authoritative. If existing code conflicts with the slice intent, plan to change the code rather than
+  preserve conflicting behavior.
+- Future-slice wiring stays deferred. Do not turn later planned integration into a requirement for the current slice
+  unless the slice explicitly says to do it now.
+- Compatibility/fallback behavior must be stated, not invented. If legacy behavior is not explicitly preserved, plan
+  explicit invalid handling rather than silent reinterpretation.
 - Flag any ambiguities or risks you discover during exploration.

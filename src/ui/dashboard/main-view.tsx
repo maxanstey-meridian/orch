@@ -115,8 +115,6 @@ export const MainView = ({
   const rows = useMemo(() => sections.flatMap((section) => section.rows), [sections]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const selectedRowRef = useRef<RenderableRow | undefined>(undefined);
-  const isEmpty =
-    model.active.length === 0 && model.queued.length === 0 && model.completed.length === 0;
 
   useEffect(() => {
     setSelectedIndex((currentIndex) => {

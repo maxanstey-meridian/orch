@@ -28,8 +28,7 @@ type Pending = {
 const createJsonRpcError = (
   error: Record<string, unknown>,
 ): Error & { readonly code?: unknown; readonly data?: unknown } => {
-  const message =
-    typeof error.message === "string" ? error.message : "unknown JSON-RPC error";
+  const message = typeof error.message === "string" ? error.message : "unknown JSON-RPC error";
   const enriched = new Error(message) as Error & {
     readonly code?: unknown;
     readonly data?: unknown;

@@ -8,13 +8,13 @@ import type { RuntimeInteractionGate } from "#application/ports/runtime-interact
 import type { ResolvedAgentConfig } from "#domain/agent-config.js";
 import type { AgentRole } from "#domain/agent-types.js";
 import type { OrchestratorConfig } from "#domain/config.js";
+import { ROLE_STYLES } from "#ui/agent-role-styles.js";
 import type { Hud } from "#ui/hud.js";
 import { InkOperatorGate, SilentOperatorGate, InkProgressSink } from "#ui/ink-operator-gate.js";
 import {
   SilentRuntimeInteractionGate,
   InkRuntimeInteractionGate,
 } from "#ui/ink-runtime-interaction-gate.js";
-import { ROLE_STYLES } from "#ui/agent-role-styles.js";
 import { ChildProcessGitOps } from "./child-process-git-ops.js";
 import { ClaudeAgentSpawner } from "./claude-agent-spawner.js";
 import {

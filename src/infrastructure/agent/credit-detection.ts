@@ -6,7 +6,10 @@ export type CreditSignal = {
   readonly message: string;
 };
 
-const messageForApiError = (kind: "rate-limited" | "credit-exhausted", combined: string): string => {
+const messageForApiError = (
+  kind: "rate-limited" | "credit-exhausted",
+  combined: string,
+): string => {
   if (kind === "rate-limited") {
     return "Rate limited. Wait and retry.";
   }
