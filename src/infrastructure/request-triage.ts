@@ -43,9 +43,9 @@ export const buildRequestTriagePrompt = (
 ): string => `You are classifying an operator request before orchestration starts.
 
 Choose exactly one execution mode:
-- direct: the request is a bounded local change with narrow breadth of change, little dependency ordering, and no real resume value from splitting it further.
-- grouped: the request spans multiple related changes with dependency ordering or meaningful intermediate units, but it still benefits from being executed as grouped milestones rather than fine-grained slices.
-- sliced: the request has broad change surface, non-trivial dependency ordering, or strong slice-granularity resume value such that small resumable slices are materially useful.
+- direct: the total implementation is small (roughly under ~200 lines of production code, few files, no new abstractions or dependencies). Multi-step structure alone does not disqualify direct — if the whole thing is trivially small, it is direct regardless of how many logical steps the request describes. Err toward direct when in doubt.
+- grouped: the request spans multiple related changes that are individually non-trivial, with dependency ordering or meaningful intermediate deliverables, but it still benefits from grouped milestones rather than fine-grained slices.
+- sliced: the request has broad change surface across many files, non-trivial dependency ordering between substantial pieces of work, or strong slice-granularity resume value such that small resumable slices are materially useful. Only use sliced when the work genuinely benefits from per-slice checkpointing.
 
 Return a JSON object with exactly these keys:
 - "mode": one of "direct", "grouped", or "sliced"

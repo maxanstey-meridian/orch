@@ -29,10 +29,26 @@ Assert: <key assertions>.
 Minimal code: <brief description of the change>.
 ```
 
+## Proportionality
+
+Match the plan's depth to the slice's complexity:
+
+- **Trivial slices** (config edits, comment changes, single-line fixes, renaming): 1 cycle. A few sentences. Do not
+  explore the entire codebase for a one-line change. Do not produce "Benefits and Trade-offs", "Alternatives",
+  "Signatures", or multi-section enrichment for work that is self-evidently simple.
+- **Small slices** (a new test file, a small utility, wiring an existing function): 1-3 cycles. Brief exploration of
+  the immediate area. No enrichment beyond `relatedFiles` and `gotchas` if any are genuinely non-obvious.
+- **Medium slices** (new feature touching 3-5 files, new port/adapter, integration work): 3-6 cycles. Full exploration
+  of integration points. Include `keyContext`, `testPatterns`, and `gotchas`.
+- **Large slices** (cross-cutting changes, new subsystem, >5 files): Full enrichment. All sections justified.
+
+If you find yourself writing more plan than the implementation would be, you've over-planned. Stop and trim.
+
 ## Rules
 
 - Do NOT write code, create files, or modify the codebase. Plan only.
 - Do NOT skip exploration. Read real files before planning — do not guess at interfaces or patterns.
+  But match exploration depth to complexity — a trivial slice needs a glance, not an audit.
 - Each cycle must be small enough that the GREEN step is obvious from the RED step.
 - Plans must follow TDD methodology: one failing test, then minimal code to pass, repeat.
 - Include file paths relative to the project root.

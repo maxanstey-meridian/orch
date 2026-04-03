@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, stat, writeFile } from "fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import type { RunEntry } from "#domain/registry.js";
@@ -60,6 +60,9 @@ const isRunEntry = (value: unknown): value is RunEntry => {
 
 export const defaultRegistryPath = (): string => join(homedir(), ".orch", "runs.json");
 
+const tempPathForRegistry = (registryPath: string): string =>
+  `${registryPath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+
 export const readRegistry = async (registryPath: string): Promise<RunEntry[]> => {
   let raw: string;
   try {
@@ -88,7 +91,13 @@ export const readRegistry = async (registryPath: string): Promise<RunEntry[]> =>
 
 export const writeRegistry = async (registryPath: string, entries: RunEntry[]): Promise<void> => {
   await mkdir(dirname(registryPath), { recursive: true });
-  await writeFile(registryPath, JSON.stringify(entries, null, 2));
+  const tempPath = tempPathForRegistry(registryPath);
+  try {
+    await writeFile(tempPath, JSON.stringify(entries, null, 2));
+    await rename(tempPath, registryPath);
+  } finally {
+    await rm(tempPath, { force: true });
+  }
 };
 
 export const registerRun = async (registryPath: string, entry: RunEntry): Promise<void> => {
@@ -200,15 +209,6 @@ export const removeRunFromRegistry = async (registryPath: string, id: string): P
     await deregisterRun(registryPath, id);
   });
 
-const isAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 export const pruneDeadEntries = async (
   registryPath: string,
 ): Promise<{ alive: RunEntry[]; dead: RunEntry[] }> => {
@@ -217,7 +217,7 @@ export const pruneDeadEntries = async (
   const dead: RunEntry[] = [];
 
   for (const entry of entries) {
-    if (isAlive(entry.pid)) {
+    if (isProcessAlive(entry.pid)) {
       alive.push(entry);
       continue;
     }

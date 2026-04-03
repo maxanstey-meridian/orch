@@ -1,7 +1,9 @@
+import { spawn } from "child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
-import { join } from "path";
+import { join, resolve } from "path";
 import { homedir, tmpdir } from "os";
+import { pathToFileURL } from "url";
 import type { RunEntry } from "#domain/registry.js";
 import {
   defaultRegistryPath,
@@ -13,6 +15,14 @@ import {
   withRegistryLock,
   writeRegistry,
 } from "#infrastructure/registry/run-registry.js";
+
+type ChildProcessResult = {
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly timedOut: boolean;
+};
 
 type RunEntryOverrides = {
   readonly id?: string;
@@ -46,6 +56,105 @@ const makeEntry = (overrides: RunEntryOverrides = {}): RunEntry => {
   };
 };
 
+const runNodeProcess = async (
+  args: readonly string[],
+  options: { readonly timeoutMs?: number } = {},
+): Promise<ChildProcessResult> => {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(process.execPath, args, {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timeoutHandle =
+      options.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            child.kill("SIGKILL");
+          }, options.timeoutMs);
+
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
+      rejectPromise(error);
+    });
+    child.on("close", (code, signal) => {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
+      resolvePromise({
+        code,
+        signal,
+        stdout,
+        stderr,
+        timedOut,
+      });
+    });
+  });
+};
+
+const waitForRegistryLength = async (
+  registryPath: string,
+  expectedLength: number,
+  timeoutMs = 1_000,
+): Promise<RunEntry[]> => {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const entries = await readRegistry(registryPath);
+    if (entries.length === expectedLength) {
+      return entries;
+    }
+
+    await new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, 10);
+    });
+  }
+
+  return readRegistry(registryPath);
+};
+
+const registryModuleUrl = pathToFileURL(
+  resolve(process.cwd(), "src/infrastructure/registry/run-registry.ts"),
+).href;
+
+const appendWorkerScript = `
+const [moduleUrl, registryPath, entryJson] = process.argv.slice(1);
+const { readRegistry, withRegistryLock, writeRegistry } = await import(moduleUrl);
+const entry = JSON.parse(entryJson);
+
+await withRegistryLock(registryPath, async () => {
+  const entries = await readRegistry(registryPath);
+  await writeRegistry(registryPath, [...entries, entry]);
+});
+`;
+
+const readWorkerScript = `
+const [moduleUrl, registryPath, minimumLengthText, iterationsText] = process.argv.slice(1);
+const minimumLength = Number(minimumLengthText);
+const iterations = Number(iterationsText);
+const { readRegistry } = await import(moduleUrl);
+
+for (let index = 0; index < iterations; index += 1) {
+  const entries = await readRegistry(registryPath);
+  if (entries.length < minimumLength) {
+    console.error(\`Observed registry length \${entries.length} below minimum \${minimumLength}\`);
+    process.exit(1);
+  }
+}
+`;
+
 describe("run registry", () => {
   let tempDir = "";
 
@@ -54,6 +163,7 @@ describe("run registry", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -87,6 +197,79 @@ describe("run registry", () => {
     await registerRun(registryPath, second);
 
     await expect(readRegistry(registryPath)).resolves.toEqual([first, second]);
+  });
+
+  it("cross-process locked appends preserve all entries and never expose empty reads", async () => {
+    const registryPath = join(tempDir, "runs.json");
+    const largeSuffix = "x".repeat(200_000);
+    const baselineEntry = makeEntry({
+      id: "run-0",
+      planPath: `/plans/${largeSuffix}-0`,
+    });
+    const entries = Array.from({ length: 12 }, (_, index) =>
+      makeEntry({
+        id: `run-${index + 1}`,
+        pid: 50_000 + index,
+        planPath: `/plans/${largeSuffix}-${index + 1}`,
+      }),
+    );
+
+    await writeFile(registryPath, JSON.stringify([baselineEntry], null, 2));
+
+    const readerPromises = Array.from({ length: 6 }, () =>
+      runNodeProcess([
+        "--experimental-strip-types",
+        "--input-type=module",
+        "-e",
+        readWorkerScript,
+        registryModuleUrl,
+        registryPath,
+        "1",
+        "200",
+      ]),
+    );
+    const writerPromises = entries.map((entry) =>
+      runNodeProcess([
+        "--experimental-strip-types",
+        "--input-type=module",
+        "-e",
+        appendWorkerScript,
+        registryModuleUrl,
+        registryPath,
+        JSON.stringify(entry),
+      ]),
+    );
+
+    const [readerResults, writerResults] = await Promise.all([
+      Promise.all(readerPromises),
+      Promise.all(writerPromises),
+    ]);
+
+    for (const result of readerResults) {
+      expect(result).toEqual({
+        code: 0,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+      });
+    }
+
+    for (const result of writerResults) {
+      expect(result).toEqual({
+        code: 0,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+      });
+    }
+
+    const actualEntries = await waitForRegistryLength(registryPath, entries.length + 1);
+    expect(actualEntries).toHaveLength(entries.length + 1);
+    expect(actualEntries.map((entry) => entry.id).sort()).toEqual(
+      [baselineEntry, ...entries].map((entry) => entry.id).sort(),
+    );
   });
 
   it("deregisterRun removes only the matching entry", async () => {
@@ -146,6 +329,41 @@ describe("run registry", () => {
       dead: [deadEntry],
     });
     await expect(readRegistry(registryPath)).resolves.toEqual([aliveEntry, deadEntry]);
+  });
+
+  it("pruneDeadEntries keeps EPERM processes alive and marks ESRCH processes dead", async () => {
+    const registryPath = join(tempDir, "runs.json");
+    const epermEntry = makeEntry({ id: "eperm", pid: 424242 });
+    const deadEntry = makeEntry({ id: "dead", pid: 999999 });
+
+    await writeRegistry(registryPath, [epermEntry, deadEntry]);
+
+    vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (signal !== 0) {
+        return true;
+      }
+
+      if (pid === epermEntry.pid) {
+        const error = new Error("permission denied");
+        Object.assign(error, { code: "EPERM" });
+        throw error;
+      }
+
+      if (pid === deadEntry.pid) {
+        const error = new Error("no such process");
+        Object.assign(error, { code: "ESRCH" });
+        throw error;
+      }
+
+      return true;
+    });
+
+    const result = await pruneDeadEntries(registryPath);
+
+    expect(result).toEqual({
+      alive: [epermEntry],
+      dead: [deadEntry],
+    });
   });
 
   it("writeRegistry creates parent directories if missing", async () => {
@@ -247,6 +465,5 @@ describe("run registry", () => {
     await pending;
 
     expect(entered).toBe(true);
-    killSpy.mockRestore();
   });
 });
