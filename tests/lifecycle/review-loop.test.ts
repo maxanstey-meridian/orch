@@ -245,6 +245,8 @@ describe("Review loop lifecycle", () => {
     expect(tdd.sentPrompts[2]).toContain("Current direct request");
     expect(tdd.sentPrompts[2]).not.toContain("## Plan Slice");
     expect(spawner.lastAgent("review").sentPrompts).toHaveLength(2);
+    expect(spawner.lastAgent("review").sentPrompts[0]).toContain("Direct request");
+    expect(spawner.lastAgent("review").sentPrompts[0]).not.toContain("## Plan Slice");
     expect(spawner.lastAgent("completeness").sentPrompts[0]).toContain("Direct request");
     expect(spawner.lastAgent("completeness").sentPrompts[0]).not.toContain("Slice 1");
   });

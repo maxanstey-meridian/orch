@@ -272,6 +272,7 @@ describe("Happy path lifecycle", () => {
     });
 
     git.setHasChanges(true);
+    git.getDiff = vi.fn().mockResolvedValue("diff --git a/src/direct-final.ts b/src/direct-final.ts");
     prompts.finalPassesOverride = [{ name: "sanity", prompt: "check final state" }];
 
     spawner.onNextSpawn("tdd", okResult({ assistantText: "slice 1 done" }));
@@ -672,6 +673,56 @@ describe("Happy path lifecycle", () => {
     expect(spawner.agentsForRole("triage")).toHaveLength(1);
     expect(spawner.agentsForRole("gap")).toHaveLength(1);
     expect(spawner.agentsForRole("verify")).toHaveLength(0);
-    expect(spawner.lastAgent("gap").sentPrompts[0]).toContain("[GAP] from=sha-0");
+    expect(spawner.lastAgent("gap").sentPrompts[0]).toContain("Direct request");
+    expect(spawner.lastAgent("gap").sentPrompts[0]).not.toContain("group of slices");
+  });
+
+  it("direct mode runs final passes and final-fix retries against the direct request contract", async () => {
+    const { uc, spawner, persistence, git, prompts } = createTestHarness({
+      config: {
+        executionMode: "direct",
+        verifySkill: null,
+        reviewSkill: null,
+        gapDisabled: true,
+      },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+    prompts.finalPassesOverride = [{ name: "sanity", prompt: "check final state" }];
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "direct request implemented" }),
+      okResult({ assistantText: "direct mandatory test pass complete" }),
+      okResult({ assistantText: "fixed direct final issues" }),
+    );
+    spawner.onNextSpawn(
+      "triage",
+      okResult({
+        assistantText: JSON.stringify({
+          completeness: false,
+          verify: false,
+          review: false,
+          gap: false,
+          reason: "direct final path",
+        }),
+      }),
+    );
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "DIRECT_COMPLETE" }));
+    spawner.onNextSpawn("final", okResult({ assistantText: "Found issue in final pass output" }));
+    spawner.onNextSpawn("final", okResult({ assistantText: "NO_ISSUES_FOUND" }));
+
+    await uc.execute([makeGroup("Direct", [makeSlice(1)])]);
+
+    expect((persistence.current as Record<string, unknown>).executionMode).toBe("direct");
+    expect(spawner.agentsForRole("final")).toHaveLength(2);
+    expect(spawner.agentsForRole("final")[0]?.sentPrompts[0]).toContain("check final state");
+    expect(spawner.agentsForRole("final")[0]?.sentPrompts[0]).toContain("Direct request");
+    expect(spawner.agentsForRole("final")[0]?.sentPrompts[0]).not.toContain("## Plan");
+    expect(spawner.lastAgent("tdd").sentPrompts[2]).toContain("Current direct request");
+    expect(spawner.lastAgent("tdd").sentPrompts[2]).not.toContain("plan content");
+    expect(spawner.lastAgent("tdd").sentPrompts[2]).not.toContain("## Plan Slice");
   });
 });

@@ -30,8 +30,20 @@ const logPathFromStatePath = (statePath: string): string => {
 const resolvePlanName = (groups: readonly Group[], planPath: string): string =>
   groups[0]?.name ?? planNameFromPath(planPath);
 
-const buildSliceProgress = (lastCompletedSlice: number | undefined, totalSlices: number): string =>
-  `S${lastCompletedSlice ?? 0}/${totalSlices}`;
+const isDirectCompleted = (state: OrchestratorState): boolean =>
+  state.executionMode === "direct" && state.currentPhase === undefined;
+
+const buildSliceProgress = (
+  state: OrchestratorState,
+  totalSlices: number,
+  status: DashboardRun["status"],
+): string => {
+  if (status === "completed" && isDirectCompleted(state)) {
+    return `S${totalSlices}/${totalSlices}`;
+  }
+
+  return `S${state.lastCompletedSlice ?? 0}/${totalSlices}`;
+};
 
 const formatElapsedMs = (elapsedMs: number): string => {
   const elapsedMinutes = Math.floor(elapsedMs / 60_000);
@@ -74,7 +86,11 @@ const projectGroups = (
     name: group.name,
     slices: group.slices.map((slice) => {
       const status =
-        slice.number <= (state.lastCompletedSlice ?? 0)
+        isDirectCompleted(state)
+          ? "done"
+          : state.executionMode === "direct" && runStatus === "active"
+            ? "active"
+            : slice.number <= (state.lastCompletedSlice ?? 0)
           ? "done"
           : runStatus === "failed" && state.currentSlice === slice.number
             ? "failed"
@@ -137,7 +153,7 @@ const buildRun = async (entry: RunEntry, status: DashboardRun["status"]): Promis
     planName: plan.planName,
     startedAt,
     status,
-    sliceProgress: buildSliceProgress(state.lastCompletedSlice, plan.totalSlices),
+    sliceProgress: buildSliceProgress(state, plan.totalSlices, status),
     currentPhase: state.currentPhase,
     elapsed: formatElapsed(startedAt),
     pid: entry.pid,
@@ -156,6 +172,8 @@ const buildCompletedRun = async (entry: RunEntry): Promise<DashboardRun> => {
       ? state.startedAt !== undefined || state.currentPhase !== undefined
         ? "failed"
         : "dead"
+      : isDirectCompleted(state)
+        ? "completed"
       : (state.lastCompletedSlice ?? 0) === plan.totalSlices
         ? "completed"
         : "failed";
@@ -168,7 +186,7 @@ const buildCompletedRun = async (entry: RunEntry): Promise<DashboardRun> => {
     planName: plan.planName,
     startedAt,
     status,
-    sliceProgress: buildSliceProgress(state.lastCompletedSlice, plan.totalSlices),
+    sliceProgress: buildSliceProgress(state, plan.totalSlices, status),
     currentPhase: state.currentPhase,
     elapsed: formatElapsed(startedAt),
     pid: entry.pid,

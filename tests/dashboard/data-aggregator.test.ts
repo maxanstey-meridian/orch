@@ -38,6 +38,24 @@ const makePlan = () => ({
   ],
 });
 
+const makeDirectPlan = () => ({
+  groups: [
+    {
+      name: "Direct",
+      slices: [
+        {
+          number: 1,
+          title: "Direct request",
+          why: "Deliver bounded direct work",
+          files: [{ path: "src/direct.ts", action: "edit" }],
+          details: "Implement the direct request",
+          tests: "Direct request works.",
+        },
+      ],
+    },
+  ],
+});
+
 const makeRunEntry = (overrides: Partial<RunEntry> = {}): RunEntry => ({
   id: "run-1",
   pid: process.pid,
@@ -399,6 +417,49 @@ describe("data aggregator", () => {
         slices: [
           { number: 1, title: "Registry", status: "done", elapsed: "30m" },
           { number: 2, title: "Aggregator", status: "done", elapsed: "45m" },
+        ],
+      },
+    ]);
+
+    vi.useRealTimers();
+  });
+
+  it("dead PID is classified as completed when a direct run exited cleanly without slice progress", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
+
+    const registryPath = join(tempDir, "runs.json");
+    const queuePath = join(tempDir, "queue.json");
+    const planPath = join(tempDir, "direct-plan.json");
+    const statePath = join(tempDir, "direct-state.json");
+
+    await writeJson(planPath, makeDirectPlan());
+    await writeJson(statePath, {
+      executionMode: "direct",
+      startedAt: "2026-04-10T10:00:00.000Z",
+    });
+    await writeRegistry(registryPath, [
+      makeRunEntry({
+        id: "run-direct-complete",
+        pid: 999999,
+        planPath,
+        statePath,
+      }),
+    ]);
+
+    const result = await aggregateDashboard(registryPath, queuePath);
+
+    expect(result.completed).toHaveLength(1);
+    expect(result.completed[0]).toMatchObject({
+      id: "run-direct-complete",
+      status: "completed",
+      sliceProgress: "S1/1",
+    });
+    expect(result.completed[0]?.groups).toEqual([
+      {
+        name: "Direct",
+        slices: [
+          { number: 1, title: "Direct request", status: "done" },
         ],
       },
     ]);

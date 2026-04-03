@@ -26,7 +26,7 @@ import type { GitOps } from "./ports/git-ops.port.js";
 import type { LogWriter } from "./ports/log-writer.port.js";
 import type { OperatorGate } from "./ports/operator-gate.port.js";
 import type { ProgressSink } from "./ports/progress-sink.port.js";
-import type { PromptBuilder } from "./ports/prompt-builder.port.js";
+import type { FinalPass, PromptBuilder } from "./ports/prompt-builder.port.js";
 import type { StatePersistence } from "./ports/state-persistence.port.js";
 
 export type PlanThenExecuteResult = {
@@ -72,6 +72,7 @@ export class RunOrchestration {
   quitRequested = false;
   hardInterruptPending: string | null = null;
   slicesCompleted = 0;
+  currentDirectRequestContent: string | null = null;
 
   constructor(
     private readonly agents: AgentSpawner,
@@ -192,6 +193,59 @@ Rules:
     return this.prompts.verify(verifyBaseSha, unit.sliceNumber, fixSummary);
   }
 
+  private reviewPromptForUnit(
+    unit: ExecutionUnit,
+    reviewBaseSha: string,
+    priorFindings?: string,
+  ): string {
+    if (unit.kind !== "direct") {
+      return this.prompts.review(unit.content, reviewBaseSha, priorFindings);
+    }
+
+    return `Review the code changed since commit ${reviewBaseSha}. Judge the code on its own merits — correctness, types, structure — not just whether it matches a plan.
+
+${priorFindings ? `## Prior review findings
+Your previous review flagged these issues — verify each one was addressed. If any were ignored or only partially fixed, re-flag them:
+
+${priorFindings}
+
+## Review pass discipline
+This is likely your final useful review pass for this direct request.
+Re-check the prior findings carefully and only add a new issue if it is clearly material and was genuinely missed before.
+Batch related issues into one finding when they share a root cause or would be fixed by the same change.
+Do not pad the review with speculative, cosmetic, or low-value nits just to say something new.
+Do not hold back a material issue for a later pass.
+
+` : `## Review pass discipline
+Assume you may only get one useful review pass for this direct request.
+Surface the highest-signal issues now.
+Batch related issues into one finding when they share a root cause or would be fixed by the same change.
+Do not pad the review with speculative, cosmetic, or low-value nits.
+Do not hold back a material issue for a later pass.
+
+`}## What to look for
+- Bugs: incorrect runtime behavior, off-by-one, swallowed errors, race conditions
+- Type fidelity: runtime values disagreeing with declared types, \`any\`/\`unknown\` as value carriers
+- Dead code: new exports with zero consumers introduced by the change
+- Structural: duplicated logic, parallel state, mixed concerns introduced by the change
+- Names: identifiers that no longer match their scope or purpose after the change
+- Enum/value completeness: new variants not handled in all consumers
+- Over-engineering: deps bags, wrapper types, or indirection layers that exist "for testability" but add complexity with no real benefit
+- Test resilience: new tests that mock the system under test, tests that would pass even if the feature were removed, tests that assert mock call arguments instead of observable outcomes
+
+## What NOT to flag
+- Style, formatting, cosmetic preferences
+- Test coverage gaps (separate pass handles this)
+- Harmless redundancy that aids readability
+- Threshold values tuned empirically
+- Test style preferences
+
+## Direct request
+${unit.content}
+
+If all changes are correct and well-structured, respond with exactly: REVIEW_CLEAN`;
+  }
+
   private completenessPromptForUnit(unit: ExecutionUnit, baseSha: string): string {
     if (unit.kind === "direct") {
       return this.prompts.withBrief(
@@ -231,6 +285,118 @@ If anything is missing or divergent, list ALL issues. Do not stop at the first o
     }
 
     return this.prompts.completeness(unit.content, baseSha, unit.sliceNumber);
+  }
+
+  private gapPromptForRun(groupContent: string, groupBaseSha: string): string {
+    if (this.currentDirectRequestContent === null) {
+      return this.prompts.withBrief(this.prompts.gap(groupContent, groupBaseSha));
+    }
+
+    return this.prompts.withBrief(
+      `You are a gap-finder for a direct-mode builder run. A bounded direct request has just been implemented and reviewed.
+
+Your job is to find missing test coverage and unhandled edge cases — NOT code style, naming, or architecture.
+
+Assume this may be the only useful gap pass for this direct request.
+Report only the highest-signal gaps that are likely to allow a real regression, request mismatch, or unguarded reachable behavior to ship.
+Batch related variants into one gap when a single representative test or small cluster of tests would cover them.
+Do not drip-feed narrower versions of the same underlying issue across multiple passes.
+Do not hold back a material finding for later, and do not invent marginal findings just to avoid saying NO_GAPS_FOUND.
+
+## What to look for
+- Untested edge cases and boundary conditions
+- Reachable behaviors in the direct request with no regression coverage
+- Empty inputs, null inputs, and off-by-one scenarios
+- Integration paths inside the direct request that have no test coverage
+
+## Direct request
+${this.currentDirectRequestContent}
+
+If you find gaps, list each one as:
+- **Gap:** <what's missing>
+- **Suggested test:** <one-line description of the test to add>
+
+If everything is well covered, respond with exactly: NO_GAPS_FOUND`,
+    );
+  }
+
+  private gapFixPrompt(groupContent: string, gapText: string): string {
+    if (this.currentDirectRequestContent === null) {
+      return this.prompts.tdd(
+        groupContent,
+        `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
+      );
+    }
+
+    return `A gap analysis found missing test coverage for the direct request. Add the missing tests.
+
+## Current direct request
+${this.currentDirectRequestContent}
+
+## Gaps Found
+${gapText}
+
+Add tests for each gap. Do NOT refactor or change existing code unless a test exposes a real defect in the direct request implementation.`;
+  }
+
+  private finalPassesForRun(runBaseSha: string): readonly FinalPass[] {
+    const passes = this.prompts.finalPasses(runBaseSha);
+    if (this.currentDirectRequestContent === null) {
+      return passes;
+    }
+
+    return passes.map((pass) => {
+      if (pass.name === "Plan completeness") {
+        return {
+          name: "Request completeness",
+          prompt: `You are verifying that the implementation matches the direct request.
+
+Verify the changes since commit ${runBaseSha} against the direct request below.
+
+## Direct request
+${this.currentDirectRequestContent}
+
+For each requested behavior, verify:
+1. Was it implemented?
+2. Were the specified edge cases handled?
+3. Is there a test for each specified behavior?
+
+Report:
+- **Missing:** requested behaviors with no implementation
+- **Untested:** behaviors that exist but have no test coverage
+- **Divergent:** implementations that differ from the request
+
+If everything matches, respond with exactly: NO_ISSUES_FOUND`,
+        };
+      }
+
+      return {
+        name: pass.name,
+        prompt: `${pass.prompt}\n\n## Direct request\n${this.currentDirectRequestContent}\n\nJudge findings against the direct request, not a plan slice, group, or generated plan artifact.`,
+      };
+    });
+  }
+
+  private finalFixPrompt(pass: FinalPass, findings: string): string {
+    if (this.currentDirectRequestContent === null) {
+      return this.prompts.tdd(
+        this.config.planContent,
+        `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
+      );
+    }
+
+    return `A final "${pass.name}" review found issues in the direct request implementation. Address them.
+
+## Current direct request
+${this.currentDirectRequestContent}
+
+## Findings
+${findings}
+
+Rules:
+- Keep fixes scoped to this direct request.
+- Do not reframe the work as a plan slice, group, or generated plan.
+- Treat each concrete finding as an implementation obligation unless you can prove it is incorrect with code and passing tests.`;
   }
 
   private formatVerifyFailureSummary(result: VerifyResult): string {
@@ -585,8 +751,17 @@ If anything is missing or divergent, list ALL issues. Do not stop at the first o
         if (!directGroup) {
           return;
         }
-        await this.runDirectExecution(directGroup, runBaseSha);
-        await this.finalPasses(runBaseSha);
+        const directSlice = directGroup.slices[0];
+        if (!directSlice) {
+          return;
+        }
+        this.currentDirectRequestContent = directSlice.content;
+        try {
+          await this.runDirectExecution(directGroup, runBaseSha);
+          await this.finalPasses(runBaseSha);
+        } finally {
+          this.currentDirectRequestContent = null;
+        }
         return;
       }
 
@@ -1119,9 +1294,10 @@ If anything is missing or divergent, list ALL issues. Do not stop at the first o
         activeAgentActivity: `reviewing (cycle ${cycle})...`,
       });
 
+      const reviewPromptText = this.reviewPromptForUnit(unit, reviewSha, priorFindings);
       const reviewPrompt = this.reviewIsFirst
-        ? this.prompts.withBrief(this.prompts.review(unit.content, reviewSha, priorFindings))
-        : this.prompts.review(unit.content, reviewSha, priorFindings);
+        ? this.prompts.withBrief(reviewPromptText)
+        : reviewPromptText;
       this.progressSink.logBadge("review", "reviewing...");
       await this.enterPhase("review", unit.sliceNumber);
       const reviewResult = await this.withRetry(
@@ -1377,7 +1553,7 @@ Rules:
 
     this.phase = transition(this.phase, { kind: "StartFinalPasses" });
 
-    const passes = this.prompts.finalPasses(runBaseSha);
+    const passes = this.finalPassesForRun(runBaseSha);
 
     for (const pass of passes) {
       let passClean = false;
@@ -1405,10 +1581,7 @@ Rules:
           break;
         }
 
-        const fixPrompt = this.prompts.tdd(
-          this.config.planContent,
-          `A final "${pass.name}" review found issues. Address them.\n\n## Findings\n${findings}`,
-        );
+        const fixPrompt = this.finalFixPrompt(pass, findings);
         const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
         const preFixSha = await this.git.captureRef();
         this.progressSink.logBadge("tdd", "implementing...");
@@ -1451,7 +1624,7 @@ Rules:
     this.phase = transition(this.phase, { kind: "StartGap", groupName: group.name });
 
     const groupContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
-    const gapPrompt = this.prompts.withBrief(this.prompts.gap(groupContent, groupBaseSha));
+    const gapPrompt = this.gapPromptForRun(groupContent, groupBaseSha);
 
     for (let cycle = 1; cycle <= this.config.maxReviewCycles; cycle++) {
       const gapAgent = this.agents.spawn("gap", { cwd: this.config.cwd });
@@ -1476,10 +1649,7 @@ Rules:
         return;
       }
 
-      const fixPrompt = this.prompts.tdd(
-        groupContent,
-        `A gap analysis found missing test coverage. Add the missing tests.\n\n## Gaps Found\n${gapText}\n\nAdd tests for each gap. Do NOT refactor or change existing code — only add tests.`,
-      );
+      const fixPrompt = this.gapFixPrompt(groupContent, gapText);
       const actualFixPrompt = this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt;
       const preFixSha = await this.git.captureRef();
       this.progressSink.logBadge("tdd", "implementing...");
