@@ -8,6 +8,8 @@ export const withBrief = (prompt: string, brief: string): string => {
   return `${wrapBrief(brief)}\n\n${prompt}`;
 };
 
+const hasCriteriaSection = (content: string): boolean => content.includes("**Criteria:**");
+
 const PLAN_GENERATION_SHARED_INSTRUCTIONS = `Transform this feature inventory into a group-and-slice plan.
 
 **You are generating the HIGH-LEVEL plan structure, NOT per-cycle TDD plans.** Ignore the Cycle N format from your system prompt — that is for a different task.
@@ -144,6 +146,16 @@ export const buildTddPrompt = (
   fullPlan?: string,
   sliceNumber?: number,
 ): string => {
+  const criteriaChecklist = hasCriteriaSection(sliceContent)
+    ? `
+## Criteria coverage
+Treat the \`**Criteria:**\` section in the slice as a mandatory criteria coverage checklist.
+For each criterion in the \`**Criteria:**\` section:
+- implement the behavior explicitly, not just adjacent prose requirements
+- add at least one regression guard per criterion
+- do not move on until the criterion has code coverage that would fail if the key implementation line were removed
+`
+    : "";
   const planContext = fullPlan
     ? `## Full Plan Context
 This slice is part of a larger plan. Read this to understand the bigger picture — what was built in prior slices, what this slice is supposed to achieve, and how it fits into the whole. **You are implementing Slice ${sliceNumber ?? "N"} ONLY.**
@@ -201,6 +213,8 @@ If the plan slice does not contain explicit cycles, decompose it into behaviours
 ${planContext}
 ## Plan Slice
 ${sliceContent}
+
+${criteriaChecklist}
 
 ${integration}
 
@@ -285,11 +299,8 @@ export const buildCompletenessPrompt = (
   baseSha: string,
   fullPlan?: string,
   sliceNumber?: number,
-): string =>
-  `You are a completeness checker. A TDD bot just implemented a plan slice. Your job is to verify that EVERY requirement in the slice was actually implemented — not whether the code is clean, but whether it does what was asked.
-
-${
-  fullPlan
+): string => {
+  const planContext = fullPlan
     ? `## Full Plan Context
 This slice is part of a larger plan. Use this to understand the INTENT behind each requirement — what the slice is supposed to achieve within the bigger picture.
 
@@ -297,8 +308,51 @@ ${fullPlan}
 
 ---
 `
-    : ""
-}
+    : "";
+
+  if (hasCriteriaSection(sliceContent)) {
+    return `You are a completeness checker. A TDD bot just implemented a plan slice. Your job is to verify that EVERY criterion and concrete requirement in the slice was actually implemented — not whether the code is clean, but whether it does what was asked.
+
+${planContext}
+## Slice ${sliceNumber ?? "N"} (the slice that was just implemented)
+${sliceContent}
+
+## How to check
+
+1. Run \`git diff --name-only ${baseSha}..HEAD\` to see what changed.
+2. Read the changed files — the FULL files, not just diffs.
+3. Inspect the \`**Criteria:**\` section first.
+4. For each criterion in that section:
+   - Report PASS, FAIL, or DIVERGENT for each criterion
+   - decide whether it is PASS, FAIL, or DIVERGENT
+   - cite both code evidence and test evidence
+   - treat a missing regression guard as FAIL even if the behavior appears implemented
+5. After the criteria section, check any remaining concrete non-criteria requirements in the slice above.
+6. Check ARCHITECTURAL requirements separately from functional ones:
+   - If the plan says "use function X" or "call Y from domain layer", verify the import exists and the function is actually called. Grep for it.
+   - If the plan says "phase transitions use transition()" or "state advances use advanceState()", those are HARD REQUIREMENTS — not suggestions. Code that manages state a different way (e.g. manual object spreads instead of advanceState) is MISSING the requirement even if tests pass.
+   - The plan's specified approach IS the requirement. An equivalent alternative that the TDD bot chose instead is a DIVERGENT finding.
+
+## Output format
+
+For each criterion, output one line:
+- PASS **<criterion>** — code: \`file:line\`; test: \`test-file:line\`
+- FAIL **<criterion>** — <what is missing>; code: \`file:line|none\`; test: \`test-file:line|none\`
+- DIVERGENT **<criterion>** — <how it differs from the plan>; code: \`file:line\`; test: \`test-file:line|none\`
+
+After the criteria lines, output any additional requirement-level findings as needed:
+- ✅ **<requirement>** — implemented at \`file:line\`, tested in \`test-file\`
+- ❌ **<requirement>** — MISSING: <what's wrong or missing>
+- ⚠️ **<requirement>** — DIVERGENT: <how it differs from the plan's intent>
+
+If everything is complete and matches the plan, respond with exactly: SLICE_COMPLETE
+
+If anything is missing or divergent, list ALL issues. Do not stop at the first one.`;
+  }
+
+  return `You are a completeness checker. A TDD bot just implemented a plan slice. Your job is to verify that EVERY requirement in the slice was actually implemented — not whether the code is clean, but whether it does what was asked.
+
+${planContext}
 ## Slice ${sliceNumber ?? "N"} (the slice that was just implemented)
 ${sliceContent}
 
@@ -325,6 +379,7 @@ For each requirement, output one line:
 If everything is complete and matches the plan, respond with exactly: SLICE_COMPLETE
 
 If anything is missing or divergent, list ALL issues. Do not stop at the first one.`;
+};
 
 export const buildCommitSweepPrompt = (groupName: string): string =>
   `There are uncommitted changes in the working tree. Review them and commit ONLY files that belong to the "${groupName}" group's work.
@@ -372,8 +427,22 @@ export const buildReviewPrompt = (
   sliceContent: string,
   baseSha: string,
   priorFindings?: string,
-): string =>
-  `Review the code changed since commit ${baseSha}. Judge the code on its own merits — correctness, types, structure — not just whether it matches the plan.
+): string => {
+  const criteriaCheck = hasCriteriaSection(sliceContent)
+    ? `
+## Criteria check
+Check each criterion in the \`**Criteria:**\` section and verify whether the built code and tests actually satisfy it.
+If a criterion is not met, surface that as a material finding with code and test evidence.
+`
+    : "";
+
+  const planSliceSection = hasCriteriaSection(sliceContent)
+    ? `## Plan Slice
+${sliceContent}`
+    : `## Plan Slice (for context, not as acceptance criteria)
+${sliceContent}`;
+
+  return `Review the code changed since commit ${baseSha}. Judge the code on its own merits — correctness, types, structure — not just whether it matches the plan.
 
 ${priorFindings ? `## Prior review findings\nYour previous review flagged these issues — verify each one was addressed. If any were ignored or only partially fixed, re-flag them:\n\n${priorFindings}\n\n## Review pass discipline\nThis is likely your final useful review pass for this slice.\nRe-check the prior findings carefully and only add a new issue if it is clearly material and was genuinely missed before.\nBatch related issues into one finding when they share a root cause or would be fixed by the same change.\nDo not pad the review with speculative, cosmetic, or low-value nits just to say something new.\nDo not hold back a material issue for a later pass.\n\n` : `## Review pass discipline\nAssume you may only get one useful review pass for this slice.\nSurface the highest-signal issues now.\nBatch related issues into one finding when they share a root cause or would be fixed by the same change.\nDo not pad the review with speculative, cosmetic, or low-value nits.\nDo not hold back a material issue for a later pass.\n\n`}${buildReviewPreamble(baseSha)}
 
@@ -395,13 +464,22 @@ ${priorFindings ? `## Prior review findings\nYour previous review flagged these 
 - Test style preferences (describe/it nesting, assertion library choice)
 - Missing wiring to call sites that a LATER slice will handle — do not flag functions that exist but aren't called yet. However, bugs, type errors, dead code, and structural issues within the changed files are always in scope, even if the file is "not done yet."
 
-## Plan Slice (for context, not as acceptance criteria)
-${sliceContent}
+${criteriaCheck}
+
+${planSliceSection}
 
 If all changes are correct and well-structured, respond with exactly: REVIEW_CLEAN`;
+};
 
-export const buildGapPrompt = (groupContent: string, baseSha: string): string =>
-  `You are a gap-finder for a TDD pipeline. A group of slices has just been implemented and reviewed.
+export const buildGapPrompt = (groupContent: string, baseSha: string): string => {
+  const criteriaPriority = hasCriteriaSection(groupContent)
+    ? `
+Prioritise missing regression guards tied to explicit criteria ahead of generic edge-case ideas.
+If a criterion can be broken by removing its key implementation line while the tests still pass, report that before narrower hardening suggestions.
+`
+    : "";
+
+  return `You are a gap-finder for a TDD pipeline. A group of slices has just been implemented and reviewed.
 
 Your job is to find **missing test coverage and unhandled edge cases** — NOT code style, naming, or architecture.
 
@@ -410,6 +488,8 @@ Report only the **highest-signal** gaps that are likely to allow a real regressi
 Batch related variants into one gap when a single representative test or small cluster of tests would cover them.
 Do not drip-feed narrower versions of the same underlying issue across multiple passes.
 Do not hold back a material finding for later, and do not invent marginal findings just to avoid saying NO_GAPS_FOUND.
+
+${criteriaPriority}
 
 ${buildReviewPreamble(baseSha)}
 
@@ -461,6 +541,7 @@ If you find gaps, list each one as:
 - **Suggested test:** <one-line description of the test to add>
 
 If everything is well covered, respond with exactly: NO_GAPS_FOUND`;
+};
 
 export const buildFinalPasses = (
   baseSha: string,

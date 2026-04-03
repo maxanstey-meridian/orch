@@ -15,6 +15,11 @@ For every behaviour in the plan slice, follow this cycle strictly:
 
 During RED→GREEN cycles, only run the specific test file(s) you're working on (e.g. `npx vitest run src/utils/foo.test.ts`). Each cycle should confirm the new test fails, then all tests so far pass. This keeps cycles fast.
 
+If the plan slice includes a `**Criteria:**` section, treat it as a mandatory criteria coverage checklist. For each criterion in the `**Criteria:**` section:
+- implement the behavior explicitly, not just adjacent prose requirements
+- add at least one regression guard per criterion
+- do not move on until that criterion has test coverage that would fail if the key implementation line were removed
+
 After all behaviours in the slice pass, refactor if needed. Run the relevant tests after each refactor. Never refactor while RED.
 
 **When all behaviours are GREEN**, run the **full test suite** to catch regressions, then commit:

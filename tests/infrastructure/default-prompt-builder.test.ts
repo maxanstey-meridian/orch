@@ -6,6 +6,19 @@ import { TDD_RULES_REMINDER, REVIEW_RULES_REMINDER, buildRulesReminder } from "#
 
 const BRIEF = "This is a test brief";
 const PLAN_CONTENT = "Full plan content here";
+const SLICE_WITH_CRITERIA = `### Slice 2: Criteria-aware prompts
+
+**Why:** Prompt contracts need binary acceptance checks.
+
+**Files:** \`src/infrastructure/plan/prompts.ts\` (edit)
+
+**Criteria:**
+- TDD prompt requires at least one regression guard per criterion
+- Completeness prompt reports PASS/FAIL/DIVERGENT per criterion
+
+Implement criteria-aware prompt wording.
+
+**Tests:** Cover criteria-aware and legacy fallback wording.`;
 
 describe("DefaultPromptBuilder", () => {
   it("can be instantiated and is an instance of PromptBuilder", () => {
@@ -165,6 +178,17 @@ describe("DefaultPromptBuilder", () => {
     );
   });
 
+  it("keeps stored full-plan context when delegating criteria-aware tdd and completeness prompts", () => {
+    const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+    const tddPrompt = builder.tdd(SLICE_WITH_CRITERIA, undefined, 2);
+    const completenessPrompt = builder.completeness(SLICE_WITH_CRITERIA, "sha", 2);
+
+    expect(tddPrompt).toContain(PLAN_CONTENT);
+    expect(tddPrompt).toContain("For each criterion in the `**Criteria:**` section");
+    expect(completenessPrompt).toContain(PLAN_CONTENT);
+    expect(completenessPrompt).toContain("Report PASS, FAIL, or DIVERGENT for each criterion");
+  });
+
   it("groupedCompleteness builds a grouped completeness prompt", () => {
     const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
     const result = builder.groupedCompleteness("group plan", "sha", "Core");
@@ -177,6 +201,17 @@ describe("DefaultPromptBuilder", () => {
   it("gap delegates to buildGapPrompt", () => {
     const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
     expect(builder.gap("group", "sha")).toBe(buildGapPrompt("group", "sha"));
+  });
+
+  it("keeps review and gap output backward-compatible when criteria are absent", () => {
+    const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+    const legacyReview = builder.review("legacy content", "sha");
+    const legacyGap = builder.gap("legacy group content", "sha");
+
+    expect(legacyReview).not.toContain("## Criteria check");
+    expect(legacyReview).toContain("for context, not as acceptance criteria");
+    expect(legacyGap).not.toContain("Prioritise missing regression guards tied to explicit criteria");
+    expect(legacyGap).toContain("NO_GAPS_FOUND");
   });
 
   it("commitSweep delegates to buildCommitSweepPrompt", () => {

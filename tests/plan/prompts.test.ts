@@ -1,3 +1,4 @@
+import { readFileSync } from "fs";
 import { describe, it, expect } from "vitest";
 import {
   withBrief,
@@ -6,12 +7,54 @@ import {
   buildDirectTestPassPrompt,
   buildReviewPreamble,
   buildReviewPrompt,
+  buildCompletenessPrompt,
   buildGapPrompt,
   buildFinalPasses,
   buildCommitSweepPrompt,
   buildPlanPrompt,
   buildPlanGenerationPrompt,
 } from "#infrastructure/plan/prompts.js";
+
+const SLICE_WITH_CRITERIA = `### Slice 2: Criteria-aware prompts
+
+**Why:** Prompt contracts need binary acceptance checks.
+
+**Files:** \`src/infrastructure/plan/prompts.ts\` (edit)
+
+**Criteria:**
+- TDD prompt requires at least one regression guard per criterion
+- Completeness prompt reports PASS/FAIL/DIVERGENT per criterion
+
+Implement criteria-aware prompt wording.
+
+**Tests:** Cover criteria-aware and legacy fallback wording.`;
+
+const SLICE_WITHOUT_CRITERIA = `### Slice 2: Legacy prompts
+
+**Why:** Legacy plans still need fallback wording.
+
+**Files:** \`src/infrastructure/plan/prompts.ts\` (edit)
+
+Keep legacy wording intact.
+
+**Tests:** Cover legacy prompt wording.`;
+
+const GROUP_WITH_CRITERIA = `${SLICE_WITH_CRITERIA}
+
+---
+
+### Slice 3: More criteria
+
+**Why:** Gap analysis should prioritise criteria guards.
+
+**Files:** \`skills/gap.md\` (edit)
+
+**Criteria:**
+- Gap prompt prioritises missing regression guards tied to criteria
+
+Implement grouped criteria-aware gap wording.
+
+**Tests:** Cover grouped criteria gap priorities.`;
 
 describe("withBrief", () => {
   it("returns prompt unchanged when brief is empty", () => {
@@ -41,6 +84,20 @@ describe("buildTddPrompt", () => {
     expect(result).toContain("implementation obligation");
     expect(result).toContain("expected-failing test");
     expect(result).toContain("If the reviewer/gap pass tells you to implement a non-egregious fix, do it");
+  });
+
+  it("adds a mandatory per-criterion checklist and regression-guard requirement when criteria are present", () => {
+    const result = buildTddPrompt(SLICE_WITH_CRITERIA);
+    const skill = readFileSync("skills/tdd.md", "utf8");
+
+    expect(result).toContain("For each criterion in the `**Criteria:**` section");
+    expect(result).toContain("mandatory criteria coverage checklist");
+    expect(result).toContain("at least one regression guard per criterion");
+    expect(result).toContain("RED");
+    expect(result).toContain("GREEN");
+    expect(skill).toContain("For each criterion in the `**Criteria:**` section");
+    expect(skill).toContain("mandatory criteria coverage checklist");
+    expect(skill).toContain("at least one regression guard per criterion");
   });
 });
 
@@ -110,6 +167,18 @@ describe("buildReviewPrompt", () => {
     expect(result).toContain("only add a new issue if it is clearly material");
     expect(result).toContain("Do not hold back a material issue for a later pass");
   });
+
+  it("requires a criteria check section only when criteria are present", () => {
+    const criteriaResult = buildReviewPrompt(SLICE_WITH_CRITERIA, "abc123");
+    const legacyResult = buildReviewPrompt(SLICE_WITHOUT_CRITERIA, "abc123");
+
+    expect(criteriaResult).toContain("## Criteria check");
+    expect(criteriaResult).toContain("Check each criterion in the `**Criteria:**` section");
+    expect(criteriaResult).toContain("REVIEW_CLEAN");
+    expect(criteriaResult).not.toContain("for context, not as acceptance criteria");
+    expect(legacyResult).toContain("for context, not as acceptance criteria");
+    expect(legacyResult).not.toContain("## Criteria check");
+  });
 });
 
 describe("buildGapPrompt", () => {
@@ -125,6 +194,34 @@ describe("buildGapPrompt", () => {
     expect(result).toContain("Report only the **highest-signal** gaps");
     expect(result).toContain("Do not hold back a material finding for later");
     expect(result).toContain("do not invent marginal findings");
+  });
+
+  it("prioritises missing regression guards tied to explicit criteria and keeps legacy fallback wording", () => {
+    const criteriaResult = buildGapPrompt(GROUP_WITH_CRITERIA, "abc123");
+    const legacyResult = buildGapPrompt(SLICE_WITHOUT_CRITERIA, "abc123");
+    const skill = readFileSync("skills/gap.md", "utf8");
+
+    expect(criteriaResult).toContain("Prioritise missing regression guards tied to explicit criteria");
+    expect(criteriaResult).toContain("ahead of generic edge-case ideas");
+    expect(criteriaResult).toContain("NO_GAPS_FOUND");
+    expect(legacyResult).toContain("Untested edge cases and boundary conditions");
+    expect(legacyResult).not.toContain("Prioritise missing regression guards tied to explicit criteria");
+    expect(skill).toContain("Prioritise missing regression guards tied to explicit criteria");
+    expect(skill).toContain("ahead of generic edge-case ideas");
+  });
+});
+
+describe("buildCompletenessPrompt", () => {
+  it("uses criteria-first verification when criteria are present and keeps legacy fallback wording otherwise", () => {
+    const criteriaResult = buildCompletenessPrompt(SLICE_WITH_CRITERIA, "abc123", "full plan", 2);
+    const legacyResult = buildCompletenessPrompt(SLICE_WITHOUT_CRITERIA, "abc123", "full plan", 2);
+
+    expect(criteriaResult).toContain("Inspect the `**Criteria:**` section first");
+    expect(criteriaResult).toContain("Report PASS, FAIL, or DIVERGENT for each criterion");
+    expect(criteriaResult).toContain("cite both code evidence and test evidence");
+    expect(criteriaResult).toContain("SLICE_COMPLETE");
+    expect(legacyResult).toContain("For EACH concrete requirement in the slice above");
+    expect(legacyResult).not.toContain("Report PASS, FAIL, or DIVERGENT for each criterion");
   });
 });
 

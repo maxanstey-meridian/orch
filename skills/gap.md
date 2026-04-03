@@ -25,6 +25,8 @@ reviewed. You are the last line of defence before a group of slices is marked co
 - Mocking the system under test is not coverage — it's theatre.
 - If a feature sets a flag or changes state, a test must assert that state directly.
 - Integration paths between components need at least one test exercising the full path.
+- Prioritise missing regression guards tied to explicit criteria ahead of generic edge-case ideas.
+- If a criterion can be broken by removing its key implementation line while the tests still pass, report that before narrower hardening suggestions.
 
 ## Classify each finding
 
