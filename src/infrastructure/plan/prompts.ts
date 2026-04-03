@@ -205,6 +205,39 @@ ${autonomy}
 ${planAuthority}`;
 };
 
+export const buildDirectExecutePrompt = (requestContent: string): string =>
+  `Implement the following bounded whole request as one direct-mode execution unit.
+
+keep scope narrow. Do not drift into future work outside this request.
+
+## Request
+${requestContent}
+
+## Builder contract
+- Implement the whole bounded request without reframing it as slice-based or plan-driven work.
+- After implementation, you must run the mandatory test pass for this direct request.
+- Reuse real codebase patterns and integrate with the existing system rather than building in isolation.
+
+## Inference policy
+- Do not invent compatibility, legacy fallback, coercion, or migration shims unless this request explicitly requires them.
+- Do not add fail-open behavior when the request does not specify it.
+- Do not perform fake RED/GREEN ceremony or claim tests passed without running them.
+- Prefer explicit invalid handling over silent reinterpretation when behavior is underspecified.`;
+
+export const buildDirectTestPassPrompt = (requestContent: string): string =>
+  `Run the mandatory test pass for this direct request.
+
+Review the whole bounded increment, run the relevant tests, and explain:
+- changed behavior
+- regression risks
+- tests added or updated
+- why those tests are useful
+
+Do not invent future work. Keep the report scoped to this request.
+
+## Request
+${requestContent}`;
+
 export const buildVerifyPrompt = (
   baseSha: string,
   executionUnitLabel: string,

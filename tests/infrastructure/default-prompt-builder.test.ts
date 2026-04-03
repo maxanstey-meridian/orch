@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { DefaultPromptBuilder } from "#infrastructure/default-prompt-builder.js";
 import { PromptBuilder } from "#application/ports/prompt-builder.port.js";
-import { withBrief, buildPlanPrompt, buildTddPrompt, buildVerifyPrompt, buildReviewPrompt, buildCompletenessPrompt, buildCommitSweepPrompt, buildGapPrompt, buildFinalPasses } from "#infrastructure/plan/prompts.js";
+import { withBrief, buildPlanPrompt, buildTddPrompt, buildDirectExecutePrompt, buildDirectTestPassPrompt, buildVerifyPrompt, buildReviewPrompt, buildCompletenessPrompt, buildCommitSweepPrompt, buildGapPrompt, buildFinalPasses } from "#infrastructure/plan/prompts.js";
 import { TDD_RULES_REMINDER, REVIEW_RULES_REMINDER, buildRulesReminder } from "#infrastructure/claude/claude-agent-factory.js";
 
 const BRIEF = "This is a test brief";
@@ -115,6 +115,20 @@ describe("DefaultPromptBuilder", () => {
     expect(result).toContain("mandatory test pass for Group Core");
     expect(result).toContain("changed behavior");
     expect(result).toContain("group plan");
+  });
+
+  it("directExecute wraps the direct execute prompt with the stored brief", () => {
+    const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+    expect(builder.directExecute("request text")).toBe(
+      withBrief(buildDirectExecutePrompt("request text"), BRIEF),
+    );
+  });
+
+  it("directTestPass wraps the direct test-pass prompt with the stored brief", () => {
+    const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+    expect(builder.directTestPass("request text")).toBe(
+      withBrief(buildDirectTestPassPrompt("request text"), BRIEF),
+    );
   });
 
   it("review delegates to buildReviewPrompt", () => {

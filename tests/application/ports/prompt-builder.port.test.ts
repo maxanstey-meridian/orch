@@ -34,6 +34,12 @@ class MockPromptBuilder extends PromptBuilder {
   groupedTestPass(groupName: string, groupContent: string): string {
     return `groupTest:${groupName}:${groupContent}`;
   }
+  directExecute(requestContent: string): string {
+    return `directExecute:${requestContent}`;
+  }
+  directTestPass(requestContent: string): string {
+    return `directTestPass:${requestContent}`;
+  }
   verify(baseSha: string, sliceNumber: number, fixSummary?: string): string {
     return `verify:${baseSha}:${sliceNumber}:${fixSummary ?? "none"}`;
   }
@@ -122,6 +128,16 @@ describe("PromptBuilder", () => {
   it("groupedTestPass returns a string", () => {
     const builder = new MockPromptBuilder();
     expect(builder.groupedTestPass("Core", "group text")).toBe("groupTest:Core:group text");
+  });
+
+  it("directExecute returns a string", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.directExecute("request text")).toBe("directExecute:request text");
+  });
+
+  it("directTestPass returns a string", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.directTestPass("request text")).toBe("directTestPass:request text");
   });
 
   it("review returns a string without priorFindings", () => {

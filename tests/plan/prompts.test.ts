@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   withBrief,
   buildTddPrompt,
+  buildDirectExecutePrompt,
+  buildDirectTestPassPrompt,
   buildReviewPreamble,
   buildReviewPrompt,
   buildGapPrompt,
@@ -39,6 +41,43 @@ describe("buildTddPrompt", () => {
     expect(result).toContain("implementation obligation");
     expect(result).toContain("expected-failing test");
     expect(result).toContain("If the reviewer/gap pass tells you to implement a non-egregious fix, do it");
+  });
+});
+
+describe("buildDirectExecutePrompt", () => {
+  it("scopes the builder to the bounded whole request without slice or plan language", () => {
+    const result = buildDirectExecutePrompt("implement direct mode");
+    expect(result).toContain("bounded whole request");
+    expect(result).toContain("keep scope narrow");
+    expect(result).toContain("mandatory test pass");
+    expect(result).not.toContain("Slice 1");
+    expect(result).not.toContain("generated plan");
+  });
+
+  it("makes the direct-mode inference policy explicit", () => {
+    const result = buildDirectExecutePrompt("implement direct mode");
+    expect(result).toContain("Do not invent compatibility");
+    expect(result).toContain("Do not add fail-open behavior");
+    expect(result).toContain("Do not perform fake RED/GREEN ceremony");
+  });
+});
+
+describe("buildDirectTestPassPrompt", () => {
+  it("requires the mandatory test pass with useful-test audit details", () => {
+    const result = buildDirectTestPassPrompt("implement direct mode");
+    expect(result).toContain("mandatory test pass");
+    expect(result).toContain("changed behavior");
+    expect(result).toContain("regression risks");
+    expect(result).toContain("tests added or updated");
+    expect(result).toContain("why those tests are useful");
+  });
+
+  it("keeps the test pass scoped to the direct request without slice or group framing", () => {
+    const result = buildDirectTestPassPrompt("implement direct mode");
+    expect(result).toContain("implement direct mode");
+    expect(result).not.toContain("Slice");
+    expect(result).not.toContain("Group");
+    expect(result).not.toContain("generated plan");
   });
 });
 

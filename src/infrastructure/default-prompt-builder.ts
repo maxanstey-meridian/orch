@@ -8,6 +8,8 @@ import {
   withBrief as _withBrief,
   buildPlanPrompt,
   buildTddPrompt,
+  buildDirectExecutePrompt,
+  buildDirectTestPassPrompt,
   buildVerifyPrompt,
   buildReviewPrompt,
   buildCompletenessPrompt,
@@ -77,6 +79,14 @@ Do not invent future work. Keep the report scoped to this group.
 
 ## Group Content
 ${groupContent}`;
+  }
+
+  directExecute(requestContent: string): string {
+    return _withBrief(buildDirectExecutePrompt(requestContent), this.brief);
+  }
+
+  directTestPass(requestContent: string): string {
+    return _withBrief(buildDirectTestPassPrompt(requestContent), this.brief);
   }
 
   verify(baseSha: string, sliceNumber: number, fixSummary?: string): string {

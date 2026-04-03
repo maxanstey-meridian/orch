@@ -25,6 +25,14 @@ export class PassthroughPromptBuilder extends PromptBuilder {
     return `[GROUP_TEST_PASS:${groupName}] ${groupContent}`;
   }
 
+  directExecute(requestContent: string): string {
+    return `[DIRECT] ${requestContent}`;
+  }
+
+  directTestPass(requestContent: string): string {
+    return `[DIRECT_TEST_PASS] ${requestContent}`;
+  }
+
   verify(baseSha: string, sliceNumber: number, fixSummary?: string): string {
     return `[VERIFY:${sliceNumber}] from=${baseSha}${fixSummary ? ` FIX: ${fixSummary}` : ""}`;
   }

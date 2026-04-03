@@ -16,6 +16,8 @@ export abstract class PromptBuilder {
     operatorGuidance?: string,
   ): string;
   abstract groupedTestPass(groupName: string, groupContent: string): string;
+  abstract directExecute(requestContent: string): string;
+  abstract directTestPass(requestContent: string): string;
   abstract verify(baseSha: string, sliceNumber: number, fixSummary?: string): string;
   abstract groupedVerify(baseSha: string, groupName: string, fixSummary?: string): string;
   abstract review(content: string, baseSha: string, priorFindings?: string): string;
