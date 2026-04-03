@@ -4,3 +4,4 @@ dist/
 .idea/
 .pnpmrc.json
 .plans/
+.orchrc.json
