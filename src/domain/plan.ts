@@ -37,6 +37,7 @@ export type PlanContext = {
 
 export type Group = {
   readonly name: string;
+  readonly description?: string;
   readonly slices: readonly Slice[];
 };
 

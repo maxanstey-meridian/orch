@@ -90,6 +90,7 @@ export const parsePlanDocumentJson = (json: string, source = "<json>"): PlanDocu
     executionMode: result.data.executionMode,
     groups: result.data.groups.map((g) => ({
       name: g.name,
+      description: g.description,
       slices: g.slices.map(
         (s): Slice => ({
           number: s.number,

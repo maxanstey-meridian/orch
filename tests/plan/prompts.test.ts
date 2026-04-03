@@ -1,5 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { withBrief, buildTddPrompt, buildReviewPreamble, buildReviewPrompt, buildGapPrompt, buildFinalPasses, buildCommitSweepPrompt, buildPlanPrompt } from "#infrastructure/plan/prompts.js";
+import {
+  withBrief,
+  buildTddPrompt,
+  buildReviewPreamble,
+  buildReviewPrompt,
+  buildGapPrompt,
+  buildFinalPasses,
+  buildCommitSweepPrompt,
+  buildPlanPrompt,
+  buildPlanGenerationPrompt,
+} from "#infrastructure/plan/prompts.js";
 
 describe("withBrief", () => {
   it("returns prompt unchanged when brief is empty", () => {
@@ -82,6 +92,24 @@ describe("buildPlanPrompt", () => {
     expect(result).toContain("You are a planning agent");
     expect(result).toContain("slice content here");
     expect(result).toContain("Do NOT write any code");
+  });
+
+  it("makes plan authority and inference policy explicit", () => {
+    const result = buildPlanPrompt("slice content here");
+    expect(result).toContain("the plan is the authority");
+    expect(result).toContain("Future-slice wiring stays deferred");
+    expect(result).toContain("Compatibility/fallback behavior must be stated, not invented");
+  });
+});
+
+describe("buildPlanGenerationPrompt", () => {
+  it("teaches grouped mode to produce coarse increments with explicit mode metadata", () => {
+    const result = buildPlanGenerationPrompt("grouped");
+    expect(result).toContain('"executionMode": "grouped"');
+    expect(result).toContain("coarse groups with independently meaningful deliverables");
+    expect(result).toContain("review/verify cadence is driven by group boundaries");
+    expect(result).toContain("larger internal change sets");
+    expect(result).toContain("Reject micro-slice churn");
   });
 });
 

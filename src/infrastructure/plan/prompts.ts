@@ -1,3 +1,4 @@
+import type { PlannedExecutionMode } from "#domain/plan.js";
 import { wrapBrief } from "../fingerprint.js";
 
 export const withBrief = (prompt: string, brief: string): string => {
@@ -5,6 +6,94 @@ export const withBrief = (prompt: string, brief: string): string => {
     return prompt;
   }
   return `${wrapBrief(brief)}\n\n${prompt}`;
+};
+
+const PLAN_GENERATION_SHARED_INSTRUCTIONS = `Transform this feature inventory into a group-and-slice plan.
+
+**You are generating the HIGH-LEVEL plan structure, NOT per-cycle TDD plans.** Ignore the Cycle N format from your system prompt — that is for a different task.
+
+## Required format
+
+Output valid JSON matching this schema:
+
+\`\`\`json
+{
+  "executionMode": "<grouped|sliced>",
+  "context": {
+    "architecture": "<optional architecture summary>",
+    "keyFiles": {
+      "src/foo.ts": "<why this file matters>"
+    },
+    "concepts": {
+      "someConcept": "<important product/runtime concept>"
+    },
+    "conventions": {
+      "testingBias": "<important implementation or testing convention>"
+    }
+  },
+  "groups": [
+    {
+      "name": "<group name>",
+      "description": "<optional group description>",
+      "slices": [
+        {
+          "number": 1,
+          "title": "<slice title>",
+          "why": "<one sentence explaining why this slice is needed>",
+          "files": [
+            { "path": "src/foo.ts", "action": "new" },
+            { "path": "src/bar.ts", "action": "edit" }
+          ],
+          "details": "<concrete implementation details — what to build, how it connects>",
+          "tests": "<what to test, which file>"
+        }
+      ]
+    }
+  ]
+}
+\`\`\`
+
+## Field reference
+
+- \`"executionMode"\` must be \`"grouped"\` or \`"sliced"\`, and it must match the requested planning mode.
+- \`"action"\` must be one of: \`"new"\`, \`"edit"\`, \`"delete"\`.
+- \`"number"\` is a positive integer — globally unique across the entire plan.
+- \`"files"\` must have at least one entry per slice.
+- All string fields (\`"name"\`, \`"title"\`, \`"why"\`, \`"details"\`, \`"tests"\`) must be non-empty.
+- Top-level \`"context"\` is optional, but include it when you can infer useful repo-wide guidance that will reduce re-exploration for implementing agents.
+- Within \`"context"\`, \`"architecture"\` is an optional string and \`"keyFiles"\`, \`"concepts"\`, and \`"conventions"\` are optional string-to-string maps.
+
+## Rules
+
+- **Slice numbers must be GLOBALLY unique and sequential across the entire plan.** Group 1 has Slices 1-3, Group 2 has Slices 4-6, etc. Do NOT restart numbering per group. The orchestrator tracks progress by slice number — duplicate numbers cause slices to be skipped.
+- Use top-level \`"context"\` for stable repo knowledge only: architecture boundaries, authoritative files, product/runtime concepts, and conventions that apply across multiple slices. Do not duplicate slice-specific details there.
+- The generated plan is authoritative. Do not invent compatibility shims, legacy fallback, coercion, or fail-open behavior unless the inventory explicitly requires them.
+- Future-slice wiring stays deferred. Do not pull later integration work forward just to make the current group or slice feel complete.
+- Output ONLY the raw JSON object. No markdown code fences, no \`\`\`json blocks, no preamble, no commentary, no explanation before or after. The very first character of your response must be \`{\` and the very last must be \`}\`.`;
+
+const buildGroupedPlanGenerationRules = (): string => `## Grouped mode requirements
+
+- Set \`"executionMode": "grouped"\`.
+- Produce coarse groups with independently meaningful deliverables.
+- Make it obvious that review/verify cadence is driven by group boundaries, not by every internal slice.
+- Prefer a small number of larger internal steps with tolerance for larger internal change sets when the boundary deliverable stays coherent.
+- Reject micro-slice churn. Do not default to 2-3 tiny slices per group just because sliced mode would.`;
+
+const buildSlicedPlanGenerationRules = (): string => `## Sliced mode requirements
+
+- Set \`"executionMode": "sliced"\`.
+- Use finer-grained groups and slices where dependency ordering benefits from tighter review/verify cadence.
+- Target 2-3 slices per group, max 4. Respect dependency ordering.`;
+
+export const buildPlanGenerationPrompt = (targetExecutionMode: PlannedExecutionMode): string => {
+  const modeRules =
+    targetExecutionMode === "grouped"
+      ? buildGroupedPlanGenerationRules()
+      : buildSlicedPlanGenerationRules();
+
+  return `${PLAN_GENERATION_SHARED_INSTRUCTIONS}
+
+${modeRules}`;
 };
 
 export const buildPlanPrompt = (
@@ -33,6 +122,8 @@ ${sliceContent}
 2. Output numbered RED→GREEN cycles. Each cycle: one failing test, then minimal code to pass.
 3. Do NOT write any code — plan only.
 4. The plan describes the INTENT. If existing code does something different from what the plan describes, the plan is the authority — plan to change the existing code, not to preserve it.
+5. Future-slice wiring stays deferred. Do not turn later planned integration into a requirement for the current slice unless the plan explicitly says to do it now.
+6. Compatibility/fallback behavior must be stated, not invented. If the slice does not explicitly preserve legacy behavior, plan explicit invalid handling rather than silent reinterpretation.
 
 ## Enrichment
 As you explore, capture the context you discover so the implementing agent doesn't have to re-explore. Include in your output:
@@ -277,6 +368,10 @@ export const buildGapPrompt = (groupContent: string, baseSha: string): string =>
 
 Your job is to find **missing test coverage and unhandled edge cases** — NOT code style, naming, or architecture.
 
+Report only the **highest-signal** gaps that are likely to allow a real regression, plan mismatch, or unguarded reachable behavior to ship.
+Batch related variants into one gap when a single representative test or small cluster of tests would cover them.
+Do not drip-feed narrower versions of the same underlying issue across multiple passes.
+
 ${buildReviewPreamble(baseSha)}
 
 ## What to look for
@@ -291,6 +386,9 @@ ${buildReviewPreamble(baseSha)}
 - Code style, formatting, naming — already reviewed
 - Architecture suggestions, refactoring ideas — not your job
 - Things that are tested adequately — no praise needed
+- Pure branch-coverage nits once a representative regression guard already exists
+- Multiple variants of the same missing-coverage theme when one bundled finding would cover them
+- Low-value hardening ideas that do not materially increase confidence in the shipped behavior
 
 ## Test resilience check
 
@@ -309,6 +407,12 @@ For each test file changed in this group, evaluate:
    test that exercises the full path without mocking intermediate steps?
 
 Report unguarded features as gaps, same format as coverage gaps.
+
+## Prioritisation and batching rules
+- Report at most 3 gaps.
+- Prefer reachable runtime defects, public contract mismatches, missing end-to-end coverage for newly added behavior, and unguarded integration paths over narrow branch-coverage follow-ups.
+- If several findings share one root cause or would be solved by the same test cluster, collapse them into one gap.
+- If the remaining issues are only minor hardening or diminishing-return coverage ideas, respond with exactly: NO_GAPS_FOUND
 
 ## Group plan
 ${groupContent}
