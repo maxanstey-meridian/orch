@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { isVerifyPassing, parseVerifyResult } from "#domain/verify.js";
+import { buildVerifyPrompt } from "#infrastructure/plan/prompts.js";
 
 describe("parseVerifyResult", () => {
   it("parses structured VERIFY_JSON output with ownership buckets", () => {
@@ -73,6 +75,33 @@ describe("parseVerifyResult", () => {
     expect(result.runnerIssue).toContain("invalid VERIFY_JSON");
   });
 
+  it("fails closed when VERIFY_JSON is well-formed JSON but violates the required schema", () => {
+    const text = `Verification summary.
+
+### VERIFY_JSON
+\`\`\`json
+{
+  "status": "FAIL",
+  "checks": [
+    { "check": "npx vitest run", "status": "FAIL" }
+  ],
+  "sliceLocalFailures": [],
+  "outOfScopeFailures": [],
+  "preExistingFailures": [],
+  "runnerIssue": null,
+  "retryable": "yes"
+}
+\`\`\``;
+    const result = parseVerifyResult(text);
+
+    expect(result.status).toBe("FAIL");
+    expect(result.valid).toBe(false);
+    expect(result.retryable).toBe(false);
+    expect(result.runnerIssue).toContain("failed VERIFY_JSON validation");
+    expect(result.runnerIssue).toContain("retryable");
+    expect(result.runnerIssue).toContain("summary");
+  });
+
   it("preserves slice-local, out-of-scope, and pre-existing failures independently of retryable", () => {
     const text = `Verification summary: external failure only.
 
@@ -129,5 +158,26 @@ describe("parseVerifyResult", () => {
       "tests/queue/queue-store.test.ts: flaky cross-process write race",
     ]);
     expect(isVerifyPassing(result)).toBe(true);
+  });
+
+  it("verify prompt requires a short human summary and the structured VERIFY_JSON block", () => {
+    const prompt = buildVerifyPrompt("abc123", "Group Core", "builder fixed the shared spec");
+
+    expect(prompt).toContain("short human summary");
+    expect(prompt).toContain("### VERIFY_JSON");
+    expect(prompt).toContain('"sliceLocalFailures"');
+    expect(prompt).toContain('"runnerIssue"');
+    expect(prompt).toContain("sliceLocalFailures");
+    expect(prompt).toContain("ONLY failures the builder should be asked to fix");
+  });
+
+  it("verify skill requires the human summary plus mandatory VERIFY_JSON contract", () => {
+    const skill = readFileSync("skills/verify.md", "utf8");
+
+    expect(skill).toContain("A short human summary of what you verified.");
+    expect(skill).toContain("### VERIFY_JSON");
+    expect(skill).toContain("sliceLocalFailures");
+    expect(skill).toContain("runnerIssue");
+    expect(skill).toContain("The `### VERIFY_JSON` block is mandatory.");
   });
 });

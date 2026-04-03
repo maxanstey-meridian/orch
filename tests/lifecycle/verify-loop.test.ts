@@ -345,4 +345,67 @@ describe("Verify loop lifecycle", () => {
     expect(spawner.lastAgent("tdd").sentPrompts).toHaveLength(1);
     expect(spawner.lastAgent("verify").sentPrompts).toHaveLength(1);
   });
+
+  it("auto mode stops cleanly when verification reports only a runner issue", async () => {
+    const { uc, hud, spawner, git } = createTestHarness({
+      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented" }));
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn(
+      "verify",
+      okResult({
+        assistantText: verifyJson({
+          status: "FAIL",
+          checks: [{ check: "npx vitest run", status: "WARN" }],
+          sliceLocalFailures: [],
+          outOfScopeFailures: [],
+          preExistingFailures: [],
+          runnerIssue: "Vitest worker hung before any assertions completed.",
+          retryable: false,
+          summary: "Verification could not complete because the runner was unstable.",
+        }),
+      }),
+    );
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+
+    await expect(uc.execute([makeGroup("G1", [makeSlice(1)])])).rejects.toThrow(
+      "Slice 1 verification failed: Verification could not complete because the runner was unstable.",
+    );
+
+    expect(hud.askPrompts.filter((prompt) => prompt.includes("verification failed"))).toHaveLength(0);
+    expect(spawner.lastAgent("tdd").sentPrompts).toHaveLength(1);
+    expect(spawner.lastAgent("verify").sentPrompts).toHaveLength(1);
+  });
+
+  it("auto mode stops after a builder-fixable verify failure when the builder makes no relevant change", async () => {
+    const { uc, hud, spawner, git } = createTestHarness({
+      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      auto: true,
+    });
+
+    git.queueHasChanges(true);
+    git.setHasChanges(false);
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented" }),
+      okResult({ assistantText: "attempted verify fix but changed nothing" }),
+    );
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn("verify", okResult({ assistantText: VERIFY_FAIL }));
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+
+    await expect(uc.execute([makeGroup("G1", [makeSlice(1)])])).rejects.toThrow(
+      "Slice 1 verification failed without builder changes",
+    );
+
+    expect(hud.askPrompts.filter((prompt) => prompt.includes("verification failed"))).toHaveLength(0);
+    expect(spawner.lastAgent("tdd").sentPrompts).toHaveLength(2);
+    expect(spawner.lastAgent("verify").sentPrompts).toHaveLength(1);
+  });
 });

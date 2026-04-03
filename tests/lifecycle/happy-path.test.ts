@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createTestHarness, okResult } from "../fakes/harness.js";
 import type { Group, Slice } from "#domain/plan.js";
 import { formatExecutionModeSummary } from "#ui/display.js";
@@ -177,6 +177,59 @@ describe("Happy path lifecycle", () => {
     expect(spawner.lastAgent("verify").sentPrompts[0]).toContain("[GROUP_VERIFY:G1]");
     expect(spawner.lastAgent("completeness").sentPrompts[0]).toContain("[GROUP_COMPLETENESS:G1]");
     expect(spawner.lastAgent("review").sentPrompts).toHaveLength(1);
+  });
+
+  it("grouped mode captures the group-entry diff base and runs triage and gap once for the whole group", async () => {
+    const { uc, spawner, persistence, git } = createTestHarness({
+      config: {
+        executionMode: "grouped",
+        planDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        gapDisabled: false,
+      },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+    git.captureRef = vi
+      .fn()
+      .mockResolvedValueOnce("run-base")
+      .mockResolvedValueOnce("group-base")
+      .mockResolvedValueOnce("after-tdd")
+      .mockResolvedValueOnce("after-review");
+    git.getDiff = vi.fn().mockResolvedValue("diff --git a/src/group.ts b/src/group.ts");
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented grouped unit" }),
+      okResult({ assistantText: "ran grouped mandatory test pass" }),
+    );
+    spawner.onNextSpawn(
+      "triage",
+      okResult({
+        assistantText: JSON.stringify({
+          completeness: true,
+          verify: false,
+          review: false,
+          gap: true,
+          reason: "group-level cadence",
+        }),
+      }),
+    );
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "GROUP_COMPLETE" }));
+    spawner.onNextSpawn("gap", okResult({ assistantText: "NO_GAPS_FOUND" }));
+
+    await uc.execute([makeGroup("G1", [makeSlice(1), makeSlice(2)])]);
+
+    expect(persistence.current.lastCompletedSlice).toBe(2);
+    expect(spawner.agentsForRole("triage")).toHaveLength(1);
+    expect(spawner.agentsForRole("gap")).toHaveLength(1);
+    expect(git.getDiff).toHaveBeenCalledTimes(1);
+    expect(git.getDiff).toHaveBeenCalledWith("group-base");
+    expect(spawner.lastAgent("completeness").sentPrompts[0]).toContain("[GROUP_COMPLETENESS:G1] from=group-base");
+    expect(spawner.lastAgent("gap").sentPrompts[0]).toContain("[GAP] from=group-base");
   });
 
   it("persists slice and phase progress for an active slice without mutating earlier saves", async () => {

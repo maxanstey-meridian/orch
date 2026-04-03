@@ -4,7 +4,8 @@ import type { InterruptHandler, ProgressUpdate } from "#application/ports/progre
 import type { AgentRole } from "#domain/agent-types.js";
 import type { ExecutionMode } from "#domain/config.js";
 import type { Slice } from "#domain/plan.js";
-import { styleForRole } from "#ui/ink-operator-gate.js";
+import { InkOperatorGate, SilentOperatorGate, styleForRole } from "#ui/ink-operator-gate.js";
+import { FakeHud } from "../../fakes/fake-hud.js";
 
 class TestProgressSink extends ProgressSink {
   registerInterrupts(): InterruptHandler {
@@ -92,5 +93,27 @@ describe("styleForRole", () => {
     ["completeness", "PLAN"],
   ] as const)("maps %s → label %s", (role, expectedLabel) => {
     expect(styleForRole(role).label).toBe(expectedLabel);
+  });
+});
+
+describe("verify gates", () => {
+  it("SilentOperatorGate stops verify failures instead of blindly retrying", async () => {
+    const gate = new SilentOperatorGate();
+
+    await expect(gate.verifyFailed("Group Core", "runner issue", true)).resolves.toEqual({
+      kind: "stop",
+    });
+  });
+
+  it("InkOperatorGate omits retry for non-retryable verification failures", async () => {
+    const hud = new FakeHud();
+    const gate = new InkOperatorGate(hud);
+
+    hud.queueAskAnswer("r");
+
+    await expect(gate.verifyFailed("Group Core", "runner issue", false)).resolves.toEqual({
+      kind: "stop",
+    });
+    expect(hud.askPrompts[0]).not.toContain("(r)etry");
   });
 });
