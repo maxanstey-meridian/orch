@@ -187,7 +187,13 @@ export const printStartupBanner = (log: LogFn, opts: BannerOpts): void => {
   log(`   ${BOT_REVIEW.badge} ${a.dim}persistent (${opts.reviewSessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
   if (opts.interactive) {
-    log(`   ${a.dim}Press${a.reset} ${a.bold}S${a.reset} ${a.dim}to skip current slice${a.reset}`);
+    if (opts.executionMode === "sliced") {
+      log(`   ${a.dim}Press${a.reset} ${a.bold}S${a.reset} ${a.dim}to skip current slice${a.reset}`);
+    } else {
+      log(
+        `   ${a.dim}Press${a.reset} ${a.bold}G${a.reset}/${a.bold}I${a.reset}/${a.bold}Q${a.reset} ${a.dim}for guide, interrupt, or quit${a.reset}`,
+      );
+    }
   }
 
   log("");

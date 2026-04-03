@@ -1429,6 +1429,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
   }));
 
   const execute = vi.fn().mockResolvedValue(undefined);
+  const logSection = vi.fn();
   const createContainer = vi.fn(() => ({
     resolve: vi.fn(() => ({
       execute,
@@ -1575,7 +1576,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     const actual = await vi.importActual<typeof import("#ui/display.js")>("#ui/display.js");
     return {
       ...actual,
-      logSection: vi.fn(),
+      logSection,
       printStartupBanner: vi.fn(),
       formatPlanSummary: vi.fn(),
     };
@@ -1636,6 +1637,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     inventoryPath,
     registryPath,
     triageAgent,
+    logSection,
   };
 };
 
@@ -1987,6 +1989,17 @@ describe("main execution preference wiring", () => {
         details: "Implement the inventory request directly without generated plan slices.",
         tests: "Run the relevant tests and explain the coverage changes.",
       }),
+    );
+  });
+
+  it("uses direct-specific completion copy after a successful direct inventory run", async () => {
+    const { logSection } = await runMainWithInventoryPlanMocks({
+      args: ["--quick"],
+    });
+
+    expect(logSection).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.stringContaining("Direct request complete + final review done"),
     );
   });
 

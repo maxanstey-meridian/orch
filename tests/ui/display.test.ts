@@ -116,6 +116,16 @@ describe("printStartupBanner", () => {
     const { lines, log } = collect();
     printStartupBanner(log, baseOpts);
     const text = strip(lines.join("\n"));
+    expect(text).toContain("guide");
+    expect(text).toContain("interrupt");
+    expect(text).toContain("quit");
+    expect(text).not.toContain("skip current slice");
+  });
+
+  it("shows slice skip hint only for sliced interactive runs", () => {
+    const { lines, log } = collect();
+    printStartupBanner(log, { ...baseOpts, executionMode: "sliced" });
+    const text = strip(lines.join("\n"));
     expect(text).toContain("skip current slice");
   });
 

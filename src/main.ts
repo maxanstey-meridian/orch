@@ -954,7 +954,7 @@ export const main = async (runtime: MainRuntime = {}) => {
         throw err;
       }
 
-      logSection(log, `${a.green}✅ All groups complete + final review done${a.reset}`);
+      logSection(log, `${a.green}✅ Direct request complete + final review done${a.reset}`);
       const status = await getStatus(cwd);
       log(`\n${status}`);
       cleanup();
