@@ -437,6 +437,7 @@ describe("data aggregator", () => {
     await writeJson(statePath, {
       executionMode: "direct",
       startedAt: "2026-04-10T10:00:00.000Z",
+      completedAt: "2026-04-10T11:00:00.000Z",
     });
     await writeRegistry(registryPath, [
       makeRunEntry({
@@ -460,6 +461,49 @@ describe("data aggregator", () => {
         name: "Direct",
         slices: [
           { number: 1, title: "Direct request", status: "done" },
+        ],
+      },
+    ]);
+
+    vi.useRealTimers();
+  });
+
+  it("dead PID is classified as failed when a direct run only persisted startup state", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
+
+    const registryPath = join(tempDir, "runs.json");
+    const queuePath = join(tempDir, "queue.json");
+    const planPath = join(tempDir, "direct-plan.json");
+    const statePath = join(tempDir, "direct-state-startup.json");
+
+    await writeJson(planPath, makeDirectPlan());
+    await writeJson(statePath, {
+      executionMode: "direct",
+      startedAt: "2026-04-10T10:00:00.000Z",
+    });
+    await writeRegistry(registryPath, [
+      makeRunEntry({
+        id: "run-direct-startup-crash",
+        pid: 999999,
+        planPath,
+        statePath,
+      }),
+    ]);
+
+    const result = await aggregateDashboard(registryPath, queuePath);
+
+    expect(result.completed).toHaveLength(1);
+    expect(result.completed[0]).toMatchObject({
+      id: "run-direct-startup-crash",
+      status: "failed",
+      sliceProgress: "S0/1",
+    });
+    expect(result.completed[0]?.groups).toEqual([
+      {
+        name: "Direct",
+        slices: [
+          { number: 1, title: "Direct request", status: "pending" },
         ],
       },
     ]);

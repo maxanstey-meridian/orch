@@ -10,6 +10,7 @@ export type PersistedAgentSession = {
 
 export type OrchestratorState = {
   readonly startedAt?: string;
+  readonly completedAt?: string;
   readonly executionMode?: ExecutionMode;
   readonly currentPhase?: PersistedPhase;
   readonly currentSlice?: number;

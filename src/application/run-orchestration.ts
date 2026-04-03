@@ -436,6 +436,7 @@ Rules:
   private async persistRunState(): Promise<void> {
     this.state = {
       ...this.state,
+      completedAt: undefined,
       ...(this.config.executionMode === "direct"
         ? { executionMode: this.config.executionMode }
         : {}),
@@ -559,10 +560,14 @@ Rules:
   }
 
   private async clearPersistedPhase(): Promise<void> {
-    if (this.state.currentPhase === undefined) {
+    if (this.state.currentPhase === undefined && this.state.completedAt !== undefined) {
       return;
     }
-    this.state = { ...this.state, currentPhase: undefined };
+    this.state = {
+      ...this.state,
+      currentPhase: undefined,
+      completedAt: this.state.completedAt ?? new Date().toISOString(),
+    };
     await this.persistence.save(this.state);
   }
 

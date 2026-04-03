@@ -31,7 +31,7 @@ const resolvePlanName = (groups: readonly Group[], planPath: string): string =>
   groups[0]?.name ?? planNameFromPath(planPath);
 
 const isDirectCompleted = (state: OrchestratorState): boolean =>
-  state.executionMode === "direct" && state.currentPhase === undefined;
+  state.executionMode === "direct" && state.completedAt !== undefined;
 
 const buildSliceProgress = (
   state: OrchestratorState,

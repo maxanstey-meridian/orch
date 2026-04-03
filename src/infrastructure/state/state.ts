@@ -17,6 +17,7 @@ const persistedAgentSessionSchema = z.object({
 const stateSchema = z
   .object({
     startedAt: z.string().optional(),
+    completedAt: z.string().optional(),
     executionMode: z.enum(executionModes).optional(),
     currentPhase: z.enum(persistedPhases).optional(),
     currentSlice: z.number().int().nonnegative().optional(),
