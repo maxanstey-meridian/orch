@@ -148,6 +148,43 @@ export class RunOrchestration {
     verifyBaseSha: string,
     fixSummary?: string,
   ): string {
+    if (unit.kind === "direct") {
+      return this.prompts.withBrief(
+        `Verify the changes since commit ${verifyBaseSha}. Context: TDD implementation of the direct request.\n\n${
+          fixSummary ? `## Fix summary from the builder\n${fixSummary}\n\n` : ""
+        }## Direct request\n${unit.content}\n\n## Instructions
+1. Review the changed code and run the verification commands you judge necessary.
+2. You MUST end with a short human summary followed by a machine-readable \`### VERIFY_JSON\` block in the exact format below.
+3. Do not replace the structured block with prose. You may include prose before it, but the block is mandatory.
+
+## Required output format
+
+### VERIFY_JSON
+\`\`\`json
+{
+  "status": "PASS|FAIL|PASS_WITH_WARNINGS",
+  "checks": [
+    { "check": "<command or check name>", "status": "PASS|FAIL|WARN|SKIPPED" }
+  ],
+  "sliceLocalFailures": ["<failure caused by the current execution unit>"],
+  "outOfScopeFailures": ["<failure not owned by the current execution unit>"],
+  "preExistingFailures": ["<failure that already existed before these changes>"],
+  "runnerIssue": "<runner instability or hung process summary>" | null,
+  "retryable": true,
+  "summary": "<one concise summary sentence>"
+}
+\`\`\`
+
+Rules:
+- \`sliceLocalFailures\` are the ONLY failures the builder should be asked to fix.
+- Put unrelated failures in \`outOfScopeFailures\`, not \`sliceLocalFailures\`.
+- Put already-failing checks in \`preExistingFailures\`.
+- Use \`runnerIssue\` for hung runners, crashed tooling, or unstable infrastructure rather than blaming the builder.
+- If the direct request is clean, use PASS or PASS_WITH_WARNINGS and leave \`sliceLocalFailures\` empty.
+- "No findings" prose alone is NOT sufficient; you must include the JSON block above.`,
+      );
+    }
+
     if (unit.kind === "group") {
       return this.prompts.groupedVerify(verifyBaseSha, unit.groupName, fixSummary);
     }
@@ -156,6 +193,39 @@ export class RunOrchestration {
   }
 
   private completenessPromptForUnit(unit: ExecutionUnit, baseSha: string): string {
+    if (unit.kind === "direct") {
+      return this.prompts.withBrief(
+        `You are a completeness checker. A builder just implemented the direct request below as one bounded increment. Your job is to verify that EVERY stated requirement in the request was actually implemented — not whether the code is clean, but whether it does what was asked.
+
+## Direct request
+${unit.content}
+
+## How to check
+
+1. Run \`git diff --name-only ${baseSha}..HEAD\` to see what changed.
+2. Read the changed files — the FULL files, not just diffs.
+3. For EACH concrete requirement in the direct request above, check:
+   - **Is it implemented?** Find the code that does it. Cite the file and line.
+   - **Does it match the request's intent?** If the request says "filter by X" but the code "includes everything and also X", that is WRONG — the direct request is the authority.
+   - **Is there a test?** Find a test that would fail if this requirement were removed.
+4. Check ARCHITECTURAL requirements separately from functional ones:
+   - If the request says "use function X" or "call Y from domain layer", verify the import exists and the function is actually called. Grep for it.
+   - If the request says "phase transitions use transition()" or "state advances use advanceState()", those are HARD REQUIREMENTS — not suggestions. Code that manages state a different way is MISSING the requirement even if tests pass.
+   - The request's specified approach IS the requirement. An equivalent alternative that the builder chose instead is a DIVERGENT finding.
+
+## Output format
+
+For each requirement, output one line:
+- ✅ **<requirement>** — implemented at \`file:line\`, tested in \`test-file\`
+- ❌ **<requirement>** — MISSING: <what's wrong or missing>
+- ⚠️ **<requirement>** — DIVERGENT: <how it differs from the request's intent>
+
+If everything is complete and matches the request, respond with exactly: DIRECT_COMPLETE
+
+If anything is missing or divergent, list ALL issues. Do not stop at the first one.`,
+      );
+    }
+
     if (unit.kind === "group") {
       return this.prompts.groupedCompleteness(unit.content, baseSha, unit.groupName);
     }
@@ -715,63 +785,66 @@ export class RunOrchestration {
     sliceNumber: number,
     forceAccept = false,
   ): Promise<PlanThenExecuteResult> {
-    if (this.config.planDisabled) {
+    if (this.config.executionMode === "direct") {
       this.phase = transition(this.phase, { kind: "PlanReady", planText: "" });
       this.phase = transition(this.phase, { kind: "PlanAccepted" });
 
-      if (this.config.executionMode === "direct") {
-        const directExecutePrompt = this.prompts.directExecute(sliceContent);
-        this.progressSink.logBadge("tdd", "implementing...");
-        await this.enterPhase("tdd", sliceNumber);
-        const executeResult = await this.withRetry(
-          () => this.tddAgent!.send(directExecutePrompt),
-          this.tddAgent!,
-          "tdd",
-          "direct-execute",
-        );
+      const directExecutePrompt = this.prompts.directExecute(sliceContent);
+      this.progressSink.logBadge("tdd", "implementing...");
+      await this.enterPhase("tdd", sliceNumber);
+      const executeResult = await this.withRetry(
+        () => this.tddAgent!.send(directExecutePrompt),
+        this.tddAgent!,
+        "tdd",
+        "direct-execute",
+      );
 
-        if (executeResult.needsInput) {
-          await this.followUp(executeResult, this.tddAgent!);
-        }
-
-        if (this.sliceSkipFlag) {
-          this.phase = { kind: "Idle" };
-          return { tddResult: executeResult, skipped: true };
-        }
-
-        const execInterrupt = this.hardInterruptPending;
-        if (execInterrupt) {
-          return { tddResult: executeResult, skipped: false, hardInterrupt: execInterrupt };
-        }
-
-        const directTestPassPrompt = this.prompts.directTestPass(sliceContent);
-        this.progressSink.logBadge("tdd", "testing...");
-        await this.enterPhase("tdd", sliceNumber);
-        const testPassResult = await this.withRetry(
-          () => this.tddAgent!.send(directTestPassPrompt),
-          this.tddAgent!,
-          "tdd",
-          "direct-test-pass",
-        );
-
-        if (testPassResult.needsInput) {
-          await this.followUp(testPassResult, this.tddAgent!);
-        }
-
-        if (this.sliceSkipFlag) {
-          this.phase = { kind: "Idle" };
-          return { tddResult: executeResult, skipped: true };
-        }
-
-        const testPassInterrupt = this.hardInterruptPending;
-        if (testPassInterrupt) {
-          return { tddResult: executeResult, skipped: false, hardInterrupt: testPassInterrupt };
-        }
-
-        this.tddIsFirst = false;
-        this.phase = transition(this.phase, { kind: "ExecutionDone" });
-        return { tddResult: executeResult, skipped: false };
+      if (executeResult.needsInput) {
+        await this.followUp(executeResult, this.tddAgent!);
       }
+
+      if (this.sliceSkipFlag) {
+        this.phase = { kind: "Idle" };
+        return { tddResult: executeResult, skipped: true };
+      }
+
+      const execInterrupt = this.hardInterruptPending;
+      if (execInterrupt) {
+        return { tddResult: executeResult, skipped: false, hardInterrupt: execInterrupt };
+      }
+
+      const directTestPassPrompt = this.prompts.directTestPass(sliceContent);
+      this.progressSink.logBadge("tdd", "testing...");
+      await this.enterPhase("tdd", sliceNumber);
+      const testPassResult = await this.withRetry(
+        () => this.tddAgent!.send(directTestPassPrompt),
+        this.tddAgent!,
+        "tdd",
+        "direct-test-pass",
+      );
+
+      if (testPassResult.needsInput) {
+        await this.followUp(testPassResult, this.tddAgent!);
+      }
+
+      if (this.sliceSkipFlag) {
+        this.phase = { kind: "Idle" };
+        return { tddResult: executeResult, skipped: true };
+      }
+
+      const testPassInterrupt = this.hardInterruptPending;
+      if (testPassInterrupt) {
+        return { tddResult: executeResult, skipped: false, hardInterrupt: testPassInterrupt };
+      }
+
+      this.tddIsFirst = false;
+      this.phase = transition(this.phase, { kind: "ExecutionDone" });
+      return { tddResult: executeResult, skipped: false };
+    }
+
+    if (this.config.planDisabled) {
+      this.phase = transition(this.phase, { kind: "PlanReady", planText: "" });
+      this.phase = transition(this.phase, { kind: "PlanAccepted" });
 
       const prompt = this.tddIsFirst
         ? this.prompts.withBrief(this.prompts.tdd(sliceContent, undefined, sliceNumber))
@@ -1114,7 +1187,11 @@ export class RunOrchestration {
 
       const text = result.assistantText ?? "";
       const hasMissing = text.includes("❌") || text.includes("MISSING");
-      const completionSentinel = unit.kind === "group" ? "GROUP_COMPLETE" : "SLICE_COMPLETE";
+      const completionSentinel = unit.kind === "group"
+        ? "GROUP_COMPLETE"
+        : unit.kind === "direct"
+          ? "DIRECT_COMPLETE"
+          : "SLICE_COMPLETE";
       if (text.includes(completionSentinel) && !hasMissing) {
         return;
       }
@@ -1123,11 +1200,25 @@ export class RunOrchestration {
       this.phase = transition(this.phase, { kind: "VerifyPassed" });
       this.phase = transition(this.phase, { kind: "CompletenessIssues" });
 
-      const fixPrompt = this.prompts.tdd(
-        unit.content,
-        `A completeness check found that your implementation does not fully match the plan. Fix ALL issues below.\n\n## Completeness Findings\n${text}\n\nRules:\n- ❌ MISSING items are HARD FAILURES. The plan is the contract. Code that works but doesn't implement the plan's specified approach is NOT complete. You must implement what the plan says, not an alternative that passes tests.\n- ⚠️ DIVERGENT items mean your approach differs from the plan's intent. Change your implementation to match the plan, not the other way around.\n- If the plan says "use function X" or "call Y", your code must actually import and call X/Y. Passing tests are necessary but NOT sufficient — the plan's architectural requirements are equally binding.\n- Do NOT argue that your approach is equivalent. Do NOT skip items because tests pass without them. Implement what the plan says.`,
-        unit.sliceNumber,
-      );
+      const fixPrompt = unit.kind === "direct"
+        ? `A completeness check found that your implementation does not fully match the direct request. Fix ALL issues below.
+
+## Current direct request
+${unit.content}
+
+## Completeness Findings
+${text}
+
+Rules:
+- ❌ MISSING items are HARD FAILURES. The direct request is the contract. Code that works but doesn't implement what was requested is NOT complete.
+- ⚠️ DIVERGENT items mean your approach differs from the request's intent. Change your implementation to match the request, not the other way around.
+- If the request says "use function X" or "call Y", your code must actually import and call X/Y. Passing tests are necessary but NOT sufficient.
+- Do NOT argue that your approach is equivalent. Do NOT skip items because tests pass without them. Implement what the request says.`
+        : this.prompts.tdd(
+            unit.content,
+            `A completeness check found that your implementation does not fully match the plan. Fix ALL issues below.\n\n## Completeness Findings\n${text}\n\nRules:\n- ❌ MISSING items are HARD FAILURES. The plan is the contract. Code that works but doesn't implement the plan's specified approach is NOT complete. You must implement what the plan says, not an alternative that passes tests.\n- ⚠️ DIVERGENT items mean your approach differs from the plan's intent. Change your implementation to match the plan, not the other way around.\n- If the plan says "use function X" or "call Y", your code must actually import and call X/Y. Passing tests are necessary but NOT sufficient — the plan's architectural requirements are equally binding.\n- Do NOT argue that your approach is equivalent. Do NOT skip items because tests pass without them. Implement what the plan says.`,
+            unit.sliceNumber,
+          );
       const preFixSha = await this.git.captureRef();
       this.progressSink.logBadge("tdd", "implementing...");
       await this.enterPhase("tdd", unit.sliceNumber);
@@ -1191,7 +1282,9 @@ export class RunOrchestration {
       }
 
       // Send findings to TDD for fixing
-      const retryPrompt = `Verification found issues after your implementation. Fix them in ${unit.label}.\n\n## Current ${unit.kind === "group" ? "group" : "slice"} content\n${unit.content}\n\n## Slice-local failures\n${parsed.sliceLocalFailures.join("\n")}\n\n## Verification summary\n${parsed.summary}`;
+      const retryPrompt = `Verification found issues after your implementation. Fix them in ${unit.label}.\n\n## Current ${
+        unit.kind === "group" ? "group" : unit.kind === "direct" ? "direct request" : "slice"
+      } content\n${unit.content}\n\n## Slice-local failures\n${parsed.sliceLocalFailures.join("\n")}\n\n## Verification summary\n${parsed.summary}`;
       const preFixSha = await this.git.captureRef();
       this.progressSink.logBadge("tdd", "implementing...");
       await this.enterPhase("tdd", unit.sliceNumber);

@@ -196,7 +196,7 @@ describe("Review loop lifecycle", () => {
 
   it("direct mode fixes review findings against the whole request without persisting slice completion", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
-      config: { executionMode: "direct", planDisabled: true, gapDisabled: true, verifySkill: null },
+      config: { executionMode: "direct", gapDisabled: true, verifySkill: null },
       auto: true,
     });
 
@@ -223,7 +223,7 @@ describe("Review loop lifecycle", () => {
         reason: "direct review path",
       }),
     }));
-    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "DIRECT_COMPLETE" }));
 
     await uc.execute([makeGroup("Direct", [makeSlice(1)])]);
 
@@ -243,5 +243,7 @@ describe("Review loop lifecycle", () => {
     expect(tdd.sentPrompts[2]).toContain("content for slice 1");
     expect(tdd.sentPrompts[2]).toContain("missing direct request assertion");
     expect(spawner.lastAgent("review").sentPrompts).toHaveLength(2);
+    expect(spawner.lastAgent("completeness").sentPrompts[0]).toContain("Direct request");
+    expect(spawner.lastAgent("completeness").sentPrompts[0]).not.toContain("Slice 1");
   });
 });

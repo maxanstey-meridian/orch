@@ -574,7 +574,6 @@ describe("Happy path lifecycle", () => {
     const { uc, hud, spawner, persistence, git } = createTestHarness({
       config: {
         executionMode: "direct",
-        planDisabled: true,
         gapDisabled: true,
       },
       auto: true,
@@ -603,7 +602,7 @@ describe("Happy path lifecycle", () => {
     );
     spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
     spawner.onNextSpawn("verify", okResult({ assistantText: verifyJson() }));
-    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "DIRECT_COMPLETE" }));
 
     await uc.execute([makeGroup("G1", [makeSlice(1)])]);
 
@@ -617,6 +616,10 @@ describe("Happy path lifecycle", () => {
     expect(spawner.agentsForRole("completeness")).toHaveLength(1);
     expect(spawner.agentsForRole("verify")).toHaveLength(1);
     expect(spawner.agentsForRole("review")).toHaveLength(1);
+    expect(spawner.lastAgent("verify").sentPrompts[0]).toContain("Direct request");
+    expect(spawner.lastAgent("verify").sentPrompts[0]).not.toContain("Slice 1");
+    expect(spawner.lastAgent("completeness").sentPrompts[0]).toContain("Direct request");
+    expect(spawner.lastAgent("completeness").sentPrompts[0]).not.toContain("Slice 1");
     expect((persistence.current as Record<string, unknown>).executionMode).toBe("direct");
     expect(persistence.current.currentSlice).toBeUndefined();
     expect(persistence.current.sliceTimings).toBeUndefined();
@@ -629,7 +632,6 @@ describe("Happy path lifecycle", () => {
     const { uc, spawner, persistence, git } = createTestHarness({
       config: {
         executionMode: "direct",
-        planDisabled: true,
         verifySkill: null,
         reviewSkill: null,
         gapDisabled: false,

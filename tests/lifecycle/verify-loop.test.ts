@@ -316,7 +316,6 @@ describe("Verify loop lifecycle", () => {
     const { uc, hud, spawner, persistence, git } = createTestHarness({
       config: {
         executionMode: "direct",
-        planDisabled: true,
         gapDisabled: true,
         reviewSkill: null,
       },
@@ -362,7 +361,11 @@ describe("Verify loop lifecycle", () => {
     expect(tdd.sentPrompts).toHaveLength(3);
     expect(tdd.sentPrompts[0]).toContain("[DIRECT]");
     expect(tdd.sentPrompts[1]).toContain("[DIRECT_TEST_PASS]");
+    expect(spawner.lastAgent("verify").sentPrompts[0]).toContain("Direct request");
+    expect(spawner.lastAgent("verify").sentPrompts[0]).not.toContain("Slice 1");
     expect(tdd.sentPrompts[2]).toContain("content for slice 1");
+    expect(tdd.sentPrompts[2]).toContain("Current direct request");
+    expect(tdd.sentPrompts[2]).not.toContain("Current slice content");
     expect(tdd.sentPrompts[2]).toContain("test_foo");
   });
 
@@ -429,7 +432,7 @@ describe("Verify loop lifecycle", () => {
     },
   ])("direct mode stops cleanly when verification reports only $name", async ({ verifyResult, expectedMessage }) => {
     const { uc, hud, spawner, git } = createTestHarness({
-      config: { executionMode: "direct", planDisabled: true, gapDisabled: true, reviewSkill: null },
+      config: { executionMode: "direct", gapDisabled: true, reviewSkill: null },
       auto: true,
     });
 
@@ -461,6 +464,8 @@ describe("Verify loop lifecycle", () => {
     expect(hud.askPrompts.filter((prompt) => prompt.includes("verification failed"))).toHaveLength(0);
     expect(spawner.lastAgent("tdd").sentPrompts).toHaveLength(2);
     expect(spawner.lastAgent("verify").sentPrompts).toHaveLength(1);
+    expect(spawner.lastAgent("verify").sentPrompts[0]).toContain("Direct request");
+    expect(spawner.lastAgent("verify").sentPrompts[0]).not.toContain("Slice 1");
   });
 
   it("grouped mode stops cleanly when verification reports only out-of-scope failures", async () => {
