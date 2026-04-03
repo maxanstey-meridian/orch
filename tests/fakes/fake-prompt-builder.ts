@@ -1,6 +1,9 @@
 import { PromptBuilder } from "#application/ports/prompt-builder.port.js";
 import type { FinalPass } from "#application/ports/prompt-builder.port.js";
 
+export const DIRECT_PROMPT_SENTINEL = "[DIRECT]";
+export const DIRECT_TEST_PASS_PROMPT_SENTINEL = "[DIRECT_TEST_PASS]";
+
 export class PassthroughPromptBuilder extends PromptBuilder {
   /** Override in tests to return custom final passes. */
   finalPassesOverride: readonly FinalPass[] = [];
@@ -26,11 +29,11 @@ export class PassthroughPromptBuilder extends PromptBuilder {
   }
 
   directExecute(requestContent: string): string {
-    return `[DIRECT] ${requestContent}`;
+    return `${DIRECT_PROMPT_SENTINEL} ${requestContent}`;
   }
 
   directTestPass(requestContent: string): string {
-    return `[DIRECT_TEST_PASS] ${requestContent}`;
+    return `${DIRECT_TEST_PASS_PROMPT_SENTINEL} ${requestContent}`;
   }
 
   verify(baseSha: string, sliceNumber: number, fixSummary?: string): string {
