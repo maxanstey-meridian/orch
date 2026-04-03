@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { homedir, tmpdir } from "os";
@@ -206,5 +206,47 @@ describe("run registry", () => {
     await registration;
 
     await expect(readRegistry(registryPath)).resolves.toEqual([registeredEntry]);
+  });
+
+  it("keeps an EPERM owner lock live until the directory is actually removed", async () => {
+    const registryPath = join(tempDir, "runs.json");
+    const lockPath = `${registryPath}.lock`;
+    const ownerPid = 424242;
+    let entered = false;
+
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(
+      join(lockPath, "owner.json"),
+      JSON.stringify({
+        pid: ownerPid,
+        acquiredAt: "2026-04-01T12:00:00.000Z",
+      }),
+    );
+
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (pid === ownerPid && signal === 0) {
+        const error = new Error("permission denied");
+        Object.assign(error, { code: "EPERM" });
+        throw error;
+      }
+
+      return true;
+    });
+
+    const pending = withRegistryLock(registryPath, async () => {
+      entered = true;
+    });
+
+    await new Promise((resolveDelay) => {
+      setTimeout(resolveDelay, 25);
+    });
+
+    expect(entered).toBe(false);
+
+    await rm(lockPath, { force: true, recursive: true });
+    await pending;
+
+    expect(entered).toBe(true);
+    killSpy.mockRestore();
   });
 });
