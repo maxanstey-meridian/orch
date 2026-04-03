@@ -1553,6 +1553,7 @@ Rules:
 
   async finalPasses(runBaseSha: string): Promise<void> {
     if (!(await this.git.hasChanges(runBaseSha))) {
+      await this.clearPersistedPhase();
       return;
     }
 

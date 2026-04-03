@@ -537,6 +537,29 @@ describe("Happy path lifecycle", () => {
     expect(spawner.agentsForRole("verify").length).toBe(0);
   });
 
+  it("direct already-implemented detection stamps completion even when no diff exists", async () => {
+    const { uc, spawner, persistence } = createTestHarness({
+      config: { executionMode: "direct", gapDisabled: true },
+      auto: true,
+    });
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "all tests pass, already implemented" }),
+      okResult({ assistantText: "direct mandatory test pass complete" }),
+    );
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn("triage");
+
+    await uc.execute([makeGroup("Direct", [makeSlice(1)])]);
+
+    expect((persistence.current as Record<string, unknown>).executionMode).toBe("direct");
+    expect((persistence.current as Record<string, unknown>).completedAt).toEqual(expect.any(String));
+    expect(spawner.agentsForRole("verify")).toHaveLength(0);
+    expect(spawner.agentsForRole("review")).toHaveLength(1);
+    expect(spawner.lastAgent("review").sentPrompts).toHaveLength(0);
+  });
+
   it("below review threshold skips review", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
       config: { planDisabled: true, gapDisabled: true, reviewThreshold: 30 },
