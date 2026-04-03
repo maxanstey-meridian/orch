@@ -571,23 +571,39 @@ describe("Happy path lifecycle", () => {
   });
 
   it("logs the configured execution mode and direct-marked runs avoid per-slice planning logs", async () => {
-    const { uc, hud, spawner } = createTestHarness({
+    const { uc, hud, spawner, persistence, git } = createTestHarness({
       config: {
         executionMode: "direct",
         planDisabled: true,
-        verifySkill: null,
-        reviewSkill: null,
         gapDisabled: true,
       },
       auto: true,
     });
+
+    git.setHasChanges(true);
+    git.setDiffStats({ added: 50, removed: 10, total: 60 });
+    git.getDiff = vi.fn().mockResolvedValue("diff --git a/src/direct.ts b/src/direct.ts");
 
     spawner.onNextSpawn(
       "tdd",
       okResult({ assistantText: "direct request implemented" }),
       okResult({ assistantText: "direct mandatory test pass complete" }),
     );
-    spawner.onNextSpawn("review");
+    spawner.onNextSpawn(
+      "triage",
+      okResult({
+        assistantText: JSON.stringify({
+          completeness: true,
+          verify: true,
+          review: true,
+          gap: false,
+          reason: "direct post-change triage",
+        }),
+      }),
+    );
+    spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
+    spawner.onNextSpawn("verify", okResult({ assistantText: verifyJson() }));
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
 
     await uc.execute([makeGroup("G1", [makeSlice(1)])]);
 
@@ -597,5 +613,63 @@ describe("Happy path lifecycle", () => {
     expect(spawner.agentsForRole("tdd")[0]?.sentPrompts).toHaveLength(2);
     expect(spawner.agentsForRole("tdd")[0]?.sentPrompts[0]).toContain("[DIRECT]");
     expect(spawner.agentsForRole("tdd")[0]?.sentPrompts[1]).toContain("[DIRECT_TEST_PASS]");
+    expect(spawner.agentsForRole("triage")).toHaveLength(1);
+    expect(spawner.agentsForRole("completeness")).toHaveLength(1);
+    expect(spawner.agentsForRole("verify")).toHaveLength(1);
+    expect(spawner.agentsForRole("review")).toHaveLength(1);
+    expect((persistence.current as Record<string, unknown>).executionMode).toBe("direct");
+    expect(persistence.current.currentSlice).toBeUndefined();
+    expect(persistence.current.sliceTimings).toBeUndefined();
+    expect(persistence.current.lastCompletedSlice).toBeUndefined();
+    expect(persistence.current.lastCompletedGroup).toBeUndefined();
+    expect(persistence.current.lastSliceImplemented).toBeUndefined();
+  });
+
+  it("direct mode honors triage-driven gap-only follow-up without persisting slice or group progress", async () => {
+    const { uc, spawner, persistence, git } = createTestHarness({
+      config: {
+        executionMode: "direct",
+        planDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        gapDisabled: false,
+      },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+    git.getDiff = vi.fn().mockResolvedValue("diff --git a/src/direct-gap.ts b/src/direct-gap.ts");
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "direct request implemented" }),
+      okResult({ assistantText: "direct mandatory test pass complete" }),
+    );
+    spawner.onNextSpawn(
+      "triage",
+      okResult({
+        assistantText: JSON.stringify({
+          completeness: false,
+          verify: false,
+          review: false,
+          gap: true,
+          reason: "direct gap only",
+        }),
+      }),
+    );
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn("gap", okResult({ assistantText: "NO_GAPS_FOUND" }));
+
+    await uc.execute([makeGroup("Direct", [makeSlice(1)])]);
+
+    expect((persistence.current as Record<string, unknown>).executionMode).toBe("direct");
+    expect(persistence.current.currentSlice).toBeUndefined();
+    expect(persistence.current.sliceTimings).toBeUndefined();
+    expect(persistence.current.lastCompletedSlice).toBeUndefined();
+    expect(persistence.current.lastCompletedGroup).toBeUndefined();
+    expect(spawner.agentsForRole("triage")).toHaveLength(1);
+    expect(spawner.agentsForRole("gap")).toHaveLength(1);
+    expect(spawner.agentsForRole("verify")).toHaveLength(0);
+    expect(spawner.lastAgent("gap").sentPrompts[0]).toContain("[GAP] from=sha-0");
   });
 });

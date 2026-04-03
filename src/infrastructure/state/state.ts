@@ -7,6 +7,7 @@ import type { OrchestratorState } from "#domain/state.js";
 
 const persistedPhases = ["tdd", "review", "verify", "gap", "final", "plan"] as const;
 const providers = ["claude", "codex"] as const;
+const executionModes = ["direct", "grouped", "sliced"] as const;
 
 const persistedAgentSessionSchema = z.object({
   provider: z.enum(providers),
@@ -16,6 +17,7 @@ const persistedAgentSessionSchema = z.object({
 const stateSchema = z
   .object({
     startedAt: z.string().optional(),
+    executionMode: z.enum(executionModes).optional(),
     currentPhase: z.enum(persistedPhases).optional(),
     currentSlice: z.number().int().nonnegative().optional(),
     currentGroup: z.string().min(1).optional(),

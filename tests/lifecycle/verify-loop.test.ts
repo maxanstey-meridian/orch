@@ -312,6 +312,60 @@ describe("Verify loop lifecycle", () => {
     expect(tdd.sentPrompts[2]).toContain("content for slice 2");
   });
 
+  it("direct mode re-sends verify failures against the whole request only when slice-local failures exist", async () => {
+    const { uc, hud, spawner, persistence, git } = createTestHarness({
+      config: {
+        executionMode: "direct",
+        planDisabled: true,
+        gapDisabled: true,
+        reviewSkill: null,
+      },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+    git.getDiff = async () => "diff --git a/src/direct.ts b/src/direct.ts";
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented direct request" }),
+      okResult({ assistantText: "ran direct mandatory test pass" }),
+      okResult({ assistantText: "fixed direct verify issues" }),
+    );
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn(
+      "triage",
+      okResult({
+        assistantText: JSON.stringify({
+          completeness: false,
+          verify: true,
+          review: false,
+          gap: false,
+          reason: "direct verify path",
+        }),
+      }),
+    );
+    spawner.onNextSpawn(
+      "verify",
+      okResult({ assistantText: VERIFY_FAIL }),
+      okResult({ assistantText: VERIFY_PASS }),
+    );
+
+    await uc.execute([makeGroup("Direct", [makeSlice(1)])]);
+
+    expect((persistence.current as Record<string, unknown>).executionMode).toBe("direct");
+    expect(persistence.current.lastCompletedSlice).toBeUndefined();
+    expect(hud.askPrompts.filter((prompt) => prompt.includes("verification failed"))).toHaveLength(0);
+    expect(spawner.lastAgent("verify").sentPrompts).toHaveLength(2);
+
+    const tdd = spawner.lastAgent("tdd");
+    expect(tdd.sentPrompts).toHaveLength(3);
+    expect(tdd.sentPrompts[0]).toContain("[DIRECT]");
+    expect(tdd.sentPrompts[1]).toContain("[DIRECT_TEST_PASS]");
+    expect(tdd.sentPrompts[2]).toContain("content for slice 1");
+    expect(tdd.sentPrompts[2]).toContain("test_foo");
+  });
+
   it("auto mode stops cleanly when verification reports only out-of-scope failures", async () => {
     const { uc, hud, spawner, git } = createTestHarness({
       config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
@@ -343,6 +397,69 @@ describe("Verify loop lifecycle", () => {
 
     expect(hud.askPrompts.filter((prompt) => prompt.includes("verification failed"))).toHaveLength(0);
     expect(spawner.lastAgent("tdd").sentPrompts).toHaveLength(1);
+    expect(spawner.lastAgent("verify").sentPrompts).toHaveLength(1);
+  });
+
+  it.each([
+    {
+      name: "out-of-scope failures",
+      verifyResult: verifyJson({
+        status: "FAIL",
+        checks: [{ check: "npx vitest run", status: "FAIL" }],
+        sliceLocalFailures: [],
+        outOfScopeFailures: ["- unrelated fixture is already broken"],
+        retryable: false,
+        summary: "Verification found only out-of-scope failures.",
+      }),
+      expectedMessage: "Direct request verification failed: Verification found only out-of-scope failures.",
+    },
+    {
+      name: "a runner issue",
+      verifyResult: verifyJson({
+        status: "FAIL",
+        checks: [{ check: "npx vitest run", status: "WARN" }],
+        sliceLocalFailures: [],
+        outOfScopeFailures: [],
+        preExistingFailures: [],
+        runnerIssue: "Vitest worker hung before any assertions completed.",
+        retryable: false,
+        summary: "Verification could not complete because the runner was unstable.",
+      }),
+      expectedMessage: "Direct request verification failed: Verification could not complete because the runner was unstable.",
+    },
+  ])("direct mode stops cleanly when verification reports only $name", async ({ verifyResult, expectedMessage }) => {
+    const { uc, hud, spawner, git } = createTestHarness({
+      config: { executionMode: "direct", planDisabled: true, gapDisabled: true, reviewSkill: null },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+    git.getDiff = async () => "diff --git a/src/direct.ts b/src/direct.ts";
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented direct request" }),
+      okResult({ assistantText: "ran direct mandatory test pass" }),
+    );
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn(
+      "triage",
+      okResult({
+        assistantText: JSON.stringify({
+          completeness: false,
+          verify: true,
+          review: false,
+          gap: false,
+          reason: "direct verify path",
+        }),
+      }),
+    );
+    spawner.onNextSpawn("verify", okResult({ assistantText: verifyResult }));
+
+    await expect(uc.execute([makeGroup("Direct", [makeSlice(1)])])).rejects.toThrow(expectedMessage);
+
+    expect(hud.askPrompts.filter((prompt) => prompt.includes("verification failed"))).toHaveLength(0);
+    expect(spawner.lastAgent("tdd").sentPrompts).toHaveLength(2);
     expect(spawner.lastAgent("verify").sentPrompts).toHaveLength(1);
   });
 

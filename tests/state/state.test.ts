@@ -23,6 +23,13 @@ describe("state", () => {
     expect(loaded).toEqual(state);
   });
 
+  it("persists direct executionMode and loads it back", async () => {
+    const state = { executionMode: "direct" as const };
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+    expect(loaded).toEqual(state);
+  });
+
   it("returns default state when file contains corrupt JSON", async () => {
     await writeFile(testPath, "{not valid json!!!");
     const state = await loadState(testPath);

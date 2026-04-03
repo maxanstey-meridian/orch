@@ -38,7 +38,7 @@ export type PlanThenExecuteResult = {
 };
 
 type ExecutionUnit = {
-  readonly kind: "slice" | "group";
+  readonly kind: "slice" | "group" | "direct";
   readonly label: string;
   readonly content: string;
   readonly sliceNumber: number;
@@ -114,6 +114,17 @@ export class RunOrchestration {
     };
   }
 
+  private directUnit(requestContent: string, representativeSliceNumber: number): ExecutionUnit {
+    return {
+      kind: "direct",
+      label: "Direct request",
+      content: requestContent,
+      sliceNumber: representativeSliceNumber,
+      slices: [],
+      groupName: "Direct",
+    };
+  }
+
   private failIncompleteExecutionUnit(unit: ExecutionUnit, reason: string): never {
     this.phase = { kind: "Idle" };
     this.sliceSkipFlag = false;
@@ -125,6 +136,10 @@ export class RunOrchestration {
       return `Summarise what you just built for ${unit.label} in this format exactly:\n\n## What was built\n<1-2 sentences>\n\n## Key decisions\n<2-4 bullet points>\n\n## Files touched\n<bulleted list>\n\n## Test coverage\n<1-2 sentences>\n\nBe concrete and specific. No filler.`;
     }
 
+    if (unit.kind === "direct") {
+      return "Summarise what you just built for the direct request in this format exactly:\n\n## What was built\n<1-2 sentences>\n\n## Key decisions\n<2-4 bullet points>\n\n## Files touched\n<bulleted list>\n\n## Test coverage\n<1-2 sentences>\n\nBe concrete and specific. No filler.";
+    }
+
     return `Summarise what you just built for Slice ${unit.sliceNumber} in this format exactly:\n\n## What was built\n<1-2 sentences>\n\n## Key decisions\n<2-4 bullet points>\n\n## Files touched\n<bulleted list>\n\n## Test coverage\n<1-2 sentences>\n\nBe concrete and specific. No filler.`;
   }
 
@@ -133,15 +148,19 @@ export class RunOrchestration {
     verifyBaseSha: string,
     fixSummary?: string,
   ): string {
-    return unit.kind === "group"
-      ? this.prompts.groupedVerify(verifyBaseSha, unit.groupName, fixSummary)
-      : this.prompts.verify(verifyBaseSha, unit.sliceNumber, fixSummary);
+    if (unit.kind === "group") {
+      return this.prompts.groupedVerify(verifyBaseSha, unit.groupName, fixSummary);
+    }
+
+    return this.prompts.verify(verifyBaseSha, unit.sliceNumber, fixSummary);
   }
 
   private completenessPromptForUnit(unit: ExecutionUnit, baseSha: string): string {
-    return unit.kind === "group"
-      ? this.prompts.groupedCompleteness(unit.content, baseSha, unit.groupName)
-      : this.prompts.completeness(unit.content, baseSha, unit.sliceNumber);
+    if (unit.kind === "group") {
+      return this.prompts.groupedCompleteness(unit.content, baseSha, unit.groupName);
+    }
+
+    return this.prompts.completeness(unit.content, baseSha, unit.sliceNumber);
   }
 
   private formatVerifyFailureSummary(result: VerifyResult): string {
@@ -164,6 +183,11 @@ export class RunOrchestration {
   }
 
   private async markExecutionUnitComplete(unit: ExecutionUnit): Promise<void> {
+    if (unit.kind === "direct") {
+      this.progressSink.updateProgress({ activeAgent: undefined, activeAgentActivity: undefined });
+      return;
+    }
+
     for (const slice of unit.slices) {
       this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
       await this.persistence.save(this.state);
@@ -171,6 +195,96 @@ export class RunOrchestration {
       this.slicesCompleted++;
     }
     this.progressSink.updateProgress({ activeAgent: undefined, activeAgentActivity: undefined });
+  }
+
+  private async persistRunState(): Promise<void> {
+    this.state = {
+      ...this.state,
+      ...(this.config.executionMode === "direct"
+        ? { executionMode: this.config.executionMode }
+        : {}),
+    };
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "tdd",
+      session: this.currentSession("tdd"),
+    });
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "review",
+      session: this.currentSession("review"),
+    });
+    await this.persistence.save(this.state);
+  }
+
+  private async runDirectExecution(group: Group, reviewBase: string): Promise<void> {
+    const directSlice = group.slices[0];
+    if (!directSlice) {
+      return;
+    }
+
+    const unit = this.directUnit(directSlice.content, directSlice.number);
+    this.sliceSkipFlag = false;
+    this.progressSink.clearSkipping();
+
+    const verifyBaseSha = await this.git.captureRef();
+    this.phase = transition(this.phase, { kind: "StartPlanning", sliceNumber: unit.sliceNumber });
+
+    let pteResult = await this.planThenExecute(unit.content, unit.sliceNumber);
+    if (pteResult.replan) {
+      pteResult = await this.planThenExecute(unit.content, unit.sliceNumber, true);
+    }
+
+    if (pteResult.skipped) {
+      this.failIncompleteExecutionUnit(unit, "execution was skipped before delivery");
+    }
+
+    let tddResult = pteResult.tddResult;
+
+    if (pteResult.hardInterrupt) {
+      const guidance = pteResult.hardInterrupt;
+      this.hardInterruptPending = null;
+      await this.respawnTdd();
+      this.progressSink.logBadge("tdd", "implementing...");
+      await this.enterPhase("tdd", unit.sliceNumber);
+      tddResult = await this.withRetry(
+        () => this.tddAgent!.send(this.prompts.withBrief(guidance)),
+        this.tddAgent!,
+        "tdd",
+        "tdd-interrupt",
+      );
+      this.phase = { kind: "Verifying", sliceNumber: unit.sliceNumber };
+    }
+
+    this.tddIsFirst = false;
+
+    if (tddResult.needsInput) {
+      await this.followUp(tddResult, this.tddAgent!);
+    }
+
+    await this.commitSweep(unit.label);
+
+    const triage = await this.triageDiff(verifyBaseSha);
+    if (triage.runCompleteness) {
+      await this.completenessCheck(unit, verifyBaseSha);
+    }
+
+    const directResult = await this.runExecutionUnit(
+      unit,
+      reviewBase,
+      tddResult,
+      verifyBaseSha,
+      triage,
+    );
+    this.phase = { kind: "Idle" };
+
+    if (directResult.skipped) {
+      this.failIncompleteExecutionUnit(unit, "verification or review did not complete");
+    }
+
+    if (triage.runGap) {
+      await this.gapAnalysis(group, verifyBaseSha);
+    }
   }
 
   private failIncompleteSlice(slice: Slice, reason: string): never {
@@ -394,6 +508,18 @@ export class RunOrchestration {
 
       const runBaseSha = await this.git.captureRef();
 
+      await this.persistRunState();
+
+      if (this.config.executionMode === "direct") {
+        const directGroup = groups[0];
+        if (!directGroup) {
+          return;
+        }
+        await this.runDirectExecution(directGroup, runBaseSha);
+        await this.finalPasses(runBaseSha);
+        return;
+      }
+
       for (let i = 0; i < groups.length; i++) {
         const group = groups[i];
 
@@ -414,17 +540,6 @@ export class RunOrchestration {
           groupSliceCount: group.slices.length,
           groupCompleted: 0,
         });
-        this.state = advanceState(this.state, {
-          kind: "agentSpawned",
-          role: "tdd",
-          session: this.currentSession("tdd"),
-        });
-        this.state = advanceState(this.state, {
-          kind: "agentSpawned",
-          role: "review",
-          session: this.currentSession("review"),
-        });
-        await this.persistence.save(this.state);
         const groupBaseSha = await this.git.captureRef();
         let reviewBase = groupBaseSha;
         let groupCompleted = 0;
@@ -874,12 +989,14 @@ export class RunOrchestration {
     this.phase = transition(this.phase, { kind: "VerifyPassed" });
     this.phase = transition(this.phase, { kind: "CompletenessOk" });
 
-    this.state = advanceState(this.state, {
-      kind: "sliceImplemented",
-      sliceNumber: unit.sliceNumber,
-      reviewBaseSha: verifyBaseSha,
-    });
-    await this.persistence.save(this.state);
+    if (unit.kind !== "direct") {
+      this.state = advanceState(this.state, {
+        kind: "sliceImplemented",
+        sliceNumber: unit.sliceNumber,
+        reviewBaseSha: verifyBaseSha,
+      });
+      await this.persistence.save(this.state);
+    }
 
     // Review-fix loop — gated on minimum diff threshold
     const diffStats = await this.git.measureDiff(reviewBase);

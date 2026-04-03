@@ -193,4 +193,55 @@ describe("Review loop lifecycle", () => {
     expect(spawner.lastAgent("review").sentPrompts).toHaveLength(2);
     expect(spawner.lastAgent("completeness").sentPrompts[0]).toContain("[GROUP_COMPLETENESS:G1]");
   });
+
+  it("direct mode fixes review findings against the whole request without persisting slice completion", async () => {
+    const { uc, spawner, persistence, git } = createTestHarness({
+      config: { executionMode: "direct", planDisabled: true, gapDisabled: true, verifySkill: null },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+    git.setDiffStats({ added: 50, removed: 10, total: 60 });
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented direct request" }),
+      okResult({ assistantText: "ran direct mandatory test pass" }),
+      okResult({ assistantText: "fixed direct review issues" }),
+    );
+    spawner.onNextSpawn(
+      "review",
+      okResult({ assistantText: "Found issues: missing direct request assertion" }),
+      okResult({ assistantText: "REVIEW_CLEAN" }),
+    );
+    spawner.onNextSpawn("triage", okResult({
+      assistantText: JSON.stringify({
+        completeness: true,
+        verify: false,
+        review: true,
+        gap: false,
+        reason: "direct review path",
+      }),
+    }));
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+
+    await uc.execute([makeGroup("Direct", [makeSlice(1)])]);
+
+    expect(
+      hasPhaseSubsequence(
+        persistence.saveHistory.map((state) => state.currentPhase),
+        ["review", "tdd", "review"],
+      ),
+    ).toBe(true);
+    expect((persistence.current as Record<string, unknown>).executionMode).toBe("direct");
+    expect(persistence.current.lastCompletedSlice).toBeUndefined();
+    expect(persistence.current.lastCompletedGroup).toBeUndefined();
+
+    const tdd = spawner.lastAgent("tdd");
+    expect(tdd.sentPrompts[0]).toContain("[DIRECT]");
+    expect(tdd.sentPrompts[1]).toContain("[DIRECT_TEST_PASS]");
+    expect(tdd.sentPrompts[2]).toContain("content for slice 1");
+    expect(tdd.sentPrompts[2]).toContain("missing direct request assertion");
+    expect(spawner.lastAgent("review").sentPrompts).toHaveLength(2);
+  });
 });
