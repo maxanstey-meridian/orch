@@ -8,7 +8,7 @@ export const withBrief = (prompt: string, brief: string): string => {
   return `${wrapBrief(brief)}\n\n${prompt}`;
 };
 
-const hasCriteriaSection = (content: string): boolean => content.includes("**Criteria:**");
+export const hasCriteriaSection = (content: string): boolean => content.includes("**Criteria:**");
 
 const PLAN_GENERATION_SHARED_INSTRUCTIONS = `Transform this feature inventory into a group-and-slice plan.
 
@@ -380,7 +380,74 @@ For each requirement, output one line:
 
 If everything is complete and matches the plan, respond with exactly: SLICE_COMPLETE
 
-If anything is missing or divergent, list ALL issues. Do not stop at the first one.`;
+  If anything is missing or divergent, list ALL issues. Do not stop at the first one.`;
+};
+
+export const buildGroupedCompletenessPrompt = (
+  groupContent: string,
+  baseSha: string,
+  fullPlan: string,
+  groupName: string,
+): string => {
+  if (hasCriteriaSection(groupContent)) {
+    return `You are a completeness checker. A builder just implemented Group ${groupName} as one bounded increment. Verify that the grouped deliverable matches the plan content below, that every slice in the group is actually covered, and that EVERY criterion and concrete requirement in the group was actually implemented.
+
+## Full Plan Context
+${fullPlan}
+
+---
+
+## Group ${groupName}
+${groupContent}
+
+## How to check
+
+1. Run \`git diff --name-only ${baseSha}..HEAD\` to see what changed.
+2. Read the changed files in full.
+3. Inspect the \`**Criteria:**\` sections first.
+4. For each criterion in the group content:
+   - Report PASS, FAIL, or DIVERGENT for each criterion
+   - decide whether it is PASS, FAIL, or DIVERGENT
+   - cite both code evidence and test evidence
+   - treat a missing regression guard as FAIL even if the behavior appears implemented
+5. After the criteria lines, check any remaining concrete non-criteria requirements in the group content.
+
+## Output format
+
+For each criterion, output one line:
+- PASS **<criterion>** — code: \`file:line\`; test: \`test-file:line\`
+- FAIL **<criterion>** — <what is missing>; code: \`file:line|none\`; test: \`test-file:line|none\`
+- DIVERGENT **<criterion>** — <how it differs from the plan>; code: \`file:line\`; test: \`test-file:line|none\`
+
+After the criteria lines, output any additional requirement-level findings as needed:
+- ✅ **<requirement>** — implemented at \`file:line\`, tested in \`test-file\`
+- ❌ **<requirement>** — MISSING: <what's wrong or missing>
+- ⚠️ **<requirement>** — DIVERGENT: <how it differs from the plan's intent>
+
+If everything is complete, respond with exactly: GROUP_COMPLETE
+
+If anything is missing or divergent, list ALL issues.`;
+  }
+
+  return `You are a completeness checker. A builder just implemented Group ${groupName} as one bounded increment. Verify that the grouped deliverable matches the plan content below and that every slice in the group is actually covered.
+
+## Full Plan Context
+${fullPlan}
+
+---
+
+## Group ${groupName}
+${groupContent}
+
+## How to check
+
+1. Run \`git diff --name-only ${baseSha}..HEAD\` to see what changed.
+2. Read the changed files in full.
+3. Check that every concrete requirement in the group content is implemented and covered by a test that would fail if the requirement were removed.
+
+If everything is complete, respond with exactly: GROUP_COMPLETE
+
+If anything is missing or divergent, list ALL issues.`;
 };
 
 export const buildCommitSweepPrompt = (groupName: string): string =>

@@ -13,6 +13,7 @@ import {
   buildVerifyPrompt,
   buildReviewPrompt,
   buildCompletenessPrompt,
+  buildGroupedCompletenessPrompt,
   buildCommitSweepPrompt,
   buildGapPrompt,
   buildFinalPasses,
@@ -122,25 +123,7 @@ ${groupContent}`;
   }
 
   groupedCompleteness(groupContent: string, baseSha: string, groupName: string): string {
-    return `You are a completeness checker. A builder just implemented Group ${groupName} as one bounded increment. Verify that the grouped deliverable matches the plan content below and that every slice in the group is actually covered.
-
-## Full Plan Context
-${this.planContent}
-
----
-
-## Group ${groupName}
-${groupContent}
-
-## How to check
-
-1. Run \`git diff --name-only ${baseSha}..HEAD\` to see what changed.
-2. Read the changed files in full.
-3. Check that every concrete requirement in the group content is implemented and covered by a test that would fail if the requirement were removed.
-
-If everything is complete, respond with exactly: GROUP_COMPLETE
-
-If anything is missing or divergent, list ALL issues.`;
+    return buildGroupedCompletenessPrompt(groupContent, baseSha, this.planContent, groupName);
   }
 
   gap(groupContent: string, baseSha: string): string {

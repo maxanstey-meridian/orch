@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { DefaultPromptBuilder } from "#infrastructure/default-prompt-builder.js";
 import { PromptBuilder } from "#application/ports/prompt-builder.port.js";
-import { withBrief, buildPlanPrompt, buildTddPrompt, buildDirectExecutePrompt, buildDirectTestPassPrompt, buildVerifyPrompt, buildReviewPrompt, buildCompletenessPrompt, buildCommitSweepPrompt, buildGapPrompt, buildFinalPasses } from "#infrastructure/plan/prompts.js";
+import { withBrief, buildPlanPrompt, buildTddPrompt, buildDirectExecutePrompt, buildDirectTestPassPrompt, buildVerifyPrompt, buildReviewPrompt, buildCompletenessPrompt, buildGroupedCompletenessPrompt, buildCommitSweepPrompt, buildGapPrompt, buildFinalPasses } from "#infrastructure/plan/prompts.js";
 import { TDD_RULES_REMINDER, REVIEW_RULES_REMINDER, buildRulesReminder } from "#infrastructure/claude/claude-agent-factory.js";
 
 const BRIEF = "This is a test brief";
@@ -19,6 +19,23 @@ const SLICE_WITH_CRITERIA = `### Slice 2: Criteria-aware prompts
 Implement criteria-aware prompt wording.
 
 **Tests:** Cover criteria-aware and legacy fallback wording.`;
+
+const GROUP_WITH_CRITERIA = `${SLICE_WITH_CRITERIA}
+
+---
+
+### Slice 3: Group follow-up
+
+**Why:** Grouped completeness must verify criteria across the whole increment.
+
+**Files:** \`src/infrastructure/default-prompt-builder.ts\` (edit)
+
+**Criteria:**
+- Grouped completeness reports PASS/FAIL/DIVERGENT per criterion
+
+Implement grouped criteria-aware completeness wording.
+
+**Tests:** Cover grouped completeness criteria handling.`;
 
 describe("DefaultPromptBuilder", () => {
   it("can be instantiated and is an instance of PromptBuilder", () => {
@@ -207,6 +224,19 @@ describe("DefaultPromptBuilder", () => {
     expect(result).toContain("GROUP_COMPLETE");
     expect(result).toContain("group plan");
     expect(result).toContain(PLAN_CONTENT);
+  });
+
+  it("groupedCompleteness uses criteria-first completeness wording when group content contains criteria", () => {
+    const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+    const result = builder.groupedCompleteness(GROUP_WITH_CRITERIA, "sha", "Core");
+
+    expect(result).toBe(
+      buildGroupedCompletenessPrompt(GROUP_WITH_CRITERIA, "sha", PLAN_CONTENT, "Core"),
+    );
+    expect(result).toContain("Inspect the `**Criteria:**` sections first");
+    expect(result).toContain("Report PASS, FAIL, or DIVERGENT for each criterion");
+    expect(result).toContain("treat a missing regression guard as FAIL");
+    expect(result).toContain("GROUP_COMPLETE");
   });
 
   it("gap delegates to buildGapPrompt", () => {
