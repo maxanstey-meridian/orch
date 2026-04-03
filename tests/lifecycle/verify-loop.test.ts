@@ -346,6 +346,42 @@ describe("Verify loop lifecycle", () => {
     expect(spawner.lastAgent("verify").sentPrompts).toHaveLength(1);
   });
 
+  it("auto mode stops cleanly when verification reports only pre-existing failures", async () => {
+    const { uc, hud, spawner, git } = createTestHarness({
+      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented" }));
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn(
+      "verify",
+      okResult({
+        assistantText: verifyJson({
+          status: "FAIL",
+          checks: [{ check: "npx vitest run", status: "WARN" }],
+          sliceLocalFailures: [],
+          outOfScopeFailures: [],
+          preExistingFailures: ["- flaky queue-store test was already failing"],
+          runnerIssue: null,
+          retryable: false,
+          summary: "Verification found only pre-existing failures.",
+        }),
+      }),
+    );
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+
+    await expect(uc.execute([makeGroup("G1", [makeSlice(1)])])).rejects.toThrow(
+      "Slice 1 verification failed: Verification found only pre-existing failures.",
+    );
+
+    expect(hud.askPrompts.filter((prompt) => prompt.includes("verification failed"))).toHaveLength(0);
+    expect(spawner.lastAgent("tdd").sentPrompts).toHaveLength(1);
+    expect(spawner.lastAgent("verify").sentPrompts).toHaveLength(1);
+  });
+
   it("auto mode stops cleanly when verification reports only a runner issue", async () => {
     const { uc, hud, spawner, git } = createTestHarness({
       config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
