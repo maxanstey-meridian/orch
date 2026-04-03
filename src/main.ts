@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+// smoke test
 import { readFileSync, mkdirSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { resolve } from "path";
