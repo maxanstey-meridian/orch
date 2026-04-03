@@ -1,4 +1,5 @@
 import { type AgentStyle } from "#domain/agent-types.js";
+import type { ExecutionMode } from "#domain/config.js";
 import { type Slice, type Group } from "#infrastructure/plan/plan-parser.js";
 
 export type LogFn = (...args: unknown[]) => void;
@@ -128,9 +129,25 @@ export const formatPlanSummary = (log: LogFn, groups: readonly Group[]): void =>
   }
 };
 
+export const formatExecutionModeSummary = (executionMode: ExecutionMode): string => {
+  switch (executionMode) {
+    case "direct":
+      return "Execution direct — bounded request with no generated plan";
+    case "grouped":
+      return "Execution grouped — coarse increments with group-boundary gates";
+    case "sliced":
+      return "Execution sliced — fine-grained slices with per-slice cadence";
+  }
+};
+
+export const printExecutionModeBanner = (log: LogFn, executionMode: ExecutionMode): void => {
+  log(`${a.bold}${formatExecutionModeSummary(executionMode)}${a.reset}`);
+};
+
 export type BannerOpts = {
   readonly planPath: string;
   readonly brief: string;
+  readonly executionMode: ExecutionMode;
   readonly auto: boolean;
   readonly interactive: boolean;
   readonly groupFilter?: string;
@@ -142,6 +159,10 @@ export type BannerOpts = {
 };
 
 export const printStartupBanner = (log: LogFn, opts: BannerOpts): void => {
+  const executionSummary = formatExecutionModeSummary(opts.executionMode).replace(
+    /^Execution\s+/,
+    "",
+  );
   log(
     `\n${a.bold}🚀 Orchestrator${a.reset} ${a.dim}${new Date().toISOString().slice(0, 16)}${a.reset}`,
   );
@@ -153,8 +174,9 @@ export const printStartupBanner = (log: LogFn, opts: BannerOpts): void => {
   log(
     `   ${a.dim}Brief${a.reset}   ${opts.brief ? `${a.green}✓${a.reset} .orch/brief.md` : `${a.dim}none${a.reset}`}`,
   );
+  log(`   ${a.dim}Execution${a.reset} ${executionSummary}`);
   log(
-    `   ${a.dim}Mode${a.reset}    ${opts.groupFilter ? `start from "${opts.groupFilter}"` : opts.auto ? "automatic" : "interactive"}`,
+    `   ${a.dim}Control${a.reset} ${opts.groupFilter ? `start from "${opts.groupFilter}"` : opts.auto ? "automatic" : "interactive"}`,
   );
   if (opts.orchrcSummary) {
     log(`   ${a.dim}Config${a.reset}  .orchrc.json (${opts.orchrcSummary})`);
@@ -163,7 +185,15 @@ export const printStartupBanner = (log: LogFn, opts: BannerOpts): void => {
   log(`   ${BOT_REVIEW.badge} ${a.dim}persistent (${opts.reviewSessionId.slice(0, 8)})${a.reset}`);
   log(`   ${BOT_GAP.badge} ${a.dim}fresh each group${a.reset}`);
   if (opts.interactive) {
-    log(`   ${a.dim}Press${a.reset} ${a.bold}S${a.reset} ${a.dim}to skip current slice${a.reset}`);
+    if (opts.executionMode === "sliced") {
+      log(
+        `   ${a.dim}Press${a.reset} ${a.bold}S${a.reset} ${a.dim}to skip current slice${a.reset}`,
+      );
+    } else {
+      log(
+        `   ${a.dim}Press${a.reset} ${a.bold}G${a.reset}/${a.bold}I${a.reset}/${a.bold}Q${a.reset} ${a.dim}for guide, interrupt, or quit${a.reset}`,
+      );
+    }
   }
 
   log("");

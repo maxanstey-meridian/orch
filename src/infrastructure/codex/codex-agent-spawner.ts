@@ -15,9 +15,18 @@ const SENTENCE_END = /[a-z][.!?]\s*$/i;
 
 const createTextBuffer = (flush: (text: string) => void) => {
   let buf = "";
+  let trimLeadingWhitespaceOnNextPush = false;
 
   return {
     push: (text: string) => {
+      if (trimLeadingWhitespaceOnNextPush) {
+        if (/^[ \t]+$/.test(text)) {
+          return;
+        }
+        text = text.replace(/^[ \t]+/, "");
+        trimLeadingWhitespaceOnNextPush = false;
+      }
+
       buf += text;
       // Flush on newline — collapse runs of blank lines into one
       if (buf.includes("\n")) {
@@ -25,12 +34,14 @@ const createTextBuffer = (flush: (text: string) => void) => {
         const chunk = buf.slice(0, lastNewline + 1).replace(/\n{3,}/g, "\n\n");
         flush(chunk);
         buf = buf.slice(lastNewline + 1);
+        trimLeadingWhitespaceOnNextPush = false;
         return;
       }
       // Flush on sentence boundary
       if (SENTENCE_END.test(buf)) {
         flush(buf);
         buf = "";
+        trimLeadingWhitespaceOnNextPush = true;
       }
     },
     flush: () => {
@@ -123,6 +134,7 @@ export class CodexAgentSpawner implements AgentSpawner {
         sessionId = await client.startThread(threadOpts);
       }
     })();
+    void ready.catch(() => {});
 
     const handle: AgentHandle = {
       get sessionId() {
@@ -137,76 +149,68 @@ export class CodexAgentSpawner implements AgentSpawner {
       },
 
       send: async (prompt, onText?, onToolUse?) => {
-        try {
-          await ready;
+        await ready;
 
-          let effectivePrompt = prompt;
-          if (pendingGuidance.length > 0) {
-            const guidance = pendingGuidance.splice(0).join("\n");
-            effectivePrompt = `[Prior operator guidance — incorporate before proceeding]\n${guidance}\n[End prior guidance]\n\n${prompt}`;
-          }
-
-          let assistantText = "";
-          let failed = false;
-          let failureResultText = "";
-          const effectiveOnText = onText ?? persistentOnText;
-          const effectiveOnToolUse = onToolUse ?? persistentOnToolUse;
-          const textBuf = effectiveOnText ? createTextBuffer(effectiveOnText) : null;
-
-          const resultText = await client.startTurn(effectivePrompt, (event) => {
-            switch (event.kind) {
-              case "textDelta":
-                assistantText += event.text;
-                textBuf?.push(event.text);
-                break;
-              case "toolActivity":
-                effectiveOnToolUse?.(event.summary);
-                break;
-              case "turnFailed":
-                failed = true;
-                failureResultText = event.message;
-                assistantText += `\n[${failureResultText}]`;
-                break;
-              case "approvalRequested":
-                handleApprovalEvent(event.request);
-                break;
-            }
-          });
-
-          textBuf?.flush();
-
-          return {
-            exitCode: failed ? 1 : 0,
-            assistantText,
-            resultText: failed ? failureResultText : resultText,
-            needsInput: detectQuestion(assistantText),
-            sessionId,
-          };
-        } catch {
-          return { exitCode: 1, assistantText: "", resultText: "", needsInput: false, sessionId };
+        let effectivePrompt = prompt;
+        if (pendingGuidance.length > 0) {
+          const guidance = pendingGuidance.splice(0).join("\n");
+          effectivePrompt = `[Prior operator guidance — incorporate before proceeding]\n${guidance}\n[End prior guidance]\n\n${prompt}`;
         }
+
+        let assistantText = "";
+        let failed = false;
+        let failureResultText = "";
+        const effectiveOnText = onText ?? persistentOnText;
+        const effectiveOnToolUse = onToolUse ?? persistentOnToolUse;
+        const textBuf = effectiveOnText ? createTextBuffer(effectiveOnText) : null;
+
+        const resultText = await client.startTurn(effectivePrompt, (event) => {
+          switch (event.kind) {
+            case "textDelta":
+              assistantText += event.text;
+              textBuf?.push(event.text);
+              break;
+            case "toolActivity":
+              effectiveOnToolUse?.(event.summary);
+              break;
+            case "turnFailed":
+              failed = true;
+              failureResultText = event.message;
+              assistantText += `\n[${failureResultText}]`;
+              break;
+            case "approvalRequested":
+              handleApprovalEvent(event.request);
+              break;
+          }
+        });
+
+        textBuf?.flush();
+
+        return {
+          exitCode: failed ? 1 : 0,
+          assistantText,
+          resultText: failed ? failureResultText : resultText,
+          needsInput: detectQuestion(assistantText),
+          sessionId,
+        };
       },
 
       sendQuiet: async (prompt) => {
-        try {
-          await ready;
+        await ready;
 
-          let effectivePrompt = prompt;
-          if (pendingGuidance.length > 0) {
-            const guidance = pendingGuidance.splice(0).join("\n");
-            effectivePrompt = `[Prior operator guidance — incorporate before proceeding]\n${guidance}\n[End prior guidance]\n\n${prompt}`;
-          }
-
-          const resultText = await client.startTurn(effectivePrompt, (event) => {
-            if (event.kind === "approvalRequested") {
-              handleApprovalEvent(event.request);
-            }
-          });
-
-          return resultText;
-        } catch {
-          return "";
+        let effectivePrompt = prompt;
+        if (pendingGuidance.length > 0) {
+          const guidance = pendingGuidance.splice(0).join("\n");
+          effectivePrompt = `[Prior operator guidance — incorporate before proceeding]\n${guidance}\n[End prior guidance]\n\n${prompt}`;
         }
+
+        const resultText = await client.startTurn(effectivePrompt, (event) => {
+          if (event.kind === "approvalRequested") {
+            handleApprovalEvent(event.request);
+          }
+        });
+
+        return resultText;
       },
 
       inject: (message) => {

@@ -23,6 +23,29 @@ class MockPromptBuilder extends PromptBuilder {
   ): string {
     return `tddExec:${planText}:${sliceNumber}:${firstSlice}:${operatorGuidance ?? "none"}`;
   }
+  groupedExecute(
+    groupName: string,
+    groupContent: string,
+    firstGroup: boolean,
+    operatorGuidance?: string,
+  ): string {
+    return `groupExec:${groupName}:${groupContent}:${firstGroup}:${operatorGuidance ?? "none"}`;
+  }
+  groupedTestPass(groupName: string, groupContent: string): string {
+    return `groupTest:${groupName}:${groupContent}`;
+  }
+  directExecute(requestContent: string): string {
+    return `directExecute:${requestContent}`;
+  }
+  directTestPass(requestContent: string): string {
+    return `directTestPass:${requestContent}`;
+  }
+  verify(baseSha: string, sliceNumber: number, fixSummary?: string): string {
+    return `verify:${baseSha}:${sliceNumber}:${fixSummary ?? "none"}`;
+  }
+  groupedVerify(baseSha: string, groupName: string, fixSummary?: string): string {
+    return `groupVerify:${baseSha}:${groupName}:${fixSummary ?? "none"}`;
+  }
   review(content: string, baseSha: string, priorFindings?: string): string {
     return `review:${content}:${baseSha}:${priorFindings ?? "none"}`;
   }
@@ -32,6 +55,9 @@ class MockPromptBuilder extends PromptBuilder {
     sliceNumber: number,
   ): string {
     return `completeness:${sliceContent}:${baseSha}:${sliceNumber}`;
+  }
+  groupedCompleteness(groupContent: string, baseSha: string, groupName: string): string {
+    return `groupCompleteness:${groupContent}:${baseSha}:${groupName}`;
   }
   gap(groupContent: string, baseSha: string): string {
     return `gap:${groupContent}:${baseSha}`;
@@ -85,12 +111,61 @@ describe("PromptBuilder", () => {
     );
   });
 
+  it("groupedExecute returns a string without guidance", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.groupedExecute("Core", "group text", true)).toBe(
+      "groupExec:Core:group text:true:none",
+    );
+  });
+
+  it("groupedExecute returns a string with guidance", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.groupedExecute("Core", "group text", false, "focus on tests")).toBe(
+      "groupExec:Core:group text:false:focus on tests",
+    );
+  });
+
+  it("groupedTestPass returns a string", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.groupedTestPass("Core", "group text")).toBe("groupTest:Core:group text");
+  });
+
+  it("directExecute returns a string", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.directExecute("request text")).toBe("directExecute:request text");
+  });
+
+  it("directTestPass returns a string", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.directTestPass("request text")).toBe("directTestPass:request text");
+  });
+
   it("review returns a string without priorFindings", () => {
     const builder = new MockPromptBuilder();
     expect(builder.review("content", "abc123")).toBe(
       "review:content:abc123:none",
     );
   });
+
+  it("verify returns a string without fix summary", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.verify("abc123", 2)).toBe("verify:abc123:2:none");
+  });
+
+  it("verify returns a string with fix summary", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.verify("abc123", 2, "fixed the issue")).toBe(
+      "verify:abc123:2:fixed the issue",
+    );
+  });
+
+  it("groupedVerify returns a string", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.groupedVerify("abc123", "Core", "fixed the issue")).toBe(
+      "groupVerify:abc123:Core:fixed the issue",
+    );
+  });
+
 
   it("review returns a string with priorFindings", () => {
     const builder = new MockPromptBuilder();
@@ -103,6 +178,13 @@ describe("PromptBuilder", () => {
     const builder = new MockPromptBuilder();
     expect(builder.completeness("slice1", "abc123", 1)).toBe(
       "completeness:slice1:abc123:1",
+    );
+  });
+
+  it("groupedCompleteness returns a string", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.groupedCompleteness("group text", "abc123", "Core")).toBe(
+      "groupCompleteness:group text:abc123:Core",
     );
   });
 

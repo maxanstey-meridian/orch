@@ -172,6 +172,19 @@ describe("detectCreditExhaustion", () => {
     expect(signal!.kind).toBe("mid-response");
   });
 
+  it("detects usage-limit warnings when they only arrive in assistantText", () => {
+    const result = makeResult({
+      assistantText: "You've hit your limit · resets 10am (Europe/London)",
+      resultText: "",
+      exitCode: 1,
+    });
+    const signal = detectCreditExhaustion(result, "");
+    expect(signal).toEqual({
+      kind: "mid-response",
+      message: "Usage limit reached.",
+    });
+  });
+
   it("rejected signal (empty assistantText) does NOT trigger mid-response log path", () => {
     const result = makeResult({
       assistantText: "",

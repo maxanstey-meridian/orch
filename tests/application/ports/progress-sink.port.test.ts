@@ -2,8 +2,12 @@ import { describe, it, expect } from "vitest";
 import { ProgressSink } from "#application/ports/progress-sink.port.js";
 import type { InterruptHandler, ProgressUpdate } from "#application/ports/progress-sink.port.js";
 import type { AgentRole } from "#domain/agent-types.js";
+import type { ExecutionMode } from "#domain/config.js";
 import type { Slice } from "#domain/plan.js";
-import { styleForRole } from "#ui/ink-operator-gate.js";
+import { InkOperatorGate, SilentOperatorGate, styleForRole } from "#ui/ink-operator-gate.js";
+import { buildStatusLine } from "#ui/hud.js";
+import type { HudState } from "#ui/hud.js";
+import { FakeHud } from "../../fakes/fake-hud.js";
 
 class TestProgressSink extends ProgressSink {
   registerInterrupts(): InterruptHandler {
@@ -12,6 +16,7 @@ class TestProgressSink extends ProgressSink {
   updateProgress(_update: ProgressUpdate): void {}
   setActivity(_summary: string): void {}
   log(_text: string): void {}
+  logExecutionMode(_executionMode: ExecutionMode): void {}
   createStreamer(_role: AgentRole): (text: string) => void {
     return () => {};
   }
@@ -72,6 +77,11 @@ describe("logBadge", () => {
     const sink = new TestProgressSink();
     sink.logBadge("tdd", "implementing...");
   });
+
+  it("logExecutionMode is callable", () => {
+    const sink = new TestProgressSink();
+    sink.logExecutionMode("grouped");
+  });
 });
 
 describe("styleForRole", () => {
@@ -85,5 +95,104 @@ describe("styleForRole", () => {
     ["completeness", "PLAN"],
   ] as const)("maps %s → label %s", (role, expectedLabel) => {
     expect(styleForRole(role).label).toBe(expectedLabel);
+  });
+});
+
+describe("verify gates", () => {
+  it("SilentOperatorGate stops verify failures instead of blindly retrying", async () => {
+    const gate = new SilentOperatorGate();
+
+    await expect(gate.verifyFailed("Group Core", "runner issue", true)).resolves.toEqual({
+      kind: "stop",
+    });
+  });
+
+  it("InkOperatorGate omits retry for non-retryable verification failures", async () => {
+    const hud = new FakeHud();
+    const gate = new InkOperatorGate(hud);
+
+    hud.queueAskAnswer("r");
+
+    await expect(gate.verifyFailed("Group Core", "runner issue", false)).resolves.toEqual({
+      kind: "stop",
+    });
+    expect(hud.askPrompts[0]).not.toContain("(r)etry");
+  });
+});
+
+describe("mode-aware HUD progress", () => {
+  const mergeHudState = (
+    updates: ReadonlyArray<Partial<HudState>>,
+  ): HudState => {
+    return updates.reduce<HudState>(
+      (state, update) => ({ ...state, ...update }),
+      {
+        totalSlices: 0,
+        completedSlices: 0,
+        startTime: Date.now() - 1_000,
+      },
+    );
+  };
+
+  it("suppresses stale slice counters after a sliced run switches to grouped mode", () => {
+    const hud = new FakeHud();
+    const sink = new (class extends ProgressSink {
+      registerInterrupts(): InterruptHandler {
+        return { onGuide: () => {}, onInterrupt: () => {}, onSkip: () => {}, onQuit: () => {} };
+      }
+      updateProgress(update: ProgressUpdate): void {
+        hud.update(update as Partial<HudState>);
+      }
+      setActivity(_summary: string): void {}
+      log(_text: string): void {}
+      logExecutionMode(executionMode: ExecutionMode): void {
+        hud.update({ executionMode } as Partial<HudState>);
+      }
+      createStreamer(_role: AgentRole): (text: string) => void {
+        return () => {};
+      }
+      logSliceIntro(_slice: Slice): void {}
+      logBadge(_role: AgentRole, _phase: string): void {}
+      clearSkipping(): void {}
+      teardown(): void {}
+    })();
+
+    sink.updateProgress({ totalSlices: 5, completedSlices: 1, currentSlice: { number: 2 } });
+    sink.logExecutionMode("grouped");
+    sink.updateProgress({ groupName: "Core", groupSliceCount: 3, groupCompleted: 1 });
+
+    const line = buildStatusLine(mergeHudState(hud.updates), 120);
+    expect(line).toContain("Group: Core");
+    expect(line).not.toContain("S2/5");
+  });
+
+  it("suppresses stale slice counters after a sliced run switches to direct mode", () => {
+    const hud = new FakeHud();
+    const sink = new (class extends ProgressSink {
+      registerInterrupts(): InterruptHandler {
+        return { onGuide: () => {}, onInterrupt: () => {}, onSkip: () => {}, onQuit: () => {} };
+      }
+      updateProgress(update: ProgressUpdate): void {
+        hud.update(update as Partial<HudState>);
+      }
+      setActivity(_summary: string): void {}
+      log(_text: string): void {}
+      logExecutionMode(executionMode: ExecutionMode): void {
+        hud.update({ executionMode } as Partial<HudState>);
+      }
+      createStreamer(_role: AgentRole): (text: string) => void {
+        return () => {};
+      }
+      logSliceIntro(_slice: Slice): void {}
+      logBadge(_role: AgentRole, _phase: string): void {}
+      clearSkipping(): void {}
+      teardown(): void {}
+    })();
+
+    sink.updateProgress({ totalSlices: 5, completedSlices: 1, currentSlice: { number: 2 } });
+    sink.logExecutionMode("direct");
+
+    const line = buildStatusLine(mergeHudState(hud.updates), 120);
+    expect(line).not.toContain("S2/5");
   });
 });

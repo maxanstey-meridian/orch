@@ -4,6 +4,7 @@ import type { OrchestratorConfig } from "#domain/config.js";
 import {
   agentSpawnerFactory,
   statePersistenceFactory,
+  logWriterFactory,
   gitOpsFactory,
   promptBuilderFactory,
   operatorGateFactory,
@@ -19,6 +20,7 @@ export const createContainer = (config: OrchestratorConfig, hud: Hud) =>
     .provideFactory("runtimeInteractionGate", runtimeInteractionGateFactory)
     .provideFactory("agentSpawner", agentSpawnerFactory)
     .provideFactory("statePersistence", statePersistenceFactory)
+    .provideFactory("logWriter", logWriterFactory)
     .provideFactory("gitOps", gitOpsFactory)
     .provideFactory("promptBuilder", promptBuilderFactory)
     .provideFactory("operatorGate", operatorGateFactory)

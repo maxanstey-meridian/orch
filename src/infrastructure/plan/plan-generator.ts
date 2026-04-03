@@ -2,9 +2,11 @@ import { randomBytes, createHash } from "crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
 import type { PromptAgent } from "#application/ports/agent-spawner.port.js";
+import type { ExecutionMode } from "#domain/config.js";
 import { a, type LogFn } from "#ui/display.js";
 import type { Group } from "./plan-parser.js";
-import { parsePlanJson } from "./plan-schema.js";
+import { PlanSchema, parsePlanJson } from "./plan-schema.js";
+import { buildPlanGenerationPrompt } from "./prompts.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -46,51 +48,6 @@ export const ensureCanonicalPlan = (planPath: string, orchDir: string): string =
     return id;
   }
 };
-
-const PLAN_INSTRUCTIONS = `Transform this feature inventory into a group-and-slice plan.
-
-**You are generating the HIGH-LEVEL plan structure, NOT per-cycle TDD plans.** Ignore the Cycle N format from your system prompt — that is for a different task.
-
-## Required format
-
-Output valid JSON matching this schema:
-
-\`\`\`json
-{
-  "groups": [
-    {
-      "name": "<group name>",
-      "description": "<optional group description>",
-      "slices": [
-        {
-          "number": 1,
-          "title": "<slice title>",
-          "why": "<one sentence explaining why this slice is needed>",
-          "files": [
-            { "path": "src/foo.ts", "action": "new" },
-            { "path": "src/bar.ts", "action": "edit" }
-          ],
-          "details": "<concrete implementation details — what to build, how it connects>",
-          "tests": "<what to test, which file>"
-        }
-      ]
-    }
-  ]
-}
-\`\`\`
-
-## Field reference
-
-- \`"action"\` must be one of: \`"new"\`, \`"edit"\`, \`"delete"\`.
-- \`"number"\` is a positive integer — globally unique across the entire plan.
-- \`"files"\` must have at least one entry per slice.
-- All string fields (\`"name"\`, \`"title"\`, \`"why"\`, \`"details"\`, \`"tests"\`) must be non-empty.
-
-## Rules
-
-- **Slice numbers must be GLOBALLY unique and sequential across the entire plan.** Group 1 has Slices 1-3, Group 2 has Slices 4-6, etc. Do NOT restart numbering per group. The orchestrator tracks progress by slice number — duplicate numbers cause slices to be skipped.
-- Target 2-3 slices per group, max 4. Respect dependency ordering.
-- Output ONLY the raw JSON object. No markdown code fences, no \`\`\`json blocks, no preamble, no commentary, no explanation before or after. The very first character of your response must be \`{\` and the very last must be \`}\`.`;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -148,6 +105,7 @@ export const generatePlan = async (
   briefContent: string,
   agent: PromptAgent,
   outputDir: string,
+  targetExecutionMode: Exclude<ExecutionMode, "direct"> = "sliced",
 ): Promise<GeneratePlanResult> => {
   const inventory = readFileSync(inventoryPath, "utf-8");
 
@@ -156,7 +114,7 @@ export const generatePlan = async (
     parts.push("## Codebase context\n\n" + briefContent);
   }
   parts.push("## Feature inventory\n\n" + inventory);
-  parts.push(PLAN_INSTRUCTIONS);
+  parts.push(buildPlanGenerationPrompt(targetExecutionMode));
 
   const prompt = parts.join("\n\n---\n\n");
   const result = await agent.send(prompt);
@@ -173,9 +131,29 @@ export const generatePlan = async (
   }
 
   // Parse, validate via Zod, and map to Group[]
+  let planDocument: ReturnType<typeof PlanSchema.parse>;
   let groups: readonly Group[];
   try {
-    groups = parsePlanJson(planText, "generated plan");
+    let rawPlan: Record<string, unknown>;
+    try {
+      rawPlan = JSON.parse(planText) as Record<string, unknown>;
+    } catch (error) {
+      throw new Error(`Invalid JSON in plan: generated plan — ${(error as Error).message}`);
+    }
+
+    const requestedMode = rawPlan.executionMode;
+    if (requestedMode === undefined) {
+      throw new Error("Generated plan missing required executionMode metadata");
+    }
+
+    if (requestedMode !== targetExecutionMode) {
+      throw new Error(
+        `Generated plan declared executionMode "${String(requestedMode)}" but "${targetExecutionMode}" was requested`,
+      );
+    }
+
+    planDocument = PlanSchema.parse(rawPlan);
+    groups = parsePlanJson(JSON.stringify(planDocument), "generated plan");
   } catch (e) {
     console.error("--- RAW AGENT OUTPUT ---");
     console.error(best);
@@ -186,7 +164,7 @@ export const generatePlan = async (
   }
 
   // Pretty-print the validated JSON for disk
-  const formatted = JSON.stringify(JSON.parse(planText), null, 2);
+  const formatted = JSON.stringify(planDocument, null, 2);
   const planId = generatePlanId();
 
   // Write to disk
@@ -203,6 +181,7 @@ export const doGeneratePlan = async (
   outputDir: string,
   log: LogFn,
   spawnPlanAgent: () => PromptAgent,
+  targetExecutionMode: Exclude<ExecutionMode, "direct"> = "sliced",
 ): Promise<string> => {
   log(`${a.bold}Generating plan from inventory...${a.reset}`);
   const planAgent = spawnPlanAgent();
@@ -212,6 +191,7 @@ export const doGeneratePlan = async (
       briefContent,
       planAgent,
       outputDir,
+      targetExecutionMode,
     );
     log(`${a.green}Plan written to ${planPath}${a.reset}`);
     for (const line of planSummaryLines(groups)) {

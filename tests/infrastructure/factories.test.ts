@@ -3,6 +3,20 @@ import { AGENT_DEFAULTS } from "#domain/agent-config.js";
 import type { OrchestratorConfig } from "#domain/config.js";
 import type { Hud } from "#ui/hud.js";
 
+const spawnMock = vi.fn(() => ({}));
+const codexPromptHandle = vi.hoisted(() => ({
+  send: vi.fn(),
+  kill: vi.fn(),
+}));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    spawn: spawnMock,
+  };
+});
+
 vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
   spawnClaudeAgent: vi.fn(),
   spawnClaudePlanAgent: vi.fn(),
@@ -12,6 +26,22 @@ vi.mock("../../src/infrastructure/claude/claude-agent-factory.js", () => ({
   buildRulesReminder: vi.fn((base: string, custom?: string) =>
     custom ? `${base}\n${custom}` : base,
   ),
+}));
+
+vi.mock("../../src/infrastructure/codex/codex-agent-spawner.js", () => ({
+  CodexAgentSpawner: class {
+    constructor(
+      private readonly _cwd: string,
+      private readonly _config: { readonly auto: boolean },
+      private readonly processFactory: () => unknown,
+      private readonly _gate: unknown,
+    ) {}
+
+    spawn() {
+      this.processFactory();
+      return codexPromptHandle;
+    }
+  },
 }));
 
 import { SilentRuntimeInteractionGate } from "#ui/ink-runtime-interaction-gate.js";
@@ -36,10 +66,13 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   planPath: "/tmp/plan.json",
   planContent: "plan content",
   brief: "brief text",
+  executionMode: "sliced",
+  executionPreference: "auto",
   auto: false,
   reviewThreshold: 30,
   maxReviewCycles: 3,
   stateFile: "/tmp/state.json",
+  logPath: null,
   tddSkill: "tdd-skill",
   reviewSkill: "review-skill",
   verifySkill: "verify-skill",
@@ -153,14 +186,13 @@ describe("planGeneratorSpawnerFactory", () => {
     expect(typeof spawner).toBe("function");
   });
 
-  it("throws for codex provider", async () => {
+  it("returns a spawner function for codex provider", async () => {
     const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
-    expect(() =>
-      planGeneratorSpawnerFactory({
-        agentConfig: { ...AGENT_DEFAULTS, plan: { provider: "codex" } },
-        cwd: "/tmp",
-      }),
-    ).toThrow("not yet implemented");
+    const spawner = planGeneratorSpawnerFactory({
+      agentConfig: { ...AGENT_DEFAULTS, plan: { provider: "codex" } },
+      cwd: "/tmp",
+    });
+    expect(typeof spawner).toBe("function");
   });
 
   it("returned spawner produces an object with send and kill", async () => {
@@ -174,6 +206,149 @@ describe("planGeneratorSpawnerFactory", () => {
     expect(typeof agent.kill).toBe("function");
   });
 
+  it("uses the default codex app-server model for codex plan generation", async () => {
+    spawnMock.mockClear();
+
+    const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = planGeneratorSpawnerFactory({
+      agentConfig: { ...AGENT_DEFAULTS, plan: { provider: "codex" } },
+      cwd: "/tmp",
+    });
+
+    spawner();
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      "codex",
+      ["app-server"],
+      expect.objectContaining({
+        cwd: "/tmp",
+        stdio: ["pipe", "pipe", "pipe"],
+      }),
+    );
+  });
+
+});
+
+describe("requestTriageSpawnerFactory", () => {
+  it("returns a prompt agent for claude triage and forwards the configured model", async () => {
+    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
+    const spawnClaudePlanAgent = vi.mocked(mockModule.spawnClaudePlanAgent);
+    spawnClaudePlanAgent.mockClear();
+    spawnClaudePlanAgent.mockReturnValue({
+      send: vi.fn(),
+      kill: vi.fn(),
+    } as never);
+
+    const { requestTriageSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = requestTriageSpawnerFactory({
+      agentConfig: {
+        ...AGENT_DEFAULTS,
+        triage: {
+          provider: "claude",
+          model: "claude-haiku-4-5-20251001",
+        },
+      },
+      cwd: "/tmp/request-triage",
+    });
+
+    const agent = spawner();
+
+    expect(agent).toHaveProperty("send");
+    expect(agent).toHaveProperty("kill");
+    expect(spawnClaudePlanAgent).toHaveBeenCalledWith(
+      expect.anything(),
+      undefined,
+      "/tmp/request-triage",
+      "claude-haiku-4-5-20251001",
+    );
+  });
+
+  it("forwards send and kill to the underlying claude triage handle", async () => {
+    const mockModule = await import("../../src/infrastructure/claude/claude-agent-factory.js");
+    const spawnClaudePlanAgent = vi.mocked(mockModule.spawnClaudePlanAgent);
+    const handle = {
+      send: vi.fn().mockResolvedValue("triage-result"),
+      kill: vi.fn(),
+    };
+    spawnClaudePlanAgent.mockClear();
+    spawnClaudePlanAgent.mockReturnValue(handle as never);
+
+    const { requestTriageSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = requestTriageSpawnerFactory({
+      agentConfig: {
+        ...AGENT_DEFAULTS,
+        triage: {
+          provider: "claude",
+          model: "claude-haiku-4-5-20251001",
+        },
+      },
+      cwd: "/tmp/request-triage",
+    });
+
+    const agent = spawner();
+    await agent.send("classify");
+    agent.kill();
+
+    expect(handle.send).toHaveBeenCalledWith("classify");
+    expect(handle.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a prompt agent for codex triage and uses the configured model", async () => {
+    spawnMock.mockClear();
+    codexPromptHandle.send.mockReset();
+    codexPromptHandle.kill.mockReset();
+
+    const { requestTriageSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = requestTriageSpawnerFactory({
+      agentConfig: {
+        ...AGENT_DEFAULTS,
+        triage: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+      },
+      cwd: "/tmp/request-triage",
+    });
+
+    const agent = spawner();
+
+    expect(agent).toHaveProperty("send");
+    expect(agent).toHaveProperty("kill");
+    expect(spawnMock).toHaveBeenCalledWith(
+      "codex",
+      ["app-server", "-c", 'model="gpt-5.4"'],
+      expect.objectContaining({
+        cwd: "/tmp/request-triage",
+        stdio: ["pipe", "pipe", "pipe"],
+      }),
+    );
+  });
+
+  it("forwards send and kill to the underlying codex triage handle", async () => {
+    spawnMock.mockClear();
+    codexPromptHandle.send.mockReset();
+    codexPromptHandle.kill.mockReset();
+    codexPromptHandle.send.mockResolvedValue("triage-result");
+
+    const { requestTriageSpawnerFactory } = await import("../../src/infrastructure/factories.js");
+    const spawner = requestTriageSpawnerFactory({
+      agentConfig: {
+        ...AGENT_DEFAULTS,
+        triage: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+      },
+      cwd: "/tmp/request-triage",
+    });
+
+    const agent = spawner();
+    await agent.send("classify");
+    agent.kill();
+
+    expect(codexPromptHandle.send).toHaveBeenCalledWith("classify");
+    expect(codexPromptHandle.kill).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("promptBuilderFactory", () => {
@@ -186,5 +361,16 @@ describe("promptBuilderFactory", () => {
     const result = promptBuilderFactory(config);
     expect(result).toBeInstanceOf(DefaultPromptBuilder);
     expect(promptBuilderFactory.inject).toEqual(["config"]);
+  });
+});
+
+describe("logWriterFactory", () => {
+  it("returns NullLogWriter when config.logPath is null and FsLogWriter otherwise", async () => {
+    const { logWriterFactory } = await import("../../src/infrastructure/factories.js");
+    const { FsLogWriter, NullLogWriter } = await import("../../src/infrastructure/log/log-writer.js");
+
+    expect(logWriterFactory(makeConfig({ logPath: null }))).toBeInstanceOf(NullLogWriter);
+    expect(logWriterFactory(makeConfig({ logPath: "/tmp/test.log" }))).toBeInstanceOf(FsLogWriter);
+    expect(logWriterFactory.inject).toEqual(["config"]);
   });
 });

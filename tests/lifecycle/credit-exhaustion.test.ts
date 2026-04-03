@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createTestHarness, okResult } from "../fakes/harness.js";
 import { CreditExhaustedError } from "#domain/errors.js";
 import type { Group, Slice } from "#domain/plan.js";
@@ -16,6 +16,10 @@ const makeSlice = (n: number): Slice => ({
 const makeGroup = (name: string, slices: Slice[]): Group => ({ name, slices });
 
 describe("Credit exhaustion lifecycle", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("non-retryable error, operator quits via HUD", async () => {
     const { uc, hud, spawner, persistence } = createTestHarness({
       config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
@@ -46,26 +50,61 @@ describe("Credit exhaustion lifecycle", () => {
     expect(creditPrompt).toBeDefined();
   });
 
-  it("non-retryable error, operator retries, second attempt succeeds", async () => {
+  it("treats assistantText-only usage-limit warnings as terminal credit exhaustion", async () => {
+    const { uc, hud, spawner } = createTestHarness({
+      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+    });
+
+    spawner.onNextSpawn("tdd",
+      okResult({
+        exitCode: 1,
+        assistantText: "You've hit your limit · resets 10am (Europe/London)",
+        resultText: "",
+      }),
+    );
+    spawner.onNextSpawn("review");
+
+    hud.queueAskAnswer("q");
+
+    await expect(uc.execute([makeGroup("G1", [makeSlice(1)])])).rejects.toThrow(CreditExhaustedError);
+
+    const creditPrompt = hud.askPrompts.find((p) => p.toLowerCase().includes("credit exhaustion"));
+    expect(creditPrompt).toBeDefined();
+  });
+
+  it("auto mode probes until usage is available again when credit exhaustion is detected", async () => {
     const { uc, hud, spawner, persistence } = createTestHarness({
       config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
       auto: true,
     });
+    vi.useFakeTimers();
+    uc.usageProbeDelayMs = 1_000;
+    uc.usageProbeMaxDelayMs = 2_000;
 
-    // TDD: first returns credit error, second succeeds
-    // Use queueResponse on the handle after spawn since we need dynamic behavior
     spawner.onNextSpawn("tdd",
-      okResult({ exitCode: 1, resultText: "usage limit exceeded", assistantText: "" }),
+      okResult({
+        exitCode: 1,
+        resultText: "You've hit your limit · resets 10am (Europe/London)",
+        assistantText: "",
+      }),
       okResult({ assistantText: "implemented successfully" }),
     );
+    spawner.onNextSpawn("tdd",
+      okResult({
+        exitCode: 1,
+        resultText: "You've hit your limit · resets 10am (Europe/London)",
+        assistantText: "",
+      }),
+    );
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "OK" }));
     spawner.onNextSpawn("review");
 
-    // HUD: operator chooses retry
-    hud.queueAskAnswer("r");
-
-    await uc.execute([makeGroup("G1", [makeSlice(1)])]);
+    const run = uc.execute([makeGroup("G1", [makeSlice(1)])]);
+    await vi.advanceTimersByTimeAsync(3_000);
+    await run;
 
     expect(persistence.current.lastCompletedSlice).toBe(1);
+    expect(hud.askPrompts).toHaveLength(0);
   });
 
   it("retryable overloaded error auto-retries without operator prompt", async () => {

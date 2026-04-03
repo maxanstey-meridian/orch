@@ -2,16 +2,23 @@ import type { ResolvedAgentConfig } from "./agent-config.js";
 import type { AgentRole } from "./agent-types.js";
 
 export type Provider = "claude" | "codex";
+export type ExecutionMode = "direct" | "grouped" | "sliced";
+export type ExecutionPreference = "auto" | "quick" | "grouped" | "long";
+
+export const DEFAULT_EXECUTION_PREFERENCE: ExecutionPreference = "auto";
 
 export type OrchestratorConfig = {
   readonly cwd: string;
   readonly planPath: string;
   readonly planContent: string;
   readonly brief: string;
+  readonly executionMode: ExecutionMode;
+  readonly executionPreference: ExecutionPreference;
   readonly auto: boolean;
   readonly reviewThreshold: number;
   readonly maxReviewCycles: number;
   readonly stateFile: string;
+  readonly logPath: string | null;
   readonly tddSkill: string | null;
   readonly reviewSkill: string | null;
   readonly verifySkill: string | null;

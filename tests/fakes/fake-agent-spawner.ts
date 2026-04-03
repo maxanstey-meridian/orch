@@ -13,6 +13,11 @@ const ROLE_STYLES: Record<string, AgentStyle> = {
   triage: { label: "TRI", color: "#888", badge: "[TRI]" },
 };
 
+type FakeAgentResponse = AgentResult & {
+  readonly streamedText?: readonly string[];
+  readonly toolSummaries?: readonly string[];
+};
+
 export class FakeAgentHandle implements AgentHandle {
   readonly sessionId: string;
   readonly style: AgentStyle;
@@ -26,7 +31,7 @@ export class FakeAgentHandle implements AgentHandle {
   /** Every message passed to inject(), in order. */
   readonly injectedMessages: string[] = [];
 
-  private responses: Array<AgentResult | ((prompt: string) => AgentResult)> = [];
+  private responses: Array<FakeAgentResponse | ((prompt: string) => FakeAgentResponse)> = [];
   private pipeOnText: ((text: string) => void) | null = null;
   private pipeOnToolUse: ((summary: string) => void) | null = null;
 
@@ -36,7 +41,7 @@ export class FakeAgentHandle implements AgentHandle {
   }
 
   /** Queue one or more responses for send(). */
-  queueResponse(...results: Array<AgentResult | ((prompt: string) => AgentResult)>): void {
+  queueResponse(...results: Array<FakeAgentResponse | ((prompt: string) => FakeAgentResponse)>): void {
     this.responses.push(...results);
   }
 
@@ -52,7 +57,14 @@ export class FakeAgentHandle implements AgentHandle {
       );
     }
     const next = this.responses.shift()!;
-    return typeof next === "function" ? next(prompt) : next;
+    const result = typeof next === "function" ? next(prompt) : next;
+    for (const text of result.streamedText ?? []) {
+      this.pipeOnText?.(text);
+    }
+    for (const summary of result.toolSummaries ?? []) {
+      this.pipeOnToolUse?.(summary);
+    }
+    return result;
   }
 
   async sendQuiet(prompt: string): Promise<string> {
@@ -85,7 +97,10 @@ export class FakeAgentSpawner extends AgentSpawner {
   private spawnQueue = new Map<AgentRole, Array<Array<AgentResult | ((prompt: string) => AgentResult)>>>();
 
   /** Queue responses for the next spawn of this role. Each call = one spawn's worth. */
-  onNextSpawn(role: AgentRole, ...responses: Array<AgentResult | ((prompt: string) => AgentResult)>): void {
+  onNextSpawn(
+    role: AgentRole,
+    ...responses: Array<FakeAgentResponse | ((prompt: string) => FakeAgentResponse)>
+  ): void {
     const queue = this.spawnQueue.get(role) ?? [];
     queue.push(responses);
     this.spawnQueue.set(role, queue);

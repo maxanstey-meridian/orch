@@ -1,6 +1,17 @@
+import { createInterface } from "node:readline";
 import { describe, it, expect, vi } from "vitest";
-import { buildStatusLine, createHud } from "#ui/hud.js";
+import {
+  HUD_MAX_LINES,
+  appendHudLines,
+  buildStatusLine,
+  createHud,
+  flushHudWriterBuffer,
+} from "#ui/hud.js";
 import type { HudState } from "#ui/hud.js";
+
+vi.mock("node:readline", () => ({
+  createInterface: vi.fn(),
+}));
 
 const makeMockStdout = (overrides: { columns?: number; rows?: number } = {}) => {
   const written: string[] = [];
@@ -123,9 +134,65 @@ describe("buildStatusLine", () => {
   });
 });
 
+describe("appendHudLines", () => {
+  it("keeps only the most recent retained lines", () => {
+    const lines = Array.from({ length: HUD_MAX_LINES - 1 }, (_, index) => `line-${index}`);
+
+    appendHudLines(lines, ["kept", "newest"]);
+
+    expect(lines).toHaveLength(HUD_MAX_LINES);
+    expect(lines[0]).toBe("line-1");
+    expect(lines.at(-2)).toBe("kept");
+    expect(lines.at(-1)).toBe("newest");
+  });
+});
+
+describe("flushHudWriterBuffer", () => {
+  it("flushes a buffered partial stream before later badge/log lines are appended", () => {
+    const lines: string[] = [];
+
+    const clearedBuffer = flushHudWriterBuffer(lines, "buffered partial stream");
+    appendHudLines(lines, "11:00  [TDD] testing...");
+
+    expect(clearedBuffer).toBe("");
+    expect(lines).toEqual([
+      "buffered partial stream",
+      "11:00  [TDD] testing...",
+    ]);
+  });
+
+  it("ignores an empty buffered fragment", () => {
+    const lines: string[] = [];
+
+    const clearedBuffer = flushHudWriterBuffer(lines, "");
+
+    expect(clearedBuffer).toBe("");
+    expect(lines).toEqual([]);
+  });
+});
+
 // ─── createHud(false) — no-op mode ───────────────────────────────────────────
 
 describe("createHud(false) — no-op mode", () => {
+  it("askUser uses node:readline without relying on CommonJS require", async () => {
+    const close = vi.fn();
+    vi.mocked(createInterface).mockReturnValue({
+      question: (_prompt: string, callback: (answer: string) => void) => {
+        callback("queued answer");
+      },
+      close,
+    } as unknown as ReturnType<typeof createInterface>);
+
+    const hud = createHud(false);
+
+    await expect(hud.askUser("Continue? ")).resolves.toBe("queued answer");
+    expect(createInterface).toHaveBeenCalledWith({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("update() and teardown() do not throw", () => {
     const hud = createHud(false);
     expect(() => hud.update({ totalSlices: 5, completedSlices: 0 })).not.toThrow();

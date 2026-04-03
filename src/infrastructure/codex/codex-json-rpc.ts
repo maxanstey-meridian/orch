@@ -25,6 +25,23 @@ type Pending = {
   readonly reject: (reason: unknown) => void;
 };
 
+const createJsonRpcError = (
+  error: Record<string, unknown>,
+): Error & { readonly code?: unknown; readonly data?: unknown } => {
+  const message = typeof error.message === "string" ? error.message : "unknown JSON-RPC error";
+  const enriched = new Error(message) as Error & {
+    readonly code?: unknown;
+    readonly data?: unknown;
+  };
+  if ("code" in error) {
+    Object.assign(enriched, { code: error.code });
+  }
+  if ("data" in error) {
+    Object.assign(enriched, { data: error.data });
+  }
+  return enriched;
+};
+
 export const createJsonRpcClient = (proc: ChildProcess): JsonRpcClient => {
   if (!proc.stdin || !proc.stdout) {
     throw new Error('ChildProcess must have stdin and stdout (use stdio: ["pipe", "pipe", ...])');
@@ -75,7 +92,7 @@ export const createJsonRpcClient = (proc: ChildProcess): JsonRpcClient => {
       if (msg.error) {
         if (msg.error && typeof msg.error === "object" && !Array.isArray(msg.error)) {
           const err = msg.error as Record<string, unknown>;
-          entry.reject({ code: err.code, message: err.message, data: err.data });
+          entry.reject(createJsonRpcError(err));
         } else {
           entry.reject(new Error(String(msg.error ?? "unknown JSON-RPC error")));
         }
@@ -98,7 +115,19 @@ export const createJsonRpcClient = (proc: ChildProcess): JsonRpcClient => {
         pending.set(id, { resolve, reject });
       });
       const message = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
-      stdin.write(message);
+      if (stdin.writableEnded || stdin.destroyed) {
+        const entry = pending.get(id);
+        pending.delete(id);
+        entry?.reject(new Error("process exited"));
+        return promise;
+      }
+      try {
+        stdin.write(message);
+      } catch {
+        const entry = pending.get(id);
+        pending.delete(id);
+        entry?.reject(new Error("process exited"));
+      }
       return promise;
     },
 

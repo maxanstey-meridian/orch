@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Group, Slice } from "#domain/plan.js";
+import type { Group, PlannedExecutionMode, Slice } from "#domain/plan.js";
 import { buildContent } from "#domain/plan.js";
 
 export type { FileAction } from "#domain/plan.js";
@@ -44,30 +44,46 @@ export const PlanGroupSchema = z.object({
 
 export const PlanSchema = z
   .object({
+    executionMode: z.enum(["grouped", "sliced"]).optional(),
     context: PlanContextSchema.optional(),
     groups: z.array(PlanGroupSchema).min(1),
   })
-  .refine(
-    (plan) => {
-      const seen = new Set<number>();
-      for (const group of plan.groups) {
-        for (const slice of group.slices) {
-          if (seen.has(slice.number)) {
-            return false;
-          }
-          seen.add(slice.number);
-        }
+  .superRefine((plan, ctx) => {
+    const flattenedSlices = plan.groups.flatMap((group) => group.slices);
+    const seen = new Set<number>();
+
+    for (const slice of flattenedSlices) {
+      if (seen.has(slice.number)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Slice numbers must be unique across all groups",
+        });
+        return;
       }
-      return true;
-    },
-    { message: "Slice numbers must be unique across all groups" },
-  );
+      seen.add(slice.number);
+    }
+
+    for (const [index, slice] of flattenedSlices.entries()) {
+      const expectedNumber = index + 1;
+      if (slice.number !== expectedNumber) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Slice numbers must be sequential across all groups starting at 1",
+        });
+        return;
+      }
+    }
+  });
 
 export type PlanSliceJson = z.infer<typeof PlanSliceSchema>;
 export type PlanGroupJson = z.infer<typeof PlanGroupSchema>;
 export type PlanJson = z.infer<typeof PlanSchema>;
+export type PlanDocument = {
+  readonly executionMode?: PlannedExecutionMode;
+  readonly groups: readonly Group[];
+};
 
-export const parsePlanJson = (json: string, source = "<json>"): readonly Group[] => {
+export const parsePlanDocumentJson = (json: string, source = "<json>"): PlanDocument => {
   let raw: unknown;
   try {
     raw = JSON.parse(json);
@@ -81,24 +97,32 @@ export const parsePlanJson = (json: string, source = "<json>"): readonly Group[]
     throw new Error(`Invalid plan (${source}):\n${issues}`);
   }
 
-  return result.data.groups.map((g) => ({
-    name: g.name,
-    slices: g.slices.map(
-      (s): Slice => ({
-        number: s.number,
-        title: s.title,
-        content: buildContent(s),
-        why: s.why,
-        files: s.files,
-        details: s.details,
-        tests: s.tests,
-        relatedFiles: s.relatedFiles,
-        keyContext: s.keyContext,
-        dependsOn: s.dependsOn,
-        testPatterns: s.testPatterns,
-        signatures: s.signatures,
-        gotchas: s.gotchas,
-      }),
-    ),
-  }));
+  return {
+    executionMode: result.data.executionMode,
+    groups: result.data.groups.map((g) => ({
+      name: g.name,
+      description: g.description,
+      slices: g.slices.map(
+        (s): Slice => ({
+          number: s.number,
+          title: s.title,
+          content: buildContent(s),
+          why: s.why,
+          files: s.files,
+          details: s.details,
+          tests: s.tests,
+          relatedFiles: s.relatedFiles,
+          keyContext: s.keyContext,
+          dependsOn: s.dependsOn,
+          testPatterns: s.testPatterns,
+          signatures: s.signatures,
+          gotchas: s.gotchas,
+        }),
+      ),
+    })),
+  };
+};
+
+export const parsePlanJson = (json: string, source = "<json>"): readonly Group[] => {
+  return parsePlanDocumentJson(json, source).groups;
 };

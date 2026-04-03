@@ -23,6 +23,27 @@ describe("state", () => {
     expect(loaded).toEqual(state);
   });
 
+  it("persists direct executionMode and loads it back", async () => {
+    const state = { executionMode: "direct" as const };
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+    expect(loaded).toEqual(state);
+  });
+
+  it("persists grouped executionMode and loads it back", async () => {
+    const state = { executionMode: "grouped" as const };
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+    expect(loaded).toEqual(state);
+  });
+
+  it("persists completedAt and loads it back", async () => {
+    const state = { executionMode: "direct" as const, completedAt: "2026-04-10T11:00:00.000Z" };
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+    expect(loaded).toEqual(state);
+  });
+
   it("returns default state when file contains corrupt JSON", async () => {
     await writeFile(testPath, "{not valid json!!!");
     const state = await loadState(testPath);
@@ -216,59 +237,133 @@ describe("state", () => {
     expect(loaded).toEqual(state);
   });
 
-  it("persists tddSessionId and reviewSessionId", async () => {
+  it("persists provider-scoped tddSession and reviewSession", async () => {
     const state = {
       lastCompletedSlice: 1,
-      tddSessionId: "abc-123",
-      reviewSessionId: "def-456",
+      tddSession: { provider: "codex" as const, id: "abc-123" },
+      reviewSession: { provider: "claude" as const, id: "def-456" },
     };
     await saveState(testPath, state);
     const loaded = await loadState(testPath);
-    expect(loaded.tddSessionId).toBe("abc-123");
-    expect(loaded.reviewSessionId).toBe("def-456");
+    expect(loaded.tddSession).toEqual({ provider: "codex", id: "abc-123" });
+    expect(loaded.reviewSession).toEqual({ provider: "claude", id: "def-456" });
   });
 
-  it("throws when tddSessionId is empty string", async () => {
-    await writeFile(testPath, JSON.stringify({ tddSessionId: "" }));
-    await expect(loadState(testPath)).rejects.toThrow("tddSessionId");
+  it("throws when tddSession.id is empty string", async () => {
+    await writeFile(testPath, JSON.stringify({ tddSession: { provider: "codex", id: "" } }));
+    await expect(loadState(testPath)).rejects.toThrow("tddSession");
   });
 
-  it("throws when reviewSessionId is empty string", async () => {
-    await writeFile(testPath, JSON.stringify({ reviewSessionId: "" }));
-    await expect(loadState(testPath)).rejects.toThrow("reviewSessionId");
+  it("throws when reviewSession.id is empty string", async () => {
+    await writeFile(testPath, JSON.stringify({ reviewSession: { provider: "claude", id: "" } }));
+    await expect(loadState(testPath)).rejects.toThrow("reviewSession");
   });
 
-  it("round-trips state with only tddSessionId (no reviewSessionId)", async () => {
-    const state = { tddSessionId: "abc-123" };
+  it("round-trips state with only tddSession (no reviewSession)", async () => {
+    const state = { tddSession: { provider: "codex" as const, id: "abc-123" } };
     await saveState(testPath, state);
     const loaded = await loadState(testPath);
-    expect(loaded.tddSessionId).toBe("abc-123");
-    expect(loaded.reviewSessionId).toBeUndefined();
+    expect(loaded.tddSession).toEqual({ provider: "codex", id: "abc-123" });
+    expect(loaded.reviewSession).toBeUndefined();
   });
 
-  it("round-trips state with only reviewSessionId (no tddSessionId)", async () => {
-    const state = { reviewSessionId: "def-456" };
+  it("round-trips state with only reviewSession (no tddSession)", async () => {
+    const state = { reviewSession: { provider: "claude" as const, id: "def-456" } };
     await saveState(testPath, state);
     const loaded = await loadState(testPath);
-    expect(loaded.reviewSessionId).toBe("def-456");
-    expect(loaded.tddSessionId).toBeUndefined();
+    expect(loaded.reviewSession).toEqual({ provider: "claude", id: "def-456" });
+    expect(loaded.tddSession).toBeUndefined();
   });
 
-  it("throws when tddSessionId is a number", async () => {
-    await writeFile(testPath, JSON.stringify({ tddSessionId: 123 }));
-    await expect(loadState(testPath)).rejects.toThrow("tddSessionId");
+  it("throws when tddSession has invalid shape", async () => {
+    await writeFile(testPath, JSON.stringify({ tddSession: 123 }));
+    await expect(loadState(testPath)).rejects.toThrow("tddSession");
   });
 
-  it("throws when reviewSessionId is a boolean", async () => {
-    await writeFile(testPath, JSON.stringify({ reviewSessionId: true }));
-    await expect(loadState(testPath)).rejects.toThrow("reviewSessionId");
+  it("throws when reviewSession provider is invalid", async () => {
+    await writeFile(testPath, JSON.stringify({ reviewSession: { provider: "openai", id: "x" } }));
+    await expect(loadState(testPath)).rejects.toThrow("reviewSession");
   });
 
-  it("loads state without session IDs (backwards compat)", async () => {
+  it("persists phase and slice timing fields and loads them back", async () => {
+    const state = {
+      startedAt: "2026-04-02T10:00:00.000Z",
+      currentPhase: "review" as const,
+      currentSlice: 2,
+      currentGroup: "G1",
+      sliceTimings: [
+        { number: 1, startedAt: "2026-04-02T10:00:00.000Z", completedAt: "2026-04-02T10:05:00.000Z" },
+        { number: 2, startedAt: "2026-04-02T10:06:00.000Z" },
+      ],
+    };
+
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+
+    expect(loaded).toEqual(state);
+  });
+
+  it("throws when currentPhase is not a supported persisted phase", async () => {
+    await writeFile(testPath, JSON.stringify({ currentPhase: "executing" }));
+    await expect(loadState(testPath)).rejects.toThrow("currentPhase");
+  });
+
+  it("throws when startedAt is not a string", async () => {
+    await writeFile(testPath, JSON.stringify({ startedAt: 123 }));
+    await expect(loadState(testPath)).rejects.toThrow("startedAt");
+  });
+
+  it("throws when completedAt is not a string", async () => {
+    await writeFile(testPath, JSON.stringify({ completedAt: 123 }));
+    await expect(loadState(testPath)).rejects.toThrow("completedAt");
+  });
+
+  it("throws when currentSlice is negative", async () => {
+    await writeFile(testPath, JSON.stringify({ currentSlice: -1 }));
+    await expect(loadState(testPath)).rejects.toThrow("currentSlice");
+  });
+
+  it("throws when currentSlice is not an integer", async () => {
+    await writeFile(testPath, JSON.stringify({ currentSlice: 1.5 }));
+    await expect(loadState(testPath)).rejects.toThrow("currentSlice");
+  });
+
+  it("throws when currentGroup is an empty string", async () => {
+    await writeFile(testPath, JSON.stringify({ currentGroup: "" }));
+    await expect(loadState(testPath)).rejects.toThrow("currentGroup");
+  });
+
+  it("throws when sliceTimings contains an invalid entry", async () => {
+    await writeFile(testPath, JSON.stringify({ sliceTimings: [{ number: "two", startedAt: "2026-04-02T10:00:00.000Z" }] }));
+    await expect(loadState(testPath)).rejects.toThrow("sliceTimings");
+  });
+
+  it("throws when sliceTimings contains a non-string completedAt", async () => {
+    await writeFile(
+      testPath,
+      JSON.stringify({
+        sliceTimings: [{ number: 2, startedAt: "2026-04-02T10:00:00.000Z", completedAt: 123 }],
+      }),
+    );
+    await expect(loadState(testPath)).rejects.toThrow("sliceTimings");
+  });
+
+  it("loads state without sessions (backwards compat)", async () => {
     await writeFile(testPath, JSON.stringify({ lastCompletedSlice: 5 }));
     const loaded = await loadState(testPath);
-    expect(loaded.tddSessionId).toBeUndefined();
-    expect(loaded.reviewSessionId).toBeUndefined();
+    expect(loaded.tddSession).toBeUndefined();
+    expect(loaded.reviewSession).toBeUndefined();
+  });
+
+  it("drops legacy generic session IDs because they are provider-ambiguous", async () => {
+    await writeFile(
+      testPath,
+      JSON.stringify({ tddSessionId: "old-tdd", reviewSessionId: "old-review", lastCompletedSlice: 5 }),
+    );
+    const loaded = await loadState(testPath);
+    expect(loaded.lastCompletedSlice).toBe(5);
+    expect(loaded.tddSession).toBeUndefined();
+    expect(loaded.reviewSession).toBeUndefined();
   });
 });
 

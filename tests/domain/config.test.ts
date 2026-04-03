@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { AGENT_DEFAULTS } from "#domain/agent-config.js";
-import type { OrchestratorConfig } from "#domain/config.js";
+import { DEFAULT_EXECUTION_PREFERENCE, type OrchestratorConfig } from "#domain/config.js";
 
 describe("OrchestratorConfig", () => {
   it("accepts a valid config with all required fields", () => {
@@ -9,10 +9,13 @@ describe("OrchestratorConfig", () => {
       planPath: "/tmp/plan.json",
       planContent: "content",
       brief: "brief",
+      executionMode: "sliced",
+      executionPreference: "auto",
       auto: false,
       reviewThreshold: 30,
       maxReviewCycles: 3,
       stateFile: "/tmp/state.json",
+      logPath: null,
       tddSkill: null,
       reviewSkill: null,
       verifySkill: null,
@@ -31,10 +34,13 @@ describe("OrchestratorConfig", () => {
       planPath: "/tmp/plan.json",
       planContent: "content",
       brief: "brief",
+      executionMode: "grouped",
+      executionPreference: "grouped",
       auto: false,
       reviewThreshold: 30,
       maxReviewCycles: 3,
       stateFile: "/tmp/state.json",
+      logPath: "/tmp/run.log",
       tddSkill: "custom-tdd",
       reviewSkill: "custom-review",
       verifySkill: "custom-verify",
@@ -48,5 +54,9 @@ describe("OrchestratorConfig", () => {
     };
     expect(config.tddRules).toBe("custom rules");
     expect(config.reviewRules).toBe("custom review rules");
+  });
+
+  it("defaults execution preference to auto", () => {
+    expect(DEFAULT_EXECUTION_PREFERENCE).toBe("auto");
   });
 });
