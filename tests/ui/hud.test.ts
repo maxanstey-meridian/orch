@@ -1,6 +1,12 @@
 import { createInterface } from "node:readline";
 import { describe, it, expect, vi } from "vitest";
-import { HUD_MAX_LINES, appendHudLines, buildStatusLine, createHud } from "#ui/hud.js";
+import {
+  HUD_MAX_LINES,
+  appendHudLines,
+  buildStatusLine,
+  createHud,
+  flushHudWriterBuffer,
+} from "#ui/hud.js";
 import type { HudState } from "#ui/hud.js";
 
 vi.mock("node:readline", () => ({
@@ -138,6 +144,30 @@ describe("appendHudLines", () => {
     expect(lines[0]).toBe("line-1");
     expect(lines.at(-2)).toBe("kept");
     expect(lines.at(-1)).toBe("newest");
+  });
+});
+
+describe("flushHudWriterBuffer", () => {
+  it("flushes a buffered partial stream before later badge/log lines are appended", () => {
+    const lines: string[] = [];
+
+    const clearedBuffer = flushHudWriterBuffer(lines, "buffered partial stream");
+    appendHudLines(lines, "11:00  [TDD] testing...");
+
+    expect(clearedBuffer).toBe("");
+    expect(lines).toEqual([
+      "buffered partial stream",
+      "11:00  [TDD] testing...",
+    ]);
+  });
+
+  it("ignores an empty buffered fragment", () => {
+    const lines: string[] = [];
+
+    const clearedBuffer = flushHudWriterBuffer(lines, "");
+
+    expect(clearedBuffer).toBe("");
+    expect(lines).toEqual([]);
   });
 });
 

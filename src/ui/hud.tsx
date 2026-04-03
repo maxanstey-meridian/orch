@@ -57,6 +57,16 @@ export const appendHudLines = (
   }
 };
 
+export const flushHudWriterBuffer = (
+  lines: string[],
+  writerBuffer: string,
+): string => {
+  if (writerBuffer.trim().length > 0) {
+    appendHudLines(lines, writerBuffer);
+  }
+  return "";
+};
+
 const formatElapsed = (ms: number): string => {
   const totalSec = Math.floor(ms / 1000);
   const h = String(Math.floor(totalSec / 3600)).padStart(2, "0");
@@ -359,10 +369,7 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
         return;
       }
       tornDown = true;
-      if (writerBuffer.trim()) {
-        appendHudLines(_lines, writerBuffer);
-      }
-      writerBuffer = "";
+      writerBuffer = flushHudWriterBuffer(_lines, writerBuffer);
       _notify = null;
       _keyHandler = null;
       _interruptSubmitHandler = null;
@@ -376,6 +383,7 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
         if (tornDown) {
           return;
         }
+        writerBuffer = flushHudWriterBuffer(_lines, writerBuffer);
         const text = args.map((a) => (typeof a === "string" ? a : String(a))).join(" ");
         appendHudLines(_lines, text);
         notify();
