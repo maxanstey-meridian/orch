@@ -214,34 +214,34 @@ export const buildVerifyPrompt = (
 
 ${fixSummary ? `## Fix summary from the TDD bot\n${fixSummary}\n\n` : ""}## Instructions
 1. Review the changed code and run the verification commands you judge necessary.
-2. You MUST end with a structured result block in the exact format below.
+2. You MUST end with a short human summary followed by a machine-readable \`### VERIFY_JSON\` block in the exact format below.
 3. Do not replace the structured block with prose. You may include prose before it, but the block is mandatory.
 
 ## Required output format
 
-### VERIFY_RESULT
-
-**Status:** PASS|FAIL|PASS_WITH_WARNINGS
-
-**Checks run:**
-- <check>: PASS|FAIL|WARN
-
-**New failures** (caused by recent changes):
-- <failure>
-or:
-None
-
-**Pre-existing failures** (already failing before these changes):
-- <failure>
-or:
-None
-
-**Scope rationale:** <why this verification scope was sufficient>
+### VERIFY_JSON
+\`\`\`json
+{
+  "status": "PASS|FAIL|PASS_WITH_WARNINGS",
+  "checks": [
+    { "check": "<command or check name>", "status": "PASS|FAIL|WARN|SKIPPED" }
+  ],
+  "sliceLocalFailures": ["<failure caused by the current execution unit>"],
+  "outOfScopeFailures": ["<failure not owned by the current execution unit>"],
+  "preExistingFailures": ["<failure that already existed before these changes>"],
+  "runnerIssue": "<runner instability or hung process summary>" | null,
+  "retryable": true,
+  "summary": "<one concise summary sentence>"
+}
+\`\`\`
 
 Rules:
-- If there are no new failures, use PASS or PASS_WITH_WARNINGS.
-- "No findings" prose alone is NOT sufficient; you must include the block above.
-- Only use FAIL when there are real new failures caused by the recent changes.`;
+- \`sliceLocalFailures\` are the ONLY failures the builder should be asked to fix.
+- Put unrelated failures in \`outOfScopeFailures\`, not \`sliceLocalFailures\`.
+- Put already-failing checks in \`preExistingFailures\`.
+- Use \`runnerIssue\` for hung runners, crashed tooling, or unstable infrastructure rather than blaming the builder.
+- If the current execution unit is clean, use PASS or PASS_WITH_WARNINGS and leave \`sliceLocalFailures\` empty.
+- "No findings" prose alone is NOT sufficient; you must include the JSON block above.`;
 
 export const buildCompletenessPrompt = (
   sliceContent: string,
@@ -338,7 +338,7 @@ export const buildReviewPrompt = (
 ): string =>
   `Review the code changed since commit ${baseSha}. Judge the code on its own merits — correctness, types, structure — not just whether it matches the plan.
 
-${priorFindings ? `## Prior review findings\nYour previous review flagged these issues — verify each one was addressed. If any were ignored or only partially fixed, re-flag them:\n\n${priorFindings}\n\n` : ""}${buildReviewPreamble(baseSha)}
+${priorFindings ? `## Prior review findings\nYour previous review flagged these issues — verify each one was addressed. If any were ignored or only partially fixed, re-flag them:\n\n${priorFindings}\n\n## Review pass discipline\nThis is likely your final useful review pass for this slice.\nRe-check the prior findings carefully and only add a new issue if it is clearly material and was genuinely missed before.\nBatch related issues into one finding when they share a root cause or would be fixed by the same change.\nDo not pad the review with speculative, cosmetic, or low-value nits just to say something new.\nDo not hold back a material issue for a later pass.\n\n` : `## Review pass discipline\nAssume you may only get one useful review pass for this slice.\nSurface the highest-signal issues now.\nBatch related issues into one finding when they share a root cause or would be fixed by the same change.\nDo not pad the review with speculative, cosmetic, or low-value nits.\nDo not hold back a material issue for a later pass.\n\n`}${buildReviewPreamble(baseSha)}
 
 ## What to look for
 - Bugs: incorrect runtime behavior, off-by-one, swallowed errors, race conditions
@@ -368,9 +368,11 @@ export const buildGapPrompt = (groupContent: string, baseSha: string): string =>
 
 Your job is to find **missing test coverage and unhandled edge cases** — NOT code style, naming, or architecture.
 
+Assume this may be the only useful gap pass for this group.
 Report only the **highest-signal** gaps that are likely to allow a real regression, plan mismatch, or unguarded reachable behavior to ship.
 Batch related variants into one gap when a single representative test or small cluster of tests would cover them.
 Do not drip-feed narrower versions of the same underlying issue across multiple passes.
+Do not hold back a material finding for later, and do not invent marginal findings just to avoid saying NO_GAPS_FOUND.
 
 ${buildReviewPreamble(baseSha)}
 

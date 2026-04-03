@@ -57,6 +57,20 @@ describe("buildReviewPrompt", () => {
     expect(result).toContain("slice");
     expect(result).toContain("REVIEW_CLEAN");
   });
+
+  it("tells first-pass reviewers to treat the pass as scarce and avoid padding", () => {
+    const result = buildReviewPrompt("slice", "abc123");
+    expect(result).toContain("Assume you may only get one useful review pass");
+    expect(result).toContain("Surface the highest-signal issues now");
+    expect(result).toContain("Do not pad the review");
+  });
+
+  it("tightens follow-up review passes to material missed issues only", () => {
+    const result = buildReviewPrompt("slice", "abc123", "- **File and line** foo");
+    expect(result).toContain("This is likely your final useful review pass");
+    expect(result).toContain("only add a new issue if it is clearly material");
+    expect(result).toContain("Do not hold back a material issue for a later pass");
+  });
 });
 
 describe("buildGapPrompt", () => {
@@ -64,6 +78,14 @@ describe("buildGapPrompt", () => {
     const result = buildGapPrompt("group content", "abc123");
     expect(result).toContain("group content");
     expect(result).toContain("NO_GAPS_FOUND");
+  });
+
+  it("tells gap review to batch high-signal findings and avoid padding", () => {
+    const result = buildGapPrompt("group content", "abc123");
+    expect(result).toContain("Assume this may be the only useful gap pass");
+    expect(result).toContain("Report only the **highest-signal** gaps");
+    expect(result).toContain("Do not hold back a material finding for later");
+    expect(result).toContain("do not invent marginal findings");
   });
 });
 
