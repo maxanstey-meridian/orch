@@ -1,13 +1,22 @@
-import type { Provider } from "#domain/config.js";
+import {
+  DEFAULT_EXECUTION_PREFERENCE,
+  type ExecutionPreference,
+  type Provider,
+} from "#domain/config.js";
 
 const VALID_PROVIDERS: Provider[] = ["claude", "codex"];
+const EXECUTION_PREFERENCE_FLAGS = [
+  ["--quick", "quick"],
+  ["--grouped", "grouped"],
+  ["--long", "long"],
+] as const satisfies ReadonlyArray<readonly [string, Exclude<ExecutionPreference, "auto">]>;
 
 const isProvider = (v: string): v is Provider => (VALID_PROVIDERS as readonly string[]).includes(v);
 
 export const parseProviderFlag = (args: string[]): Provider => {
   const idx = args.indexOf("--provider");
   if (idx === -1) {
-    return "claude";
+    return "codex";
   }
   const value = args[idx + 1];
   if (!value || value.startsWith("-")) {
@@ -29,4 +38,20 @@ export const parseBranchFlag = (args: string[], planId: string): string | undefi
     return `orch/${planId}`;
   }
   return next;
+};
+
+export const parseExecutionPreference = (args: string[]): ExecutionPreference => {
+  const selectedFlags = EXECUTION_PREFERENCE_FLAGS.filter(([flag]) => args.includes(flag));
+  if (selectedFlags.length === 0) {
+    return DEFAULT_EXECUTION_PREFERENCE;
+  }
+
+  if (selectedFlags.length > 1) {
+    const selectedFlagList = selectedFlags.map(([flag]) => flag).join(", ");
+    throw new Error(
+      `Execution mode flags are mutually exclusive: ${selectedFlagList}. Choose only one of --quick, --grouped, or --long.`,
+    );
+  }
+
+  return selectedFlags[0][1];
 };

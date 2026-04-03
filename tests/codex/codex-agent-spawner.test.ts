@@ -71,6 +71,23 @@ describe('CodexAgentSpawner', () => {
     expect(allText).toContain('line two');
   });
 
+  it('send() trims synthetic leading spaces after sentence-boundary flushes', async () => {
+    fake = createFakeAppServer();
+    fake.setTurnScript([
+      { kind: 'textDelta', text: 'First sentence.' },
+      { kind: 'textDelta', text: ' Second sentence.' },
+      { kind: 'turnCompleted', resultText: '' },
+    ]);
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
+    const handle = spawner.spawn('plan');
+    const onText = vi.fn();
+
+    await handle.send('go', onText);
+
+    expect(onText).toHaveBeenNthCalledWith(1, 'First sentence.');
+    expect(onText).toHaveBeenNthCalledWith(2, 'Second sentence.');
+  });
+
   it('send() calls onToolUse for tool activity events', async () => {
     fake = createFakeAppServer();
     fake.setTurnScript([
@@ -176,7 +193,7 @@ describe('CodexAgentSpawner', () => {
     expect(handle.alive).toBe(false);
   });
 
-  it('send() resolves with exitCode 1 when process dies mid-turn', async () => {
+  it('send() rejects when process dies mid-turn', async () => {
     fake = createFakeAppServer();
     fake.hangOnTurn();
     const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
@@ -191,13 +208,20 @@ describe('CodexAgentSpawner', () => {
     await new Promise((r) => setTimeout(r, 5));
     fake.stdout.push(null);
 
-    const result = await sendPromise;
-    expect(result.exitCode).toBe(1);
-    expect(result.resultText).toBe('');
-    expect(result.sessionId).toBe(handle.sessionId);
+    await expect(sendPromise).rejects.toThrow('process exited');
   });
 
-  it('sendQuiet() returns empty string when process dies mid-turn', async () => {
+  it('send() rejects when the process dies before ready completes', async () => {
+    fake = createFakeAppServer();
+    const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
+    const handle = spawner.spawn('plan');
+
+    fake.close();
+
+    await expect(handle.send('will fail during initialize')).rejects.toThrow();
+  });
+
+  it('sendQuiet() rejects when process dies mid-turn', async () => {
     fake = createFakeAppServer();
     fake.hangOnTurn();
     const spawner = new CodexAgentSpawner('/tmp/test', { auto: false }, () => fake.proc, silentGate);
@@ -209,8 +233,7 @@ describe('CodexAgentSpawner', () => {
     await new Promise((r) => setTimeout(r, 5));
     fake.stdout.push(null);
 
-    const result = await sendPromise;
-    expect(result).toBe('');
+    await expect(sendPromise).rejects.toThrow('process exited');
   });
 
   it('startTurn emits exactly one turnCompleted even if server sends turn/completed as notification', async () => {

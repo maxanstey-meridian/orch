@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,16 +12,22 @@ const mocks = vi.hoisted(() => ({
   createContainer: vi.fn(),
   createHud: vi.fn(),
   ensureCanonicalPlan: vi.fn(),
+  generatePlanId: vi.fn(),
   getStatus: vi.fn(),
+  isPlanFormat: vi.fn(),
   loadAndResolveOrchrConfig: vi.fn(),
   loadState: vi.fn(),
   parseBranchFlag: vi.fn(),
+  parseExecutionPreference: vi.fn(),
   parsePlan: vi.fn(),
   parseProviderFlag: vi.fn(),
+  planFileName: vi.fn(),
+  resolvePlanId: vi.fn(),
   resolveAllAgentConfigs: vi.fn(),
   resolveSkillValue: vi.fn(),
   resolveWorktree: vi.fn(),
   runFingerprint: vi.fn(),
+  saveState: vi.fn(),
   stashBackup: vi.fn(),
   statePathForPlan: vi.fn(),
 }));
@@ -32,6 +38,7 @@ vi.mock("#domain/agent-config.js", () => ({
 
 vi.mock("#infrastructure/cli/cli-args.js", () => ({
   parseBranchFlag: mocks.parseBranchFlag,
+  parseExecutionPreference: mocks.parseExecutionPreference,
   parseProviderFlag: mocks.parseProviderFlag,
 }));
 
@@ -66,8 +73,11 @@ vi.mock("#infrastructure/git/worktree.js", () => ({
 vi.mock("#infrastructure/plan/plan-generator.js", () => ({
   doGeneratePlan: vi.fn(),
   ensureCanonicalPlan: mocks.ensureCanonicalPlan,
-  isPlanFormat: vi.fn(),
+  generatePlanId: mocks.generatePlanId,
+  isPlanFormat: mocks.isPlanFormat,
   planGeneratorSpawnerFactory: vi.fn(),
+  planFileName: mocks.planFileName,
+  resolvePlanId: mocks.resolvePlanId,
 }));
 
 vi.mock("#infrastructure/plan/plan-parser.js", () => ({
@@ -77,6 +87,7 @@ vi.mock("#infrastructure/plan/plan-parser.js", () => ({
 vi.mock("#infrastructure/state/state.js", () => ({
   clearState: mocks.clearState,
   loadState: mocks.loadState,
+  saveState: mocks.saveState,
   statePathForPlan: mocks.statePathForPlan,
 }));
 
@@ -181,12 +192,17 @@ beforeEach(async () => {
   mocks.buildOrchrSummary.mockReturnValue(undefined);
   mocks.runFingerprint.mockResolvedValue({ brief: "brief" });
   mocks.parseProviderFlag.mockReturnValue("claude");
+  mocks.parseExecutionPreference.mockReturnValue("auto");
   mocks.resolveAllAgentConfigs.mockReturnValue({});
+  mocks.planFileName.mockImplementation((id: string) => `plan-${id}.json`);
+  mocks.resolvePlanId.mockReturnValue("abc123");
+  mocks.generatePlanId.mockReturnValue("direct42");
   mocks.ensureCanonicalPlan.mockReturnValue("abc123");
   mocks.parseBranchFlag.mockReturnValue("feature/test");
   mocks.statePathForPlan.mockReturnValue(statePath);
   mocks.clearState.mockResolvedValue(undefined);
   mocks.loadState.mockResolvedValue({});
+  mocks.saveState.mockResolvedValue(undefined);
   mocks.parsePlan.mockResolvedValue([
     {
       name: "Registry",
@@ -212,6 +228,7 @@ beforeEach(async () => {
   });
   mocks.stashBackup.mockResolvedValue(false);
   mocks.getStatus.mockResolvedValue("clean");
+  mocks.isPlanFormat.mockReturnValue(false);
 });
 
 afterEach(async () => {
@@ -260,7 +277,7 @@ describe("registry lifecycle", () => {
     await mainPromise;
   });
 
-  it("registry entry is removed on clean exit", async () => {
+  it("registry entry remains after clean exit", async () => {
     const orch = {
       dispose: vi.fn(),
       execute: vi.fn(async (_groups: unknown, opts: { onReady: (info: { tddSessionId: string; reviewSessionId: string }) => void }) => {
@@ -278,10 +295,17 @@ describe("registry lifecycle", () => {
     });
 
     const entries = await readRegistry(registryPath);
-    expect(entries).toEqual([]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(
+      expect.objectContaining({
+        planPath,
+        statePath,
+        branch: "feature/test",
+      }),
+    );
   });
 
-  it("registry entry is removed when SIGTERM is received", async () => {
+  it("registry entry remains when SIGTERM is received", async () => {
     const started = createDeferred<void>();
     const release = createDeferred<void>();
     const signalHandlers = new Map<string, () => void>();
@@ -313,20 +337,16 @@ describe("registry lifecycle", () => {
 
     expect(signalHandlers.has("SIGTERM")).toBe(true);
     signalHandlers.get("SIGTERM")?.();
-    let entries = await readRegistry(registryPath);
-    const deadline = Date.now() + 1_000;
-    while (entries.length > 0 && Date.now() < deadline) {
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
-      entries = await readRegistry(registryPath);
-    }
-    expect(entries).toEqual([]);
+    const entries = await readRegistry(registryPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(expect.objectContaining({ planPath, statePath }));
 
     release.resolve();
     await mainPromise;
     expect(exit).toHaveBeenCalledWith(143);
   });
 
-  it("registry entry is removed when SIGINT is received", async () => {
+  it("registry entry remains when SIGINT is received", async () => {
     const started = createDeferred<void>();
     const release = createDeferred<void>();
     const signalHandlers = new Map<string, () => void>();
@@ -358,20 +378,16 @@ describe("registry lifecycle", () => {
 
     expect(signalHandlers.has("SIGINT")).toBe(true);
     signalHandlers.get("SIGINT")?.();
-    let entries = await readRegistry(registryPath);
-    const deadline = Date.now() + 1_000;
-    while (entries.length > 0 && Date.now() < deadline) {
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
-      entries = await readRegistry(registryPath);
-    }
-    expect(entries).toEqual([]);
+    const entries = await readRegistry(registryPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(expect.objectContaining({ planPath, statePath }));
 
     release.resolve();
     await mainPromise;
     expect(exit).toHaveBeenCalledWith(130);
   });
 
-  it("registry entry is removed when orchestration exits through the error catch path", async () => {
+  it("registry entry remains when orchestration exits through the error catch path", async () => {
     const { IncompleteRunError } = await import("../../src/domain/errors.js");
     const exit = vi.fn();
     const orch = {
@@ -391,11 +407,12 @@ describe("registry lifecycle", () => {
     await expect(main({ registryPath, onSignal: () => process, exit })).resolves.toBeUndefined();
 
     const entries = await readRegistry(registryPath);
-    expect(entries).toEqual([]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(expect.objectContaining({ planPath, statePath }));
     expect(exit).toHaveBeenCalledWith(1);
   });
 
-  it("registry entry is removed when setup fails before orchestration starts", async () => {
+  it("registry entry remains when setup fails before orchestration starts", async () => {
     mocks.createContainer.mockImplementation(() => {
       throw new Error("container failed");
     });
@@ -408,7 +425,105 @@ describe("registry lifecycle", () => {
     })).rejects.toThrow("container failed");
 
     const entries = await readRegistry(registryPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(expect.objectContaining({ planPath, statePath }));
+  });
+
+  it("direct inventory runs register and clean up through the shared signal path", async () => {
+    const inventoryPath = join(tempDir, "inventory.md");
+    await writeFile(inventoryPath, "# Feature Inventory\n\n- Direct change\n");
+    const started = createDeferred<void>();
+    const release = createDeferred<void>();
+    const signalHandlers = new Map<string, () => void>();
+    const exit = vi.fn();
+    const orch = {
+      dispose: vi.fn(),
+      execute: vi.fn(async () => {
+        started.resolve();
+        await release.promise;
+      }),
+    };
+    mocks.resolveAllAgentConfigs.mockReturnValue({
+      plan: { provider: "claude" },
+    });
+    mocks.parseExecutionPreference.mockReturnValue("quick");
+    mocks.createContainer.mockReturnValue({
+      resolve: vi.fn(() => orch),
+    });
+    process.argv = [
+      "node",
+      "/virtual/main.ts",
+      "--plan",
+      inventoryPath,
+      "--skip-fingerprint",
+      "--no-interaction",
+      "--quick",
+    ];
+
+    const mainModule = await import("../../src/main.js");
+    const main = mainModule.main as (runtime?: MainTestRuntime) => Promise<void>;
+    const mainPromise = main({
+      registryPath,
+      onSignal: (signal, handler) => {
+        signalHandlers.set(signal, handler);
+        return process;
+      },
+      exit,
+    });
+
+    await started.promise;
+
+    const entries = await readRegistry(registryPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(
+      expect.objectContaining({
+        planPath: expect.stringMatching(/\.orch\/plan-direct42\.json$/),
+      }),
+    );
+    expect(mocks.generatePlanId).toHaveBeenCalledTimes(1);
+    expect(mocks.resolvePlanId).not.toHaveBeenCalled();
+    const registeredPlan = JSON.parse(await readFile(entries[0].planPath, "utf-8")) as {
+      readonly groups: ReadonlyArray<{
+        readonly name: string;
+        readonly slices: ReadonlyArray<{ readonly title: string }>;
+      }>;
+    };
+    expect(registeredPlan.groups[0]?.name).toBe("Direct");
+    expect(registeredPlan.groups[0]?.slices[0]?.title).toBe("Direct request");
+    expect(signalHandlers.has("SIGTERM")).toBe(true);
+
+    signalHandlers.get("SIGTERM")?.();
+    expect(orch.dispose).toHaveBeenCalledTimes(1);
+
+    release.resolve();
+    await mainPromise;
+    expect(exit).toHaveBeenCalledWith(143);
+  });
+
+  it("show-plan exits before writing preflight state or registry entries", async () => {
+    const exit = vi.fn();
+    process.argv = [
+      "node",
+      "/virtual/main.ts",
+      "--work",
+      planPath,
+      "--skip-fingerprint",
+      "--no-interaction",
+      "--show-plan",
+    ];
+
+    const { main } = await import("../../src/main.js");
+    await main({
+      onSignal: () => process,
+      registryPath,
+      exit,
+    });
+
+    const entries = await readRegistry(registryPath);
     expect(entries).toEqual([]);
+    expect(mocks.saveState).not.toHaveBeenCalled();
+    expect(mocks.createContainer).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(0);
   });
 
   it("concurrent runs of the same plan keep distinct registry identities", async () => {
@@ -461,10 +576,15 @@ describe("registry lifecycle", () => {
     await firstMain;
 
     const entriesAfterFirstCleanup = await readRegistry(registryPath);
-    expect(entriesAfterFirstCleanup).toHaveLength(1);
+    expect(entriesAfterFirstCleanup).toHaveLength(2);
+    expect(new Set(entriesAfterFirstCleanup.map((entry) => entry.id)).size).toBe(2);
 
     releaseSecond.resolve();
     await secondMain;
+
+    const entriesAfterSecondCleanup = await readRegistry(registryPath);
+    expect(entriesAfterSecondCleanup).toHaveLength(2);
+    expect(new Set(entriesAfterSecondCleanup.map((entry) => entry.id)).size).toBe(2);
   });
 
   it("serializes registry mutations for a shared registry path", async () => {

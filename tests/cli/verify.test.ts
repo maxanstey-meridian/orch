@@ -1,106 +1,183 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { parseVerifyResult } from "#domain/verify.js";
+import { isVerifyPassing, parseVerifyResult } from "#domain/verify.js";
+import { buildVerifyPrompt } from "#infrastructure/plan/prompts.js";
 
 describe("parseVerifyResult", () => {
-  it("parses a PASS result", () => {
-    const text = `I ran the checks.
+  it("parses structured VERIFY_JSON output with ownership buckets", () => {
+    const text = `Verification summary: scoped tests passed except for one local regression.
 
-### VERIFY_RESULT
-
-**Status:** PASS
-
-**Checks run:**
-- typecheck: PASS
-- vitest (scoped): PASS
-
-**New failures** (caused by recent changes):
-None
-
-**Pre-existing failures** (already failing before these changes):
-None
-
-**Scope rationale:** Only src/utils/ changed, scoped tests accordingly.`;
-
-    const result = parseVerifyResult(text);
-    expect(result.passed).toBe(true);
-    expect(result.newFailures).toEqual([]);
-    expect(result.output).toBe(text);
-  });
-
-  it("parses a FAIL result with new failures", () => {
-    const text = `Verification complete.
-
-### VERIFY_RESULT
-
-**Status:** FAIL
-
-**Checks run:**
-- typecheck: PASS
-- vitest (scoped): FAIL
-
-**New failures** (caused by recent changes):
-- src/utils/math.ts:42 — TypeError: cannot read property of undefined
-- src/utils/math.test.ts:15 — expected 4 but got NaN
-
-**Pre-existing failures** (already failing before these changes):
-None
-
-**Scope rationale:** Scoped to changed files.`;
+### VERIFY_JSON
+\`\`\`json
+{
+  "status": "FAIL",
+  "checks": [
+    { "check": "npx vitest run tests/plan/plan-generator.test.ts", "status": "FAIL" },
+    { "check": "npx tsc --noEmit", "status": "PASS" }
+  ],
+  "sliceLocalFailures": ["tests/plan/plan-generator.test.ts: grouped mode retry path regressed"],
+  "outOfScopeFailures": [],
+  "preExistingFailures": ["tests/queue/queue-store.test.ts: flaky cross-process write race"],
+  "runnerIssue": null,
+  "retryable": true,
+  "summary": "One slice-local regression remains after the recent change."
+}
+\`\`\``;
 
     const result = parseVerifyResult(text);
-    expect(result.passed).toBe(false);
-    expect(result.newFailures).toEqual([
-      "src/utils/math.ts:42 — TypeError: cannot read property of undefined",
-      "src/utils/math.test.ts:15 — expected 4 but got NaN",
+
+    expect(result.status).toBe("FAIL");
+    expect(result.checks).toEqual([
+      { check: "npx vitest run tests/plan/plan-generator.test.ts", status: "FAIL" },
+      { check: "npx tsc --noEmit", status: "PASS" },
     ]);
+    expect(result.sliceLocalFailures).toEqual([
+      "tests/plan/plan-generator.test.ts: grouped mode retry path regressed",
+    ]);
+    expect(result.outOfScopeFailures).toEqual([]);
+    expect(result.preExistingFailures).toEqual([
+      "tests/queue/queue-store.test.ts: flaky cross-process write race",
+    ]);
+    expect(result.runnerIssue).toBeNull();
+    expect(result.retryable).toBe(true);
+    expect(result.summary).toBe("One slice-local regression remains after the recent change.");
+    expect(result.output).toBe(text);
+    expect(result.valid).toBe(true);
+    expect(isVerifyPassing(result)).toBe(false);
   });
 
-  it("parses PASS_WITH_WARNINGS as passing", () => {
-    const text = `### VERIFY_RESULT
-
-**Status:** PASS_WITH_WARNINGS
-
-**Checks run:**
-- typecheck: PASS
-- lint: PASS
-
-**New failures** (caused by recent changes):
-None
-
-**Pre-existing failures** (already failing before these changes):
-- test/legacy.test.ts — flaky timeout (pre-existing)
-
-**Scope rationale:** Minimal changes.`;
-
+  it("fails closed when VERIFY_JSON is missing", () => {
+    const text = "No findings. Everything looks good.";
     const result = parseVerifyResult(text);
-    expect(result.passed).toBe(true);
-    expect(result.newFailures).toEqual([]);
+
+    expect(result.status).toBe("FAIL");
+    expect(result.valid).toBe(false);
+    expect(result.retryable).toBe(false);
+    expect(result.sliceLocalFailures).toEqual([]);
+    expect(result.outOfScopeFailures).toEqual([]);
+    expect(result.preExistingFailures).toEqual([]);
+    expect(result.runnerIssue).toContain("missing required VERIFY_JSON block");
+    expect(isVerifyPassing(result)).toBe(false);
   });
 
-  it("treats missing VERIFY_RESULT block as failure", () => {
-    const text = "I couldn't figure out how to run the tests.";
+  it("fails closed when VERIFY_JSON is malformed", () => {
+    const text = `Verification summary.
+
+### VERIFY_JSON
+\`\`\`json
+{ "status": "PASS", "checks":
+\`\`\``;
     const result = parseVerifyResult(text);
-    expect(result.passed).toBe(false);
-    expect(result.newFailures.length).toBe(1);
-    expect(result.newFailures[0]).toContain("couldn't figure out");
+
+    expect(result.status).toBe("FAIL");
+    expect(result.valid).toBe(false);
+    expect(result.retryable).toBe(false);
+    expect(result.runnerIssue).toContain("invalid VERIFY_JSON");
   });
 
-  it("treats missing status line as FAIL", () => {
-    const text = `### VERIFY_RESULT
+  it("fails closed when VERIFY_JSON is well-formed JSON but violates the required schema", () => {
+    const text = `Verification summary.
 
-**Checks run:**
-- typecheck: PASS
+### VERIFY_JSON
+\`\`\`json
+{
+  "status": "FAIL",
+  "checks": [
+    { "check": "npx vitest run", "status": "FAIL" }
+  ],
+  "sliceLocalFailures": [],
+  "outOfScopeFailures": [],
+  "preExistingFailures": [],
+  "runnerIssue": null,
+  "retryable": "yes"
+}
+\`\`\``;
+    const result = parseVerifyResult(text);
 
-**New failures** (caused by recent changes):
-- something broke
+    expect(result.status).toBe("FAIL");
+    expect(result.valid).toBe(false);
+    expect(result.retryable).toBe(false);
+    expect(result.runnerIssue).toContain("failed VERIFY_JSON validation");
+    expect(result.runnerIssue).toContain("retryable");
+    expect(result.runnerIssue).toContain("summary");
+  });
 
-**Pre-existing failures** (already failing before these changes):
-None
+  it("preserves slice-local, out-of-scope, and pre-existing failures independently of retryable", () => {
+    const text = `Verification summary: external failure only.
 
-**Scope rationale:** All files.`;
+### VERIFY_JSON
+{
+  "status": "FAIL",
+  "checks": [
+    { "check": "npx vitest run", "status": "FAIL" }
+  ],
+  "sliceLocalFailures": [],
+  "outOfScopeFailures": ["packages/api: unrelated failing migration test"],
+  "preExistingFailures": ["tests/queue/queue-store.test.ts: flaky cross-process write race"],
+  "runnerIssue": "Vitest worker hung during one rerun.",
+  "retryable": true,
+  "summary": "Verification failed, but the current execution unit does not own the failure."
+}`;
 
     const result = parseVerifyResult(text);
-    expect(result.passed).toBe(false);
-    expect(result.newFailures).toEqual(["something broke"]);
+
+    expect(result.status).toBe("FAIL");
+    expect(result.sliceLocalFailures).toEqual([]);
+    expect(result.outOfScopeFailures).toEqual([
+      "packages/api: unrelated failing migration test",
+    ]);
+    expect(result.preExistingFailures).toEqual([
+      "tests/queue/queue-store.test.ts: flaky cross-process write race",
+    ]);
+    expect(result.runnerIssue).toBe("Vitest worker hung during one rerun.");
+    expect(result.retryable).toBe(true);
+    expect(isVerifyPassing(result)).toBe(false);
+  });
+
+  it("treats PASS_WITH_WARNINGS as passing only through structured status", () => {
+    const text = `Verification summary: changes are clean, but unrelated flake remains.
+
+### VERIFY_JSON
+{
+  "status": "PASS_WITH_WARNINGS",
+  "checks": [
+    { "check": "npx vitest run tests/plan", "status": "PASS" }
+  ],
+  "sliceLocalFailures": [],
+  "outOfScopeFailures": [],
+  "preExistingFailures": ["tests/queue/queue-store.test.ts: flaky cross-process write race"],
+  "runnerIssue": null,
+  "retryable": false,
+  "summary": "Current execution unit is clean; warning is pre-existing."
+}`;
+
+    const result = parseVerifyResult(text);
+
+    expect(result.status).toBe("PASS_WITH_WARNINGS");
+    expect(result.preExistingFailures).toEqual([
+      "tests/queue/queue-store.test.ts: flaky cross-process write race",
+    ]);
+    expect(isVerifyPassing(result)).toBe(true);
+  });
+
+  it("verify prompt requires a short human summary and the structured VERIFY_JSON block", () => {
+    const prompt = buildVerifyPrompt("abc123", "Group Core", "builder fixed the shared spec");
+
+    expect(prompt).toContain("short human summary");
+    expect(prompt).toContain("### VERIFY_JSON");
+    expect(prompt).toContain('"sliceLocalFailures"');
+    expect(prompt).toContain('"runnerIssue"');
+    expect(prompt).toContain("sliceLocalFailures");
+    expect(prompt).toContain("ONLY failures the builder should be asked to fix");
+  });
+
+  it("verify skill requires the human summary plus mandatory VERIFY_JSON contract", () => {
+    const skill = readFileSync("skills/verify.md", "utf8");
+
+    expect(skill).toContain("A short human summary of what you verified.");
+    expect(skill).toContain("### VERIFY_JSON");
+    expect(skill).toContain("sliceLocalFailures");
+    expect(skill).toContain("runnerIssue");
+    expect(skill).toContain("The `### VERIFY_JSON` block is mandatory.");
   });
 });

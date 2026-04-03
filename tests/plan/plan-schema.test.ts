@@ -25,6 +25,18 @@ describe("PlanSchema", () => {
     }
   });
 
+  it("accepts grouped execution mode metadata", () => {
+    const input = {
+      executionMode: "grouped",
+      groups: [validGroup("Core", [validSlice(1)])],
+    };
+    const result = PlanSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.executionMode).toBe("grouped");
+    }
+  });
+
   it("rejects plan missing required fields", () => {
     // missing groups entirely
     expect(PlanSchema.safeParse({}).success).toBe(false);
@@ -112,6 +124,34 @@ describe("PlanSchema", () => {
     expect(PlanSchema.safeParse(input).success).toBe(true);
   });
 
+  it("rejects gapped slice numbers across groups", () => {
+    const input = {
+      groups: [
+        validGroup("A", [validSlice(1)]),
+        validGroup("B", [validSlice(3)]),
+      ],
+    };
+    const result = PlanSchema.safeParse(input);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.message.includes("sequential"))).toBe(true);
+    }
+  });
+
+  it("rejects out-of-order slice numbers across groups", () => {
+    const input = {
+      groups: [
+        validGroup("A", [validSlice(1), validSlice(3)]),
+        validGroup("B", [validSlice(2)]),
+      ],
+    };
+    const result = PlanSchema.safeParse(input);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.message.includes("sequential"))).toBe(true);
+    }
+  });
+
   it("parses multi-group plan with optional description", () => {
     const input = {
       groups: [
@@ -160,7 +200,7 @@ describe("parsePlanJson", () => {
   it("computes content from structured fields", () => {
     const input = {
       groups: [validGroup("Core", [{
-        number: 2,
+        number: 1,
         title: "Add logging",
         why: "Observability",
         files: [
@@ -173,7 +213,7 @@ describe("parsePlanJson", () => {
     };
     const groups = parsePlanJson(makeJson(input));
     const content = groups[0].slices[0].content;
-    expect(content).toContain("### Slice 2: Add logging");
+    expect(content).toContain("### Slice 1: Add logging");
     expect(content).toContain("**Why:** Observability");
     expect(content).toContain("`src/log.ts` (new)");
     expect(content).toContain("`src/app.ts` (edit)");
@@ -231,5 +271,25 @@ describe("parsePlanJson", () => {
       ],
     };
     expect(() => parsePlanJson(makeJson(input))).toThrow(/unique|duplicate/i);
+  });
+
+  it("rejects gapped slice numbers during parsing", () => {
+    const input = {
+      groups: [
+        validGroup("A", [validSlice(1)]),
+        validGroup("B", [validSlice(3)]),
+      ],
+    };
+    expect(() => parsePlanJson(makeJson(input))).toThrow(/sequential/i);
+  });
+
+  it("rejects out-of-order slice numbers during parsing", () => {
+    const input = {
+      groups: [
+        validGroup("A", [validSlice(1), validSlice(3)]),
+        validGroup("B", [validSlice(2)]),
+      ],
+    };
+    expect(() => parsePlanJson(makeJson(input))).toThrow(/sequential/i);
   });
 });

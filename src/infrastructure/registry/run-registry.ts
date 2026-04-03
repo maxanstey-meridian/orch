@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, rm, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import type { RunEntry } from "#domain/registry.js";
@@ -85,6 +85,82 @@ export const deregisterRun = async (registryPath: string, id: string): Promise<v
   await writeRegistry(registryPath, remainingEntries);
 };
 
+const LOCK_OWNER_FILE = "owner.json";
+
+const delay = async (ms: number): Promise<void> =>
+  new Promise((resolvePromise) => {
+    setTimeout(resolvePromise, ms);
+  });
+
+const removeStaleRegistryLock = async (lockPath: string): Promise<boolean> => {
+  try {
+    const raw = await readFile(join(lockPath, LOCK_OWNER_FILE), "utf8").catch(() => "");
+    const parsed = raw ? (JSON.parse(raw) as { pid?: unknown }) : {};
+    const pid = typeof parsed.pid === "number" ? parsed.pid : undefined;
+    if (pid !== undefined) {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        // owner is gone; remove stale lock below
+      }
+    }
+
+    await rm(lockPath, { force: true, recursive: true });
+    return true;
+  } catch (error) {
+    if (hasCode(error) && error.code === "ENOENT") {
+      return true;
+    }
+
+    throw error;
+  }
+};
+
+export const withRegistryLock = async <T>(
+  registryPath: string,
+  work: () => Promise<T>,
+): Promise<T> => {
+  const lockPath = `${registryPath}.lock`;
+  await mkdir(dirname(registryPath), { recursive: true });
+
+  for (;;) {
+    try {
+      await mkdir(lockPath);
+      await writeFile(
+        join(lockPath, LOCK_OWNER_FILE),
+        JSON.stringify({
+          pid: process.pid,
+          acquiredAt: new Date().toISOString(),
+        }),
+      );
+      break;
+    } catch (error) {
+      if (hasCode(error) && error.code === "EEXIST") {
+        if (await removeStaleRegistryLock(lockPath)) {
+          continue;
+        }
+
+        await delay(5);
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  try {
+    return await work();
+  } finally {
+    await rm(lockPath, { force: true, recursive: true });
+  }
+};
+
+export const removeRunFromRegistry = async (registryPath: string, id: string): Promise<void> =>
+  withRegistryLock(registryPath, async () => {
+    await deregisterRun(registryPath, id);
+  });
+
 const isAlive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
@@ -108,10 +184,6 @@ export const pruneDeadEntries = async (
     }
 
     dead.push(entry);
-  }
-
-  if (dead.length > 0) {
-    await writeRegistry(registryPath, alive);
   }
 
   return { alive, dead };

@@ -1,3 +1,7 @@
+import type { ExecutionMode } from "./config.js";
+
+export type PlannedExecutionMode = Exclude<ExecutionMode, "direct">;
+
 export type FileAction = {
   readonly path: string;
   readonly action: "new" | "edit" | "delete";
@@ -33,6 +37,7 @@ export type PlanContext = {
 
 export type Group = {
   readonly name: string;
+  readonly description?: string;
   readonly slices: readonly Slice[];
 };
 

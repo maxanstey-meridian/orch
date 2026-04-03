@@ -59,6 +59,7 @@ describe("MainView", () => {
     expect(app.lastFrame()).toContain("Queued");
     expect(app.lastFrame()).toContain("Completed");
     expect(app.lastFrame()).toContain("No runs to display");
+    expect((app.lastFrame() ?? "").match(/No runs to display/g)?.length).toBe(3);
 
     app.unmount();
   });
@@ -182,8 +183,9 @@ describe("MainView", () => {
     app.unmount();
   });
 
-  it("does not try to kill a completed run from the main list", async () => {
+  it("dismisses a completed run from the main list when k is pressed", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const onDelete = vi.fn();
     const app = render(
       <MainView
         model={makeModel({
@@ -192,6 +194,7 @@ describe("MainView", () => {
         })}
         onOpenDetail={vi.fn()}
         onOpenTail={vi.fn()}
+        onDelete={onDelete}
       />,
     );
 
@@ -203,7 +206,7 @@ describe("MainView", () => {
     await flushEffects();
 
     expect(killSpy).not.toHaveBeenCalled();
-    expect(app.lastFrame()).toContain("> ✓ run-do");
+    expect(onDelete).toHaveBeenCalledWith("run-done");
 
     app.unmount();
   });
@@ -246,12 +249,12 @@ describe("MainView", () => {
       />,
     );
 
-    expect(app.lastFrame()).toContain("↑↓ navigate  ⏎ detail  f tail  q queue  k kill  ? help");
+    expect(app.lastFrame()).toContain("↑↓ navigate  ⏎ detail  f tail  q queue  k kill");
 
     app.stdin.write("\u001B[B");
     await flushEffects();
 
-    expect(app.lastFrame()).toContain("↑↓ navigate  ⏎ detail  f tail  q queue  k kill  ? help");
+    expect(app.lastFrame()).toContain("↑↓ navigate  ⏎ detail  f tail  q queue  k kill");
 
     app.unmount();
   });
@@ -304,7 +307,7 @@ describe("MainView", () => {
       />,
     );
 
-    expect(app.lastFrame()).toContain("↑↓ navigate  ⏎ detail  f tail  q queue  k kill  ? help");
+    expect(app.lastFrame()).toContain("↑↓ navigate  ⏎ detail  f tail  q queue  k kill");
 
     app.unmount();
   });

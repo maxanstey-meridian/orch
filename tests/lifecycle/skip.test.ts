@@ -15,6 +15,20 @@ const makeSlice = (n: number): Slice => ({
 
 const makeGroup = (name: string, slices: Slice[]): Group => ({ name, slices });
 
+const VERIFY_PASS = `### VERIFY_JSON
+\`\`\`json
+${JSON.stringify({
+  status: "PASS",
+  checks: [{ check: "npx vitest run", status: "PASS" }],
+  sliceLocalFailures: [],
+  outOfScopeFailures: [],
+  preExistingFailures: [],
+  runnerIssue: null,
+  retryable: false,
+  summary: "Verification passed.",
+}, null, 2)}
+\`\`\``;
+
 describe("Skip lifecycle", () => {
   it("skip during plan phase aborts with IncompleteRunError", async () => {
     const { uc, hud, spawner } = createTestHarness({
@@ -138,7 +152,7 @@ describe("Skip lifecycle", () => {
     // Verify: trigger skip when verify runs
     spawner.onNextSpawn("verify", () => {
       hud.simulateKey("s");
-      return okResult({ assistantText: "### VERIFY_RESULT\n**Status:** PASS\n" });
+      return okResult({ assistantText: VERIFY_PASS });
     });
 
     // Completeness

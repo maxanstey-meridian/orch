@@ -14,7 +14,10 @@ const headerRows = 3;
 
 export const TailView = ({ logPath, runId, onBack }: TailViewProps) => {
   const { lines, error } = useLogTail(logPath);
-  const visibleLineCount = Math.max((process.stdout.rows ?? fallbackTerminalRows) - headerRows - 1, 1);
+  const visibleLineCount = Math.max(
+    (process.stdout.rows ?? fallbackTerminalRows) - headerRows - 1,
+    1,
+  );
   const visibleLines = lines.slice(-visibleLineCount);
   const fillerLineCount = Math.max(visibleLineCount - visibleLines.length, 0);
 
@@ -28,10 +31,7 @@ export const TailView = ({ logPath, runId, onBack }: TailViewProps) => {
     <Box flexDirection="column">
       <Text>{`Tail: ${runId}`}</Text>
       <Text>{`Log: ${logPath ?? "-"}`}</Text>
-      <Box
-        flexDirection="column"
-        height={visibleLineCount}
-      >
+      <Box flexDirection="column" height={visibleLineCount}>
         {error !== undefined ? (
           <Text>{error}</Text>
         ) : visibleLines.length === 0 ? (

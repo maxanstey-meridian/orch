@@ -38,6 +38,24 @@ const makePlan = () => ({
   ],
 });
 
+const makeDirectPlan = () => ({
+  groups: [
+    {
+      name: "Direct",
+      slices: [
+        {
+          number: 1,
+          title: "Direct request",
+          why: "Deliver bounded direct work",
+          files: [{ path: "src/direct.ts", action: "edit" }],
+          details: "Implement the direct request",
+          tests: "Direct request works.",
+        },
+      ],
+    },
+  ],
+});
+
 const makeRunEntry = (overrides: Partial<RunEntry> = {}): RunEntry => ({
   id: "run-1",
   pid: process.pid,
@@ -406,6 +424,93 @@ describe("data aggregator", () => {
     vi.useRealTimers();
   });
 
+  it("dead PID is classified as completed when a direct run exited cleanly without slice progress", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
+
+    const registryPath = join(tempDir, "runs.json");
+    const queuePath = join(tempDir, "queue.json");
+    const planPath = join(tempDir, "direct-plan.json");
+    const statePath = join(tempDir, "direct-state.json");
+
+    await writeJson(planPath, makeDirectPlan());
+    await writeJson(statePath, {
+      executionMode: "direct",
+      startedAt: "2026-04-10T10:00:00.000Z",
+      completedAt: "2026-04-10T11:00:00.000Z",
+    });
+    await writeRegistry(registryPath, [
+      makeRunEntry({
+        id: "run-direct-complete",
+        pid: 999999,
+        planPath,
+        statePath,
+      }),
+    ]);
+
+    const result = await aggregateDashboard(registryPath, queuePath);
+
+    expect(result.completed).toHaveLength(1);
+    expect(result.completed[0]).toMatchObject({
+      id: "run-direct-complete",
+      status: "completed",
+      sliceProgress: "S1/1",
+    });
+    expect(result.completed[0]?.groups).toEqual([
+      {
+        name: "Direct",
+        slices: [
+          { number: 1, title: "Direct request", status: "done" },
+        ],
+      },
+    ]);
+
+    vi.useRealTimers();
+  });
+
+  it("dead PID is classified as failed when a direct run only persisted startup state", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
+
+    const registryPath = join(tempDir, "runs.json");
+    const queuePath = join(tempDir, "queue.json");
+    const planPath = join(tempDir, "direct-plan.json");
+    const statePath = join(tempDir, "direct-state-startup.json");
+
+    await writeJson(planPath, makeDirectPlan());
+    await writeJson(statePath, {
+      executionMode: "direct",
+      startedAt: "2026-04-10T10:00:00.000Z",
+    });
+    await writeRegistry(registryPath, [
+      makeRunEntry({
+        id: "run-direct-startup-crash",
+        pid: 999999,
+        planPath,
+        statePath,
+      }),
+    ]);
+
+    const result = await aggregateDashboard(registryPath, queuePath);
+
+    expect(result.completed).toHaveLength(1);
+    expect(result.completed[0]).toMatchObject({
+      id: "run-direct-startup-crash",
+      status: "failed",
+      sliceProgress: "S0/1",
+    });
+    expect(result.completed[0]?.groups).toEqual([
+      {
+        name: "Direct",
+        slices: [
+          { number: 1, title: "Direct request", status: "pending" },
+        ],
+      },
+    ]);
+
+    vi.useRealTimers();
+  });
+
   it("completed run elapsed prefers state startedAt over registry startedAt", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
@@ -555,7 +660,7 @@ describe("data aggregator", () => {
     vi.useRealTimers();
   });
 
-  it("completed run is pruned after the first poll", async () => {
+  it("completed run remains visible across polls", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
 
@@ -582,7 +687,7 @@ describe("data aggregator", () => {
     const secondResult = await aggregateDashboard(registryPath, queuePath);
 
     expect(firstResult.completed.map((run) => run.id)).toEqual(["run-second-poll"]);
-    expect(secondResult.completed).toEqual([]);
+    expect(secondResult.completed.map((run) => run.id)).toEqual(["run-second-poll"]);
 
     vi.useRealTimers();
   });
@@ -708,7 +813,7 @@ describe("data aggregator", () => {
     vi.useRealTimers();
   });
 
-  it("dead PID with corrupt plan is classified as dead", async () => {
+  it("dead PID with corrupt plan and persisted preflight state is classified as failed", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-10T12:00:00.000Z"));
 
@@ -738,7 +843,7 @@ describe("data aggregator", () => {
     expect(result.completed[0]).toMatchObject({
       id: "run-dead-corrupt-plan",
       planName: "broken-plan",
-      status: "dead",
+      status: "failed",
       sliceProgress: "S1/0",
       elapsed: "2h",
     });

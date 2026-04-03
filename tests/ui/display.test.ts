@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { printStartupBanner, printSliceIntro, printSliceContent, formatPlanSummary } from "#ui/display.js";
+import {
+  printStartupBanner,
+  printSliceIntro,
+  printSliceContent,
+  formatPlanSummary,
+  formatExecutionModeSummary,
+} from "#ui/display.js";
 import type { Slice } from "#infrastructure/plan/plan-parser.js";
 
 const collect = () => {
@@ -16,6 +22,7 @@ describe("printStartupBanner", () => {
   const baseOpts = {
     planPath: "/repo/.orch/plan-abc123.md",
     brief: "Some context",
+    executionMode: "grouped" as const,
     auto: false,
     interactive: true,
     tddSessionId: "sess-tdd-12345678",
@@ -47,24 +54,35 @@ describe("printStartupBanner", () => {
     expect(text).toContain("none");
   });
 
-  it("shows 'automatic' mode when auto=true", () => {
-    const { lines, log } = collect();
-    printStartupBanner(log, { ...baseOpts, auto: true });
-    const text = strip(lines.join("\n"));
-    expect(text).toContain("automatic");
-  });
-
-  it("shows 'interactive' mode when auto=false", () => {
+  it("shows execution mode explicitly", () => {
     const { lines, log } = collect();
     printStartupBanner(log, baseOpts);
     const text = strip(lines.join("\n"));
+    expect(text).toContain("Execution");
+    expect(text).toContain("Execution grouped");
+  });
+
+  it("shows 'automatic' control mode when auto=true", () => {
+    const { lines, log } = collect();
+    printStartupBanner(log, { ...baseOpts, auto: true });
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Control");
+    expect(text).toContain("automatic");
+  });
+
+  it("shows 'interactive' control mode when auto=false", () => {
+    const { lines, log } = collect();
+    printStartupBanner(log, baseOpts);
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("Control");
     expect(text).toContain("interactive");
   });
 
-  it("shows group filter in mode when specified", () => {
+  it("shows group filter in control mode when specified", () => {
     const { lines, log } = collect();
     printStartupBanner(log, { ...baseOpts, groupFilter: "Auth" });
     const text = strip(lines.join("\n"));
+    expect(text).toContain("Control");
     expect(text).toContain('start from "Auth"');
   });
 
@@ -97,6 +115,16 @@ describe("printStartupBanner", () => {
   it("shows keyboard hint when interactive", () => {
     const { lines, log } = collect();
     printStartupBanner(log, baseOpts);
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("guide");
+    expect(text).toContain("interrupt");
+    expect(text).toContain("quit");
+    expect(text).not.toContain("skip current slice");
+  });
+
+  it("shows slice skip hint only for sliced interactive runs", () => {
+    const { lines, log } = collect();
+    printStartupBanner(log, { ...baseOpts, executionMode: "sliced" });
     const text = strip(lines.join("\n"));
     expect(text).toContain("skip current slice");
   });
@@ -138,6 +166,16 @@ describe("printStartupBanner", () => {
     printStartupBanner(log, baseOpts);
     const text = strip(lines.join("\n"));
     expect(text).not.toContain("Config");
+  });
+});
+
+describe("formatExecutionModeSummary", () => {
+  it.each([
+    ["direct", "Execution direct — bounded request with no generated plan"],
+    ["grouped", "Execution grouped — coarse increments with group-boundary gates"],
+    ["sliced", "Execution sliced — fine-grained slices with per-slice cadence"],
+  ] as const)("formats %s mode for operator output", (executionMode, expected) => {
+    expect(formatExecutionModeSummary(executionMode)).toBe(expected);
   });
 });
 

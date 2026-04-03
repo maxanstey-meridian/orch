@@ -86,7 +86,7 @@ describe('JsonRpcClient', () => {
     await expect(promise).rejects.toThrow('client closed');
   });
 
-  it('error responses reject the promise with structured error info', async () => {
+  it('error responses reject the promise with an Error carrying structured info', async () => {
     const { proc, stdout } = makeMockProc();
     const client = createJsonRpcClient(proc);
 
@@ -97,9 +97,9 @@ describe('JsonRpcClient', () => {
       error: { code: -32600, message: 'Invalid Request', data: { detail: 'missing field' } },
     });
 
-    await expect(promise).rejects.toEqual({
-      code: -32600,
+    await expect(promise).rejects.toMatchObject({
       message: 'Invalid Request',
+      code: -32600,
       data: { detail: 'missing field' },
     });
   });

@@ -9,11 +9,12 @@ import {
   type InterruptHandler,
   type ProgressUpdate,
 } from "#application/ports/progress-sink.port.js";
+import type { ExecutionMode } from "#domain/config.js";
 import type { AgentRole, AgentStyle } from "#domain/agent-types.js";
 import type { Slice } from "#domain/plan.js";
 import { makeStreamer } from "#infrastructure/agent/streamer.js";
 import { ROLE_STYLES } from "./agent-role-styles.js";
-import { printSliceIntro } from "./display.js";
+import { printExecutionModeBanner, printSliceIntro } from "./display.js";
 import type { Hud } from "./hud.js";
 
 export class SilentOperatorGate implements OperatorGate {
@@ -23,7 +24,11 @@ export class SilentOperatorGate implements OperatorGate {
     return { kind: "accept" };
   }
 
-  async verifyFailed(_sliceNumber: number, _summary: string): Promise<VerifyDecision> {
+  async verifyFailed(
+    _executionUnitLabel: string,
+    _summary: string,
+    _retryable: boolean,
+  ): Promise<VerifyDecision> {
     return { kind: "stop" };
   }
 
@@ -70,6 +75,8 @@ export class SilentProgressSink implements ProgressSink {
 
   log(_text: string): void {}
 
+  logExecutionMode(_executionMode: ExecutionMode): void {}
+
   createStreamer(_role: AgentRole): (text: string) => void {
     return () => {};
   }
@@ -102,18 +109,27 @@ export class InkOperatorGate implements OperatorGate {
     return { kind: "accept" };
   }
 
-  async verifyFailed(sliceNumber: number, summary: string): Promise<VerifyDecision> {
+  async verifyFailed(
+    executionUnitLabel: string,
+    summary: string,
+    retryable: boolean,
+  ): Promise<VerifyDecision> {
     const answer = await this.hud.askUser(
-      `Slice ${sliceNumber} verification failed:\n${summary}\n\n(r)etry / (s)kip / s(t)op? `,
+      retryable
+        ? `${executionUnitLabel} verification failed:\n${summary}\n\n(r)etry / (s)kip / s(t)op? `
+        : `${executionUnitLabel} verification failed:\n${summary}\n\n(s)kip / s(t)op? `,
     );
     const choice = answer.trim().toLowerCase();
+    if (retryable && choice === "r") {
+      return { kind: "retry" };
+    }
     if (choice === "s") {
       return { kind: "skip" };
     }
     if (choice === "t") {
       return { kind: "stop" };
     }
-    return { kind: "retry" };
+    return retryable ? { kind: "retry" } : { kind: "stop" };
   }
 
   async creditExhausted(label: string, message: string): Promise<CreditDecision> {
@@ -205,6 +221,11 @@ export class InkProgressSink implements ProgressSink {
 
   log(text: string): void {
     this.writer(text);
+  }
+
+  logExecutionMode(executionMode: ExecutionMode): void {
+    this.hud.update({ executionMode });
+    printExecutionModeBanner(this.logFn, executionMode);
   }
 
   createStreamer(role: AgentRole): (text: string) => void {

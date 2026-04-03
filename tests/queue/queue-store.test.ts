@@ -99,6 +99,27 @@ const runNodeProcess = async (
   });
 };
 
+const waitForQueueLength = async (
+  queuePath: string,
+  expectedLength: number,
+  timeoutMs = 1_000,
+): Promise<QueueEntry[]> => {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const entries = await readQueue(queuePath);
+    if (entries.length === expectedLength) {
+      return entries;
+    }
+
+    await new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, 10);
+    });
+  }
+
+  return readQueue(queuePath);
+};
+
 const queueStoreModuleUrl = pathToFileURL(
   resolve(process.cwd(), "src/infrastructure/queue/queue-store.ts"),
 ).href;
@@ -269,7 +290,7 @@ describe("queue store", () => {
       });
     }
 
-    const actualEntries = await readQueue(queuePath);
+    const actualEntries = await waitForQueueLength(queuePath, entries.length + 1);
     expect(actualEntries).toHaveLength(entries.length + 1);
     expect(actualEntries.map((entry) => entry.id).sort()).toEqual(
       [baselineEntry, ...entries].map((entry) => entry.id).sort(),

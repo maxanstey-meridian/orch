@@ -35,6 +35,25 @@ const flushEffects = async (): Promise<void> =>
     setTimeout(resolvePromise, 0);
   });
 
+const waitForFrame = async (
+  getFrame: () => string,
+  matcher: (frame: string) => boolean,
+  timeoutMs = 1_000,
+): Promise<string> => {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const frame = getFrame();
+    if (matcher(frame)) {
+      return frame;
+    }
+
+    await flushEffects();
+  }
+
+  return getFrame();
+};
+
 const HookProbe = ({
   registryPath,
   queuePath,
@@ -276,11 +295,13 @@ describe("useDashboardData", () => {
 
     await flushEffects();
     refreshDashboard();
-    await flushEffects();
-    await flushEffects();
+    const finalFrame = await waitForFrame(
+      () => app.lastFrame() ?? "",
+      (frame) => frame.includes('"id":"run-refresh"'),
+    );
 
     expect(aggregateDashboardMock).toHaveBeenCalledTimes(2);
-    expect(app.lastFrame()).toContain('"id":"run-refresh"');
+    expect(finalFrame).toContain('"id":"run-refresh"');
 
     app.unmount();
   });

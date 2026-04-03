@@ -6,10 +6,19 @@ export type { OrchestratorState } from "#domain/state.js";
 import type { OrchestratorState } from "#domain/state.js";
 
 const persistedPhases = ["tdd", "review", "verify", "gap", "final", "plan"] as const;
+const providers = ["claude", "codex"] as const;
+const executionModes = ["direct", "grouped", "sliced"] as const;
+
+const persistedAgentSessionSchema = z.object({
+  provider: z.enum(providers),
+  id: z.string().min(1),
+});
 
 const stateSchema = z
   .object({
     startedAt: z.string().optional(),
+    completedAt: z.string().optional(),
+    executionMode: z.enum(executionModes).optional(),
     currentPhase: z.enum(persistedPhases).optional(),
     currentSlice: z.number().int().nonnegative().optional(),
     currentGroup: z.string().min(1).optional(),
@@ -26,6 +35,8 @@ const stateSchema = z
     lastCompletedGroup: z.string().min(1).optional(),
     lastSliceImplemented: z.number().int().nonnegative().optional(),
     reviewBaseSha: z.string().min(1).optional(),
+    tddSession: persistedAgentSessionSchema.optional(),
+    reviewSession: persistedAgentSessionSchema.optional(),
     tddSessionId: z.string().min(1).optional(),
     reviewSessionId: z.string().min(1).optional(),
     worktree: z
@@ -60,7 +71,9 @@ export const loadState = async (filePath: string): Promise<OrchestratorState> =>
       `Corrupt state file (${filePath}):\n${issues}\nDelete the file to start fresh, or use --reset.`,
     );
   }
-  return result.data;
+  const { tddSessionId: _legacyTddSessionId, reviewSessionId: _legacyReviewSessionId, ...state } =
+    result.data;
+  return state;
 };
 
 export const saveState = async (filePath: string, state: OrchestratorState): Promise<void> => {

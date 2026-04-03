@@ -1,6 +1,6 @@
+import { Box, Text, useInput } from "ink";
 import { homedir } from "os";
 import { basename } from "path";
-import { Box, Text, useInput } from "ink";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { DashboardModel } from "#domain/dashboard.js";
 import type { DashboardRun } from "#domain/dashboard.js";
@@ -72,10 +72,7 @@ type SectionRows = {
 };
 
 const isErrorWithCode = (value: unknown): value is { readonly code: string } =>
-  typeof value === "object" &&
-  value !== null &&
-  "code" in value &&
-  typeof value.code === "string";
+  typeof value === "object" && value !== null && "code" in value && typeof value.code === "string";
 
 const buildSections = (model: DashboardModel): SectionRows[] => [
   {
@@ -119,9 +116,7 @@ export const MainView = ({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const selectedRowRef = useRef<RenderableRow | undefined>(undefined);
   const isEmpty =
-    model.active.length === 0 &&
-    model.queued.length === 0 &&
-    model.completed.length === 0;
+    model.active.length === 0 && model.queued.length === 0 && model.completed.length === 0;
 
   useEffect(() => {
     setSelectedIndex((currentIndex) => {
@@ -165,22 +160,24 @@ export const MainView = ({
       return;
     }
 
-    if (
-      input === "k" &&
-      selectedRow?.kind === "run" &&
-      selectedRow.run.status === "active" &&
-      selectedRow.run.pid > 0
-    ) {
-      try {
-        process.kill(selectedRow.run.pid, "SIGTERM");
-      } catch (error) {
-        if (isErrorWithCode(error) && error.code === "ESRCH") {
-          return;
-        }
+    if (input === "k" && selectedRow?.kind === "run") {
+      if (selectedRow.run.status === "active" && selectedRow.run.pid > 0) {
+        try {
+          process.kill(selectedRow.run.pid, "SIGTERM");
+        } catch (error) {
+          if (isErrorWithCode(error) && error.code === "ESRCH") {
+            return;
+          }
 
-        throw error;
+          throw error;
+        }
+        return;
       }
-      return;
+
+      if (selectedRow.run.status !== "active") {
+        onDelete?.(selectedRow.id);
+        return;
+      }
     }
 
     const isDeletableRow =
@@ -200,11 +197,7 @@ export const MainView = ({
     const isSelected = rowIndex === selectedIndex;
 
     return (
-      <Text
-        key={row.id}
-        bold={isSelected}
-        inverse={isSelected}
-      >
+      <Text key={row.id} bold={isSelected} inverse={isSelected}>
         {`${isSelected ? ">" : " "} ${row.label}`}
       </Text>
     );
@@ -213,15 +206,26 @@ export const MainView = ({
   return (
     <Box flexDirection="column">
       <Section title="Active">
-        {sections[0]?.rows.length === 0 ? <Text>No runs to display</Text> : sections[0]?.rows.map(renderSectionRow)}
+        {sections[0]?.rows.length === 0 ? (
+          <Text>No runs to display</Text>
+        ) : (
+          sections[0]?.rows.map(renderSectionRow)
+        )}
       </Section>
       <Section title="Queued">
-        {sections[1]?.rows.length === 0 ? <Text>No runs to display</Text> : sections[1]?.rows.map(renderSectionRow)}
+        {sections[1]?.rows.length === 0 ? (
+          <Text>No runs to display</Text>
+        ) : (
+          sections[1]?.rows.map(renderSectionRow)
+        )}
       </Section>
       <Section title="Completed">
-        {sections[2]?.rows.length === 0 ? <Text>No runs to display</Text> : sections[2]?.rows.map(renderSectionRow)}
+        {sections[2]?.rows.length === 0 ? (
+          <Text>No runs to display</Text>
+        ) : (
+          sections[2]?.rows.map(renderSectionRow)
+        )}
       </Section>
-      {isEmpty ? <Text>No runs to display</Text> : null}
       <KeyBar />
     </Box>
   );

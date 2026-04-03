@@ -14,6 +14,20 @@ const makeSlice = (n: number, title = `Slice ${n}`): Slice => ({
 
 const makeGroup = (name: string, slices: Slice[]): Group => ({ name, slices });
 
+const VERIFY_PASS = `### VERIFY_JSON
+\`\`\`json
+${JSON.stringify({
+  status: "PASS",
+  checks: [{ check: "npx vitest run", status: "PASS" }],
+  sliceLocalFailures: [],
+  outOfScopeFailures: [],
+  preExistingFailures: [],
+  runnerIssue: null,
+  retryable: false,
+  summary: "Verification passed.",
+}, null, 2)}
+\`\`\``;
+
 describe("log writer lifecycle", () => {
   it("orchestrator events are written to log writer", async () => {
     const { uc, hud, spawner, git, logWriter } = createTestHarness({
@@ -28,7 +42,7 @@ describe("log writer lifecycle", () => {
       okResult({ assistantText: "summary done" }),
     );
     spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
-    spawner.onNextSpawn("verify", okResult({ assistantText: "### VERIFY_RESULT\n**Status:** PASS\n" }));
+    spawner.onNextSpawn("verify", okResult({ assistantText: VERIFY_PASS }));
     spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
 
     await uc.execute([makeGroup("G1", [makeSlice(1)])]);
@@ -50,7 +64,7 @@ describe("log writer lifecycle", () => {
       okResult({ assistantText: "summary done" }),
     );
     spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
-    spawner.onNextSpawn("verify", okResult({ assistantText: "### VERIFY_RESULT\n**Status:** PASS\n" }));
+    spawner.onNextSpawn("verify", okResult({ assistantText: VERIFY_PASS }));
     spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
 
     await uc.execute([makeGroup("G1", [makeSlice(1)])]);
@@ -71,7 +85,7 @@ describe("log writer lifecycle", () => {
       okResult({ assistantText: "summary done" }),
     );
     spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
-    spawner.onNextSpawn("verify", okResult({ assistantText: "### VERIFY_RESULT\n**Status:** PASS\n" }));
+    spawner.onNextSpawn("verify", okResult({ assistantText: VERIFY_PASS }));
     spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
 
     await uc.execute([makeGroup("G1", [makeSlice(1)])]);

@@ -154,6 +154,7 @@ describe("createSupervisor", () => {
     });
 
     const spawnedArgs = spawnMock.mock.calls[0]?.[1] ?? [];
+    expect(spawnedArgs).toContain("--auto");
     expect(spawnedArgs).toContain("--branch");
     expect(spawnedArgs).toContain("feature/dashboard");
   });
@@ -178,6 +179,27 @@ describe("createSupervisor", () => {
       },
     );
     expect(await readQueue(queuePath)).toEqual([]);
+  });
+
+  it("injects --auto for detached queued runs when the stored entry has no flags", async () => {
+    await addToQueue(queuePath, makeQueueEntry({ flags: [] }));
+
+    const supervisor = createTestSupervisor();
+
+    supervisor.start();
+    await waitForExpectation(() => {
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+    });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      "node",
+      ["/dist/main.js", "work", "/plans/demo.json", "--auto"],
+      {
+        cwd: "/repos/orch",
+        stdio: "ignore",
+        detached: true,
+      },
+    );
   });
 
   it("does not spawn when the registry is already at the concurrency limit", async () => {

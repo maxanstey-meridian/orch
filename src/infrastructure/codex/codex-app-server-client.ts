@@ -85,7 +85,14 @@ export const createCodexAppServerClient = (proc: ChildProcess): CodexAppServerCl
     initialize: async () => {
       await rpc.request("initialize", { clientInfo: { name: "orch", version: "0.1.0" } });
       // Send initialized notification (no id)
-      stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }) + "\n");
+      if (stdin.writableEnded || stdin.destroyed) {
+        return;
+      }
+      try {
+        stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }) + "\n");
+      } catch {
+        // The child can die between initialize resolving and the notification write.
+      }
     },
 
     startThread: async (opts?) => {

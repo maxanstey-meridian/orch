@@ -1,7 +1,10 @@
 import { render, Text, Static, useInput } from "ink";
+import { createInterface } from "node:readline";
 import React, { useState, useEffect } from "react";
+import type { ExecutionMode } from "#domain/config.js";
 
 export type HudState = {
+  executionMode?: ExecutionMode;
   currentSlice?: { number: number };
   totalSlices: number;
   completedSlices: number;
@@ -54,6 +57,16 @@ export const appendHudLines = (
   }
 };
 
+export const flushHudWriterBuffer = (
+  lines: string[],
+  writerBuffer: string,
+): string => {
+  if (writerBuffer.trim().length > 0) {
+    appendHudLines(lines, writerBuffer);
+  }
+  return "";
+};
+
 const formatElapsed = (ms: number): string => {
   const totalSec = Math.floor(ms / 1000);
   const h = String(Math.floor(totalSec / 3600)).padStart(2, "0");
@@ -73,7 +86,11 @@ const buildProgressBar = (completed: number, total: number, width: number): stri
 
 export const buildStatusLine = (state: HudState, columns: number): string => {
   const parts: string[] = [];
-  if (state.currentSlice) {
+  if (
+    state.currentSlice &&
+    state.executionMode !== "direct" &&
+    state.executionMode !== "grouped"
+  ) {
     parts.push(`S${state.currentSlice.number}/${state.totalSlices}`);
   }
   if (state.groupName != null) {
@@ -313,7 +330,7 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
       setActivity: () => {},
       askUser: (prompt) =>
         new Promise((resolve) => {
-          const rl = require("readline").createInterface({ input: process.stdin, output: stdout });
+          const rl = createInterface({ input: process.stdin, output: stdout });
           rl.question(prompt, (answer: string) => {
             rl.close();
             resolve(answer);
@@ -352,10 +369,7 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
         return;
       }
       tornDown = true;
-      if (writerBuffer.trim()) {
-        appendHudLines(_lines, writerBuffer);
-      }
-      writerBuffer = "";
+      writerBuffer = flushHudWriterBuffer(_lines, writerBuffer);
       _notify = null;
       _keyHandler = null;
       _interruptSubmitHandler = null;
@@ -369,6 +383,7 @@ export const createHud = (enabled: boolean, stdout: NodeJS.WriteStream = process
         if (tornDown) {
           return;
         }
+        writerBuffer = flushHudWriterBuffer(_lines, writerBuffer);
         const text = args.map((a) => (typeof a === "string" ? a : String(a))).join(" ");
         appendHudLines(_lines, text);
         notify();

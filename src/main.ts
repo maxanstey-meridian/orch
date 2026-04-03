@@ -6,7 +6,7 @@
  * No dep injection, no framework — reads top-to-bottom.
  *
  * Usage:
- *   npx ts-node src/main.ts --plan inventory.md               # generate plan and exit
+ *   npx ts-node src/main.ts --plan inventory.md               # bootstrap from inventory
  *   npx ts-node src/main.ts --work plan.md                    # execute a plan
  *   npx ts-node src/main.ts --work plan.md --group Auth       # start from group
  *   npx ts-node src/main.ts --work plan.md --auto             # auto-accept all prompts (--no-interaction is an alias)
@@ -19,12 +19,21 @@ import { randomUUID } from "crypto";
 import { readFileSync, mkdirSync, watch, writeFileSync, existsSync } from "fs";
 import { mkdir, readFile, rm, stat, writeFile } from "fs/promises";
 import { basename, dirname, join, resolve } from "path";
-import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
-import type { QueueEntry } from "#domain/queue.js";
 import { resolveAllAgentConfigs } from "#domain/agent-config.js";
-import type { OrchestratorConfig } from "#domain/config.js";
+import type { ExecutionMode, ExecutionPreference, OrchestratorConfig } from "#domain/config.js";
+import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
-import { parseBranchFlag, parseProviderFlag } from "#infrastructure/cli/cli-args.js";
+import type { Group } from "#domain/plan.js";
+import type { QueueEntry } from "#domain/queue.js";
+import {
+  REQUEST_TRIAGE_FALLBACK,
+  formatRequestTriageSummary,
+} from "#domain/triage.js";
+import {
+  parseBranchFlag,
+  parseExecutionPreference,
+  parseProviderFlag,
+} from "#infrastructure/cli/cli-args.js";
 import { parseSubcommand } from "#infrastructure/cli/subcommands.js";
 import {
   loadAndResolveOrchrConfig,
@@ -32,19 +41,29 @@ import {
   buildOrchrSummary,
 } from "#infrastructure/config/orchrc.js";
 import { aggregateDashboard } from "#infrastructure/dashboard/data-aggregator.js";
-import { planGeneratorSpawnerFactory } from "#infrastructure/factories.js";
+import {
+  planGeneratorSpawnerFactory,
+  requestTriageSpawnerFactory,
+} from "#infrastructure/factories.js";
 import { runFingerprint } from "#infrastructure/fingerprint.js";
 import { getStatus, stashBackup } from "#infrastructure/git/git.js";
 import { assertGitRepo } from "#infrastructure/git/repo-check.js";
 import { resolveWorktree } from "#infrastructure/git/worktree-setup.js";
 import { checkWorktreeResume, runCleanup } from "#infrastructure/git/worktree.js";
+import { logPathForPlan } from "#infrastructure/log/log-writer.js";
 import {
   isPlanFormat,
   ensureCanonicalPlan,
   doGeneratePlan,
+  generatePlanId,
+  planFileName,
   resolvePlanId,
 } from "#infrastructure/plan/plan-generator.js";
 import { parsePlan } from "#infrastructure/plan/plan-parser.js";
+import {
+  buildRequestTriagePrompt,
+  parseRequestTriageResult,
+} from "#infrastructure/request-triage.js";
 import {
   defaultQueuePath,
   addToQueue,
@@ -53,18 +72,24 @@ import {
 } from "#infrastructure/queue/queue-store.js";
 import {
   defaultRegistryPath,
-  deregisterRun,
   registerRun,
 } from "#infrastructure/registry/run-registry.js";
-import { logPathForPlan } from "#infrastructure/log/log-writer.js";
 import {
   loadState,
+  saveState,
   clearState,
   statePathForPlan,
   type OrchestratorState,
 } from "#infrastructure/state/state.js";
-import { a, ts, logSection, printStartupBanner, formatPlanSummary } from "#ui/display.js";
 import { renderDashboard } from "#ui/dashboard/dashboard-app.js";
+import {
+  a,
+  ts,
+  logSection,
+  printStartupBanner,
+  formatPlanSummary,
+  printExecutionModeBanner,
+} from "#ui/display.js";
 import { createHud } from "#ui/hud.js";
 import { runInit, profileToMarkdown } from "#ui/init.js";
 import { createContainer } from "./composition-root.js";
@@ -89,10 +114,7 @@ type RegistryLockOwner = {
 };
 
 const hasCode = (value: unknown): value is { readonly code: string } =>
-  typeof value === "object" &&
-  value !== null &&
-  "code" in value &&
-  typeof value.code === "string";
+  typeof value === "object" && value !== null && "code" in value && typeof value.code === "string";
 
 const delay = async (ms: number): Promise<void> =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
@@ -129,9 +151,7 @@ const resolveDashboardLaunch = (
     };
   }
 
-  throw new Error(
-    "Cannot resolve a runnable orch entrypoint for dashboard queue execution.",
-  );
+  throw new Error("Cannot resolve a runnable orch entrypoint for dashboard queue execution.");
 };
 
 const isRegistryLockOwner = (value: unknown): value is RegistryLockOwner =>
@@ -238,10 +258,7 @@ const printLines = (lines: readonly string[]): void => {
   }
 };
 
-const formatStatusTable = (
-  title: string,
-  rows: readonly string[],
-): string[] => {
+const formatStatusTable = (title: string, rows: readonly string[]): string[] => {
   if (rows.length === 0) {
     return [title, "  (none)"];
   }
@@ -283,7 +300,8 @@ const formatDetailLines = (run: DashboardRun): string[] => {
     ...run.groups.flatMap((group) => [
       group.name,
       ...group.slices.map(
-        (slice) => `  ${slice.status} S${slice.number} ${slice.title}${slice.elapsed ? ` ${slice.elapsed}` : ""}`,
+        (slice) =>
+          `  ${slice.status} S${slice.number} ${slice.title}${slice.elapsed ? ` ${slice.elapsed}` : ""}`,
       ),
     ]),
   ];
@@ -297,6 +315,156 @@ const formatQueuedDetail = (entry: QueueEntry): string[] => [
   `Flags: ${entry.flags.join(" ") || "-"}`,
   `Added: ${entry.addedAt}`,
 ];
+
+const resolveExecutionMode = (executionPreference: ExecutionPreference): ExecutionMode => {
+  switch (executionPreference) {
+    case "quick":
+      return "direct";
+    case "grouped":
+      return "grouped";
+    case "long":
+    case "auto":
+      return "sliced";
+  }
+};
+
+const executionPreferenceFlag = (executionPreference: Exclude<ExecutionPreference, "auto">): string => {
+  switch (executionPreference) {
+    case "quick":
+      return "--quick";
+    case "grouped":
+      return "--grouped";
+    case "long":
+      return "--long";
+  }
+};
+
+const readPlanExecutionMode = (planContent: string): ExecutionMode | undefined => {
+  try {
+    const parsed: unknown = JSON.parse(planContent);
+    if (!isRecord(parsed) || parsed.executionMode === undefined) {
+      return undefined;
+    }
+
+    const executionMode = parsed.executionMode;
+    if (executionMode === "grouped" || executionMode === "sliced") {
+      return executionMode;
+    }
+
+    switch (executionMode) {
+      case "direct":
+        throw new Error("Plan metadata executionMode=direct is invalid for --work.");
+      default:
+        throw new Error(
+          `Invalid plan executionMode metadata: ${String(executionMode)}.`,
+        );
+    }
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return undefined;
+    }
+
+    throw error;
+  }
+};
+
+const buildDirectExecutionGroups = (requestContent: string, inventoryPath: string): readonly Group[] => [
+  {
+    name: "Direct",
+    slices: [
+      {
+        number: 1,
+        title: "Direct request",
+        content: requestContent,
+        why: "Direct execution was selected during bootstrap.",
+        files: [{ path: inventoryPath, action: "edit" }],
+        details: "Implement the inventory request directly without generated plan slices.",
+        tests: "Run the relevant tests and explain the coverage changes.",
+      },
+    ],
+  },
+];
+
+const writeDirectPlanArtifact = (opts: {
+  orchDir: string;
+  planId: string;
+  requestContent: string;
+  inventoryPath: string;
+}): string => {
+  const planPath = resolve(opts.orchDir, planFileName(opts.planId));
+  const directGroups = buildDirectExecutionGroups(opts.requestContent, opts.inventoryPath);
+  const planDocument = {
+    groups: directGroups.map((group) => ({
+      name: group.name,
+      slices: group.slices.map((slice) => ({
+        number: slice.number,
+        title: slice.title,
+        why: slice.why,
+        files: slice.files,
+        details: slice.details,
+        tests: slice.tests,
+      })),
+    })),
+  };
+  mkdirSync(opts.orchDir, { recursive: true });
+  writeFileSync(planPath, JSON.stringify(planDocument, null, 2));
+  return planPath;
+};
+
+const resolvePlannedWorkExecutionMode = (
+  planContent: string,
+  executionPreference: ExecutionPreference,
+): ExecutionMode => {
+  const planExecutionMode = readPlanExecutionMode(planContent) ?? "sliced";
+
+  if (executionPreference === "auto") {
+    return planExecutionMode;
+  }
+
+  const requestedMode = resolveExecutionMode(executionPreference);
+  if (requestedMode !== planExecutionMode) {
+    throw new Error(
+      `Loaded plan declares executionMode=${planExecutionMode}, so override ${executionPreferenceFlag(
+        executionPreference,
+      )} is incompatible. --work uses the plan's declared execution mode.`,
+    );
+  }
+
+  return planExecutionMode;
+};
+
+const resolveInventoryExecutionMode = async (opts: {
+  executionPreference: ExecutionPreference;
+  requestContent: string;
+  agentConfig: ReturnType<typeof resolveAllAgentConfigs>;
+  cwd: string;
+  log: (...args: unknown[]) => void;
+}): Promise<ExecutionMode> => {
+  if (opts.executionPreference !== "auto") {
+    return resolveExecutionMode(opts.executionPreference);
+  }
+
+  const triageAgent = requestTriageSpawnerFactory({
+    agentConfig: opts.agentConfig,
+    cwd: opts.cwd,
+  })();
+
+  try {
+    const prompt = buildRequestTriagePrompt(opts.requestContent);
+    const result = await triageAgent.send(prompt);
+    const assistantText = result.assistantText.trim();
+    const resultText = result.resultText.trim();
+    const triageText = assistantText.length > 0 ? assistantText : resultText;
+    const triage = parseRequestTriageResult(triageText);
+    opts.log(formatRequestTriageSummary(triage));
+    return triage.mode;
+  } catch {
+    opts.log(formatRequestTriageSummary(REQUEST_TRIAGE_FALLBACK));
+    return REQUEST_TRIAGE_FALLBACK.mode;
+  } finally {
+    triageAgent.kill();
+  }
+};
 
 const findDashboardEntry = (
   model: DashboardModel,
@@ -368,7 +536,9 @@ const followLogFile = async (logPath: string): Promise<never> => {
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 export const main = async (runtime: MainRuntime = {}) => {
-  const onSignal = runtime.onSignal ?? ((signal: "SIGINT" | "SIGTERM", handler: () => void) => process.on(signal, handler));
+  const onSignal =
+    runtime.onSignal ??
+    ((signal: "SIGINT" | "SIGTERM", handler: () => void) => process.on(signal, handler));
   const exit = runtime.exit ?? process.exit;
   const argv = runtime.argv ?? process.argv;
   const queuePath = runtime.queuePath ?? defaultQueuePath();
@@ -430,7 +600,9 @@ export const main = async (runtime: MainRuntime = {}) => {
     }
 
     if (subcommand.action === "list") {
-      printLines(formatStatusTable("Queue", (await readQueue(queuePath)).map(formatQueueSummaryRow)));
+      printLines(
+        formatStatusTable("Queue", (await readQueue(queuePath)).map(formatQueueSummaryRow)),
+      );
       return;
     }
 
@@ -462,7 +634,9 @@ export const main = async (runtime: MainRuntime = {}) => {
       return;
     }
 
-    printLines(entry.kind === "run" ? formatDetailLines(entry.run) : formatQueuedDetail(entry.entry));
+    printLines(
+      entry.kind === "run" ? formatDetailLines(entry.run) : formatQueuedDetail(entry.entry),
+    );
     return;
   }
 
@@ -496,7 +670,7 @@ export const main = async (runtime: MainRuntime = {}) => {
   }
   if (args.includes("--plan-only")) {
     exitWithError(
-      "--plan-only is no longer supported. Use --plan instead (it generates and exits by default).",
+      "--plan-only is no longer supported. Use --plan <inventory> instead.",
     );
     return;
   }
@@ -510,6 +684,13 @@ export const main = async (runtime: MainRuntime = {}) => {
   const groupFilter = getArg("--group");
   const initMode = args.includes("--init");
   const showPlan = args.includes("--show-plan");
+  let executionPreference: ExecutionPreference;
+  try {
+    executionPreference = parseExecutionPreference(args);
+  } catch (error) {
+    exitWithError(error instanceof Error ? error.message : String(error));
+    return;
+  }
   const rawThreshold = getArg("--review-threshold");
   const reviewThreshold = rawThreshold !== undefined ? Number(rawThreshold) : 30;
   if (Number.isNaN(reviewThreshold)) {
@@ -522,7 +703,7 @@ export const main = async (runtime: MainRuntime = {}) => {
   }
   if (inventoryPath && workMode) {
     exitWithError(
-      "--plan and --work are mutually exclusive. Use --plan to generate, then --work to execute.",
+      "--plan and --work are mutually exclusive. Use --plan <inventory> to bootstrap from inventory, or --work <plan> to execute an existing plan.",
     );
     return;
   }
@@ -540,7 +721,7 @@ export const main = async (runtime: MainRuntime = {}) => {
   }
   if (!inventoryPath && !workMode) {
     exitWithError(
-      "Provide --plan <inventory> to generate a plan, or --work <plan> to execute an existing one.",
+      "Provide --plan <inventory> to bootstrap from inventory, or --work <plan> to execute an existing plan.",
     );
     return;
   }
@@ -588,26 +769,71 @@ export const main = async (runtime: MainRuntime = {}) => {
   const provider = parseProviderFlag(args);
   const agentConfig = resolveAllAgentConfigs(orchrc.agents, provider);
   let planPath: string;
-
-  if (workMode) {
-    planPath = resolve(workPath!);
-  } else {
-    const inputPath = resolve(inventoryPath!);
-    const srcContent = readFileSync(inputPath, "utf-8");
-
-    if (isPlanFormat(srcContent)) {
-      log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
-      planPath = inputPath;
+  let planContent: string | undefined;
+  let executionMode: ExecutionMode;
+  try {
+    if (workMode) {
+      planPath = resolve(workPath!);
+      planContent = readFileSync(planPath, "utf-8");
+      executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
+      printExecutionModeBanner(log, executionMode);
     } else {
-      const spawnPlanGenerator = planGeneratorSpawnerFactory({ agentConfig, cwd });
-      planPath = await doGeneratePlan(inputPath, brief, orchDir, log, spawnPlanGenerator);
+      const inputPath = resolve(inventoryPath!);
+      const srcContent = readFileSync(inputPath, "utf-8");
+
+      if (isPlanFormat(srcContent)) {
+        log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
+        planPath = inputPath;
+        planContent = srcContent;
+        executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
+        printExecutionModeBanner(log, executionMode);
+      } else {
+        executionMode = await resolveInventoryExecutionMode({
+          executionPreference,
+          requestContent: srcContent,
+          agentConfig,
+          cwd,
+          log,
+        });
+        printExecutionModeBanner(log, executionMode);
+        const spawnPlanGenerator = planGeneratorSpawnerFactory({ agentConfig, cwd });
+        if (executionMode === "direct") {
+          planPath = inputPath;
+          planContent = srcContent;
+        } else {
+          planPath = await doGeneratePlan(
+            inputPath,
+            brief,
+            orchDir,
+            log,
+            spawnPlanGenerator,
+            executionMode,
+          );
+        }
+      }
     }
+  } catch (error) {
+    exitWithError(error instanceof Error ? error.message : String(error));
+    return;
   }
 
   // 4. Derive per-plan state path
-  const activePlanId = ensureCanonicalPlan(planPath, orchDir);
+  const activePlanId =
+    executionMode === "direct"
+      ? generatePlanId()
+      : ensureCanonicalPlan(planPath, orchDir);
+  const registryPlanPath =
+    executionMode === "direct"
+      ? writeDirectPlanArtifact({
+          orchDir,
+          planId: activePlanId,
+          requestContent: planContent ?? "",
+          inventoryPath: planPath,
+        })
+      : planPath;
   const branchName = parseBranchFlag(args, activePlanId);
   const stateFile = statePathForPlan(orchDir, activePlanId);
+  let cleanup = () => {};
   mkdirSync(resolve(orchDir, "state"), { recursive: true });
 
   if (resetState) {
@@ -626,21 +852,8 @@ export const main = async (runtime: MainRuntime = {}) => {
     return;
   }
 
-  // Generate-only mode: --plan without --work
-  const generateOnly = !!inventoryPath && !workMode;
-  if (generateOnly) {
-    for (const line of earlyLog) {
-      origLog(line);
-    }
-    origLog(`Plan written to ${planPath} — review and run with --work`);
-    exit(0);
-    return;
-  }
-
-  // 5. Parse plan + HUD
-  const groups = await parsePlan(planPath);
-
   if (showPlan) {
+    const groups = await parsePlan(planPath);
     for (const line of earlyLog) {
       origLog(line);
     }
@@ -649,71 +862,30 @@ export const main = async (runtime: MainRuntime = {}) => {
     return;
   }
 
-  const totalSlices = groups.reduce((n, g) => n + g.slices.length, 0);
-  const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
-  const hud = createHud(isTTY);
-  hud.update({ totalSlices, completedSlices: 0, startTime: Date.now() });
-  log = hud.wrapLog(origLog);
-  for (const line of earlyLog) {
-    log(line);
-  }
-
-  // 6. Load per-plan state + resume mismatch guard + resolve worktree
-  const state: OrchestratorState = await loadState(stateFile);
-  const resumeCheck = await checkWorktreeResume(branchName, state);
-  if (!resumeCheck.ok) {
-    origLog(resumeCheck.message);
-    exit(1);
-    return;
-  }
-  // resolveWorktree persists worktree state to disk before returning,
-  // so RunOrchestration.execute() will pick it up via persistence.load().
-  const {
-    cwd: effectiveCwd,
-    worktreeInfo,
-    skipStash,
-  } = await resolveWorktree({
-    branchName,
-    cwd,
-    activePlanId,
-    state,
-    stateFile,
-    log,
-  });
-  const interactive = !auto && isTTY;
-
   const runId = randomUUID();
   let registered = false;
+  let executionStarted = false;
+  await saveState(stateFile, {
+    ...(await loadState(stateFile)),
+    startedAt: new Date().toISOString(),
+    currentPhase: "plan",
+  });
   await withRegistryLock(registryPath, async () => {
     await registerRun(registryPath, {
       id: runId,
       pid: process.pid,
       repo: cwd,
-      planPath,
+      planPath: registryPlanPath,
       statePath: stateFile,
       branch: branchName,
       startedAt: new Date().toISOString(),
     });
   });
   registered = true;
-  const deregisterSelf = async (): Promise<void> => {
-    if (!registered) {
-      return;
-    }
 
-    await withRegistryLock(registryPath, async () => {
-      await deregisterRun(registryPath, runId);
-    });
-    registered = false;
-  };
-
-  // 7. Signal handlers + cleanup
-  // cleanup is set to hud.teardown initially, then upgraded to orch.dispose()
-  // after the container is created (kills agents + tears down HUD).
-  let cleanup = () => hud.teardown();
+  // 5. Parse plan + HUD
   const exitWithCleanup = async (code: number): Promise<void> => {
     cleanup();
-    await deregisterSelf();
     exit(code);
   };
   onSignal("SIGINT", () => {
@@ -724,13 +896,116 @@ export const main = async (runtime: MainRuntime = {}) => {
   });
 
   try {
+    if (executionMode === "direct") {
+      const directGroups = buildDirectExecutionGroups(planContent ?? "", planPath);
+      const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
+      const hud = createHud(isTTY);
+      hud.update({ totalSlices: 1, completedSlices: 0, startTime: Date.now() });
+      log = hud.wrapLog(origLog);
+      for (const line of earlyLog) {
+        log(line);
+      }
+      cleanup = () => hud.teardown();
+      const planLogPath = logPathForPlan(orchDir, activePlanId);
+      log(`${ts()} ${a.dim}Log file: ${planLogPath}${a.reset}`);
+      log(`${ts()} ${a.dim}Initialising agents — this may take a few minutes...${a.reset}`);
+      const orchestratorConfig = {
+        cwd,
+        planPath,
+        planContent: planContent ?? "",
+        brief,
+        executionMode,
+        executionPreference,
+        auto,
+        reviewThreshold:
+          rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),
+        maxReviewCycles: orchrc.config.maxReviewCycles ?? 3,
+        maxReplans: orchrc.config.maxReplans ?? 2,
+        stateFile,
+        logPath: planLogPath,
+        tddSkill,
+        reviewSkill,
+        verifySkill,
+        gapDisabled,
+        planDisabled: true,
+        tddRules: orchrc.rules.tdd,
+        defaultProvider: provider,
+        agentConfig,
+        reviewRules: orchrc.rules.review,
+      } satisfies OrchestratorConfig;
+      const container = createContainer(orchestratorConfig, hud);
+      const orch = container.resolve("runOrchestration");
+      cleanup = () => orch.dispose();
+
+      try {
+        executionStarted = true;
+        await orch.execute(directGroups);
+      } catch (err) {
+        if (err instanceof CreditExhaustedError) {
+          log(`\n${ts()} ${a.red}Credit exhaustion detected: ${err.message}${a.reset}`);
+          await exitWithCleanup(2);
+          return;
+        }
+        if (err instanceof IncompleteRunError) {
+          log(`\n${ts()} ${a.red}${err.message}${a.reset}`);
+          await exitWithCleanup(1);
+          return;
+        }
+        throw err;
+      }
+
+      logSection(log, `${a.green}✅ Direct request complete + final review done${a.reset}`);
+      const status = await getStatus(cwd);
+      log(`\n${status}`);
+      cleanup();
+      return;
+    }
+
+    const groups = await parsePlan(planPath);
+
+    const totalSlices = groups.reduce((n, g) => n + g.slices.length, 0);
+    const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
+    const hud = createHud(isTTY);
+    hud.update({ totalSlices, completedSlices: 0, startTime: Date.now() });
+    log = hud.wrapLog(origLog);
+    for (const line of earlyLog) {
+      log(line);
+    }
+    cleanup = () => hud.teardown();
+
+    // 6. Load per-plan state + resume mismatch guard + resolve worktree
+    const state: OrchestratorState = await loadState(stateFile);
+    const resumeCheck = await checkWorktreeResume(branchName, state);
+    if (!resumeCheck.ok) {
+      origLog(resumeCheck.message);
+      exit(1);
+      return;
+    }
+    // resolveWorktree persists worktree state to disk before returning,
+    // so RunOrchestration.execute() will pick it up via persistence.load().
+    const {
+      cwd: effectiveCwd,
+      worktreeInfo,
+      skipStash,
+    } = await resolveWorktree({
+      branchName,
+      cwd,
+      activePlanId,
+      state,
+      stateFile,
+      log,
+    });
+    const interactive = !auto && isTTY;
+
     // 8. Validate group filter
     const startIdx = groupFilter
       ? groups.findIndex((g) => g.name.toLowerCase() === groupFilter.toLowerCase())
       : 0;
 
     if (groupFilter && startIdx === -1) {
-      console.error(`No group "${groupFilter}". Available: ${groups.map((g) => g.name).join(", ")}`);
+      console.error(
+        `No group "${groupFilter}". Available: ${groups.map((g) => g.name).join(", ")}`,
+      );
       await exitWithCleanup(1);
       return;
     }
@@ -744,7 +1019,7 @@ export const main = async (runtime: MainRuntime = {}) => {
     log(`${ts()} ${a.dim}Log file: ${planLogPath}${a.reset}`);
     log(`${ts()} ${a.dim}Initialising agents — this may take a few minutes...${a.reset}`);
 
-    const planContent = await readFile(planPath, "utf-8");
+    planContent ??= await readFile(planPath, "utf-8");
 
     // 9. Composition root — wire all ports + use case
     const orchestratorConfig = {
@@ -752,6 +1027,8 @@ export const main = async (runtime: MainRuntime = {}) => {
       planPath,
       planContent,
       brief,
+      executionMode,
+      executionPreference,
       auto,
       reviewThreshold:
         rawThreshold !== undefined ? reviewThreshold : (orchrc.config.reviewThreshold ?? 30),
@@ -778,11 +1055,13 @@ export const main = async (runtime: MainRuntime = {}) => {
     const remaining = groups.slice(startIdx);
 
     try {
+      executionStarted = true;
       await orch.execute(remaining, {
         onReady: (info) =>
           printStartupBanner(log, {
             planPath,
             brief,
+            executionMode,
             auto,
             interactive,
             groupFilter,
@@ -812,11 +1091,8 @@ export const main = async (runtime: MainRuntime = {}) => {
     const status = await getStatus(effectiveCwd);
     log(`\n${status}`);
     cleanup();
-    await deregisterSelf();
-    await clearState(stateFile);
   } catch (err) {
     cleanup();
-    await deregisterSelf();
     throw err;
   }
 };

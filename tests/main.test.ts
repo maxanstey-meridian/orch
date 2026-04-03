@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, rm, writeFile, readFile } from "fs/promises";
 import { join, resolve } from "path";
 import { tmpdir } from "os";
 import { execSync, spawnSync } from "child_process";
+import { parseExecutionPreference } from "#infrastructure/cli/cli-args.js";
 import { loadState, saveState, clearState, statePathForPlan } from "#infrastructure/state/state.js";
 import { resolvePlanId } from "#infrastructure/plan/plan-generator.js";
 import { logPathForPlan } from "#infrastructure/log/log-writer.js";
@@ -108,6 +109,30 @@ describe("SHA-256 fallback plan ID derivation", () => {
     const id = resolvePlanId("/repo/plan.md");
     const statePath = statePathForPlan("/repo/.orch", id);
     expect(statePath).toMatch(/\.orch\/state\/plan-[0-9a-f]{6}\.json$/);
+  });
+});
+
+describe("execution preference parsing", () => {
+  it("returns auto when no execution mode flag is present", () => {
+    expect(parseExecutionPreference([])).toBe("auto");
+  });
+
+  it("returns quick for --quick", () => {
+    expect(parseExecutionPreference(["--quick"])).toBe("quick");
+  });
+
+  it("returns grouped for --grouped", () => {
+    expect(parseExecutionPreference(["--grouped"])).toBe("grouped");
+  });
+
+  it("returns long for --long", () => {
+    expect(parseExecutionPreference(["--long"])).toBe("long");
+  });
+
+  it("throws when multiple execution mode flags are combined", () => {
+    expect(() => parseExecutionPreference(["--quick", "--grouped"])).toThrow(
+      /mutually exclusive.*--quick.*--grouped/i,
+    );
   });
 });
 
@@ -871,6 +896,31 @@ describeIntegration("CLI flag wiring", () => {
     expect(after).toEqual({});
   }, 15_000);
 
+  it("--work plan.md leaves per-plan state in place after a successful run", async () => {
+    initGitRepo(tempDir);
+    await writeFile(join(tempDir, "plan.md"), MINIMAL_PLAN);
+
+    const planPath = join(tempDir, "plan.md");
+    const expectedId = resolvePlanId(planPath);
+    const orchDir = join(tempDir, ".orch");
+    const perPlanState = statePathForPlan(orchDir, expectedId);
+
+    const result = spawnSync("npx", [
+      "tsx", mainPath,
+      "--work", planPath,
+      "--skip-fingerprint", "--no-interaction", "--auto",
+    ], {
+      cwd: tempDir,
+      encoding: "utf-8",
+      timeout: 8_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    expect(result.status).toBe(0);
+    const after = await loadState(perPlanState);
+    expect(after.lastCompletedSlice).toBe(1);
+  }, 15_000);
+
   it("--work plan.md --auto starts without inter-group prompts", async () => {
     initGitRepo(tempDir);
     const multiGroupPlan = `## Group: A\n### Slice 1: S1\nDo A.\n\n## Group: B\n### Slice 2: S2\nDo B.\n`;
@@ -1161,6 +1211,8 @@ const makeTestConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorCo
   planPath: "/tmp/plan.json",
   planContent: "plan content",
   brief: "brief text",
+  executionMode: "sliced",
+  executionPreference: "auto",
   auto: false,
   reviewThreshold: 0,
   maxReviewCycles: 3,
@@ -1196,6 +1248,987 @@ const makeTestAgent = (): AgentHandle => ({
   inject: vi.fn(),
   kill: vi.fn(),
   pipe: vi.fn(),
+});
+
+const runMainWithWorkPlanMocks = async (
+  args: string[],
+  options?: { planContent?: string },
+) => {
+  const planPath = join(tempDir, "plan.md");
+  await writeFile(planPath, options?.planContent ?? MINIMAL_PLAN);
+  const createContainer = vi.fn(() => ({
+    resolve: vi.fn(() => ({
+      execute: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+    })),
+  }));
+
+  vi.resetModules();
+  vi.doMock("../src/composition-root.js", () => ({
+    createContainer,
+  }));
+  vi.doMock("#infrastructure/git/repo-check.js", () => ({
+    assertGitRepo: vi.fn().mockResolvedValue(undefined),
+  }));
+  vi.doMock("#infrastructure/config/orchrc.js", () => ({
+    loadAndResolveOrchrConfig: vi.fn(() => ({
+      skills: {
+        tdd: { enabled: true, value: "tdd skill" },
+        review: { enabled: true, value: "review skill" },
+        verify: { enabled: true, value: "verify skill" },
+        gap: { disabled: true },
+        plan: { disabled: true },
+      },
+      config: {},
+      rules: { tdd: undefined, review: undefined },
+      agents: {},
+    })),
+    resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
+    buildOrchrSummary: vi.fn(() => "summary"),
+  }));
+  vi.doMock("#domain/agent-config.js", async () => {
+    const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
+    return {
+      ...actual,
+      resolveAllAgentConfigs: vi.fn(() => actual.AGENT_DEFAULTS),
+    };
+  });
+  vi.doMock("#infrastructure/fingerprint.js", () => ({
+    runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+  }));
+  vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
+    parsePlan: vi.fn().mockResolvedValue([
+      {
+        name: "Test",
+        slices: [{
+          number: 1,
+          title: "Slice 1",
+          content: "content",
+          why: "why",
+          files: [{ path: "src/s1.ts", action: "new" }],
+          details: "details",
+          tests: "tests",
+        }],
+      },
+    ]),
+  }));
+  vi.doMock("#infrastructure/git/worktree.js", () => ({
+    checkWorktreeResume: vi.fn().mockResolvedValue({ ok: true }),
+    runCleanup: vi.fn(),
+  }));
+  vi.doMock("#infrastructure/git/worktree-setup.js", () => ({
+    resolveWorktree: vi.fn().mockResolvedValue({
+      cwd: tempDir,
+      worktreeInfo: null,
+      skipStash: true,
+    }),
+  }));
+  vi.doMock("#infrastructure/git/git.js", () => ({
+    getStatus: vi.fn().mockResolvedValue(""),
+    stashBackup: vi.fn().mockResolvedValue(false),
+  }));
+  vi.doMock("#ui/hud.js", () => ({
+    createHud: vi.fn(() => ({
+      update: vi.fn(),
+      wrapLog: vi.fn((logger: (...args: unknown[]) => void) => logger),
+      teardown: vi.fn(),
+      setActivity: vi.fn(),
+      onKey: vi.fn(),
+      onInterruptSubmit: vi.fn(),
+      startPrompt: vi.fn(),
+      createWriter: vi.fn(() => () => {}),
+      setSkipping: vi.fn(),
+    })),
+  }));
+  vi.doMock("#ui/display.js", async () => {
+    const actual = await vi.importActual<typeof import("#ui/display.js")>("#ui/display.js");
+    return {
+      ...actual,
+      logSection: vi.fn(),
+      printStartupBanner: vi.fn(),
+      formatPlanSummary: vi.fn(),
+    };
+  });
+
+  const exit = vi.fn();
+  const previousArgv = process.argv;
+  const previousCwd = process.cwd();
+  process.argv = [
+    "node",
+    "main.ts",
+    "--work",
+    planPath,
+    "--skip-fingerprint",
+    "--no-interaction",
+    ...args,
+  ];
+  process.chdir(tempDir);
+
+  try {
+    const { main } = await import("../src/main.js");
+    await main({
+      registryPath: join(tempDir, "registry", "runs.json"),
+      onSignal: vi.fn(() => process),
+      exit,
+    });
+  } finally {
+    process.argv = previousArgv;
+    process.chdir(previousCwd);
+    vi.doUnmock("../src/composition-root.js");
+    vi.doUnmock("#infrastructure/git/repo-check.js");
+    vi.doUnmock("#infrastructure/config/orchrc.js");
+    vi.doUnmock("#domain/agent-config.js");
+    vi.doUnmock("#infrastructure/fingerprint.js");
+    vi.doUnmock("#infrastructure/plan/plan-parser.js");
+    vi.doUnmock("#infrastructure/git/worktree.js");
+    vi.doUnmock("#infrastructure/git/worktree-setup.js");
+    vi.doUnmock("#infrastructure/git/git.js");
+    vi.doUnmock("#ui/hud.js");
+    vi.doUnmock("#ui/display.js");
+    vi.resetModules();
+  }
+
+  return { createContainer, exit, planPath };
+};
+
+const runMainWithInventoryPlanMocks = async (options?: {
+  args?: string[];
+  requestTriageResult?: { mode: "direct" | "grouped" | "sliced"; reason: string };
+  requestTriageText?: string;
+  requestTriageResultText?: string;
+  requestTriageSendError?: Error;
+  parsedRequestTriageResult?: { mode: "direct" | "grouped" | "sliced"; reason: string };
+  inputAlreadyPlan?: boolean;
+  inventoryContent?: string;
+  generatedPlanId?: string;
+}) => {
+  const inventoryPath = join(tempDir, "inventory.md");
+  await writeFile(
+    inventoryPath,
+    options?.inventoryContent ?? "# Feature Inventory\n\n- Add authentication\n",
+  );
+
+  const generatedPlanPath = join(tempDir, ".orch", "plan-generated.json");
+  await mkdir(join(tempDir, ".orch"), { recursive: true });
+  await writeFile(generatedPlanPath, JSON.stringify({
+    groups: [
+      {
+        name: "Generated",
+        slices: [
+          {
+            number: 1,
+            title: "Slice 1",
+            why: "why",
+            files: [{ path: "src/s1.ts", action: "new" }],
+            details: "details",
+            tests: "tests",
+          },
+        ],
+      },
+    ],
+  }));
+
+  const execute = vi.fn().mockResolvedValue(undefined);
+  const logSection = vi.fn();
+  const createContainer = vi.fn(() => ({
+    resolve: vi.fn(() => ({
+      execute,
+      dispose: vi.fn(),
+    })),
+  }));
+  const doGeneratePlan = vi.fn().mockResolvedValue(generatedPlanPath);
+  const generatePlanId = vi.fn(() => options?.generatedPlanId ?? "direct01");
+  const triageAgent = {
+    send: options?.requestTriageSendError === undefined
+      ? vi.fn().mockResolvedValue({
+          assistantText: options?.requestTriageText ?? JSON.stringify(
+            options?.requestTriageResult ?? {
+              mode: "direct" as const,
+              reason: "bounded local change",
+            },
+          ),
+          resultText: options?.requestTriageResultText ?? "",
+        })
+      : vi.fn().mockRejectedValue(options.requestTriageSendError),
+    kill: vi.fn(),
+  };
+  const requestTriageSpawnerFactory = vi.fn(() => () => {
+    return triageAgent;
+  });
+  const buildRequestTriagePrompt = vi.fn(() => '{"mode":"direct","reason":"bounded local change"}');
+  const parseRequestTriageResult = vi.fn((text: string) =>
+    options?.parsedRequestTriageResult ?? JSON.parse(text)
+  );
+  const hudLogs: string[] = [];
+
+  vi.resetModules();
+  vi.doMock("../src/composition-root.js", () => ({
+    createContainer,
+  }));
+  vi.doMock("#infrastructure/git/repo-check.js", () => ({
+    assertGitRepo: vi.fn().mockResolvedValue(undefined),
+  }));
+  vi.doMock("#infrastructure/config/orchrc.js", () => ({
+    loadAndResolveOrchrConfig: vi.fn(() => ({
+      skills: {
+        tdd: { enabled: true, value: "tdd skill" },
+        review: { enabled: true, value: "review skill" },
+        verify: { enabled: true, value: "verify skill" },
+        gap: { disabled: true },
+        plan: { disabled: false },
+      },
+      config: {},
+      rules: { tdd: undefined, review: undefined },
+      agents: {},
+    })),
+    resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
+    buildOrchrSummary: vi.fn(() => "summary"),
+  }));
+  vi.doMock("#domain/agent-config.js", async () => {
+    const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
+    return {
+      ...actual,
+      resolveAllAgentConfigs: vi.fn(() => actual.AGENT_DEFAULTS),
+    };
+  });
+  vi.doMock("#infrastructure/fingerprint.js", () => ({
+    runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+  }));
+  vi.doMock("#infrastructure/plan/plan-generator.js", async () => {
+    const actual =
+      await vi.importActual<typeof import("#infrastructure/plan/plan-generator.js")>(
+        "#infrastructure/plan/plan-generator.js"
+      );
+    return {
+      ...actual,
+      generatePlanId,
+      isPlanFormat: vi.fn(() => options?.inputAlreadyPlan ?? false),
+      doGeneratePlan,
+    };
+  });
+  vi.doMock("#infrastructure/request-triage.js", () => ({
+    buildRequestTriagePrompt,
+    parseRequestTriageResult,
+  }));
+  vi.doMock("#infrastructure/factories.js", async () => {
+    const actual =
+      await vi.importActual<typeof import("#infrastructure/factories.js")>(
+        "#infrastructure/factories.js"
+      );
+    return {
+      ...actual,
+      requestTriageSpawnerFactory,
+      planGeneratorSpawnerFactory: vi.fn(() => () => ({
+        send: vi.fn(),
+        kill: vi.fn(),
+      })),
+    };
+  });
+  vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
+    parsePlan: vi.fn().mockResolvedValue([
+      {
+        name: "Generated",
+        slices: [{
+          number: 1,
+          title: "Slice 1",
+          content: "content",
+          why: "why",
+          files: [{ path: "src/s1.ts", action: "new" }],
+          details: "details",
+          tests: "tests",
+        }],
+      },
+    ]),
+  }));
+  vi.doMock("#infrastructure/git/worktree.js", () => ({
+    checkWorktreeResume: vi.fn().mockResolvedValue({ ok: true }),
+    runCleanup: vi.fn(),
+  }));
+  vi.doMock("#infrastructure/git/worktree-setup.js", () => ({
+    resolveWorktree: vi.fn().mockResolvedValue({
+      cwd: tempDir,
+      worktreeInfo: null,
+      skipStash: true,
+    }),
+  }));
+  vi.doMock("#infrastructure/git/git.js", () => ({
+    getStatus: vi.fn().mockResolvedValue(""),
+    stashBackup: vi.fn().mockResolvedValue(false),
+  }));
+  vi.doMock("#ui/hud.js", () => ({
+    createHud: vi.fn(() => ({
+      update: vi.fn(),
+      wrapLog: vi.fn((_logger: (...args: unknown[]) => void) => (...args: unknown[]) => {
+        hudLogs.push(args.map(String).join(" "));
+      }),
+      teardown: vi.fn(),
+      setActivity: vi.fn(),
+      onKey: vi.fn(),
+      onInterruptSubmit: vi.fn(),
+      startPrompt: vi.fn(),
+      createWriter: vi.fn(() => (text: string) => {
+        hudLogs.push(text);
+      }),
+      setSkipping: vi.fn(),
+    })),
+  }));
+  vi.doMock("#ui/display.js", async () => {
+    const actual = await vi.importActual<typeof import("#ui/display.js")>("#ui/display.js");
+    return {
+      ...actual,
+      logSection,
+      printStartupBanner: vi.fn(),
+      formatPlanSummary: vi.fn(),
+    };
+  });
+
+  const exit = vi.fn();
+  const registryPath = join(tempDir, "registry", "runs.json");
+  const previousArgv = process.argv;
+  const previousCwd = process.cwd();
+  process.argv = [
+    "node",
+    "main.ts",
+    "--plan",
+    inventoryPath,
+    "--skip-fingerprint",
+    "--no-interaction",
+    ...(options?.args ?? []),
+  ];
+  process.chdir(tempDir);
+
+  try {
+    const { main } = await import("../src/main.js");
+    await main({
+      registryPath,
+      onSignal: vi.fn(() => process),
+      exit,
+    });
+  } finally {
+    process.argv = previousArgv;
+    process.chdir(previousCwd);
+    vi.doUnmock("../src/composition-root.js");
+    vi.doUnmock("#infrastructure/git/repo-check.js");
+    vi.doUnmock("#infrastructure/config/orchrc.js");
+    vi.doUnmock("#domain/agent-config.js");
+    vi.doUnmock("#infrastructure/fingerprint.js");
+    vi.doUnmock("#infrastructure/plan/plan-generator.js");
+    vi.doUnmock("#infrastructure/request-triage.js");
+    vi.doUnmock("#infrastructure/factories.js");
+    vi.doUnmock("#infrastructure/plan/plan-parser.js");
+    vi.doUnmock("#infrastructure/git/worktree.js");
+    vi.doUnmock("#infrastructure/git/worktree-setup.js");
+    vi.doUnmock("#infrastructure/git/git.js");
+    vi.doUnmock("#ui/hud.js");
+    vi.doUnmock("#ui/display.js");
+    vi.resetModules();
+  }
+
+  return {
+    createContainer,
+    execute,
+    doGeneratePlan,
+    generatePlanId,
+    requestTriageSpawnerFactory,
+    buildRequestTriagePrompt,
+    parseRequestTriageResult,
+    exit,
+    hudLogs,
+    inventoryPath,
+    registryPath,
+    triageAgent,
+    logSection,
+  };
+};
+
+describe("main execution preference wiring", () => {
+  it("passes auto and sliced into createContainer when no execution mode override is present", async () => {
+    const { createContainer, exit } = await runMainWithWorkPlanMocks([]);
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionPreference: "auto",
+        executionMode: "sliced",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("uses grouped execution mode from plan metadata for --work in auto mode", async () => {
+    const { createContainer, exit } = await runMainWithWorkPlanMocks([], {
+      planContent: JSON.stringify({
+        executionMode: "grouped",
+        groups: [
+          {
+            name: "Test",
+            slices: [
+              {
+                number: 1,
+                title: "Slice 1",
+                why: "why",
+                files: [{ path: "src/s1.ts", action: "new" }],
+                details: "details",
+                tests: "tests",
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionPreference: "auto",
+        executionMode: "grouped",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("fails fast for mutually exclusive work execution mode flags", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exit = vi.fn();
+    const previousArgv = process.argv;
+    process.argv = ["node", "main.ts", "--work", "plan.md", "--quick", "--grouped"];
+
+    try {
+      vi.resetModules();
+      const { main } = await import("../src/main.js");
+      await main({ exit });
+    } finally {
+      process.argv = previousArgv;
+      vi.resetModules();
+    }
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/mutually exclusive.*--quick, --grouped.*--quick, --grouped, or --long/i),
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+    errorSpy.mockRestore();
+  });
+
+  it("fails fast for mutually exclusive plan execution mode flags", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exit = vi.fn();
+    const previousArgv = process.argv;
+    process.argv = ["node", "main.ts", "--plan", "inventory.md", "--quick", "--long"];
+
+    try {
+      vi.resetModules();
+      const { main } = await import("../src/main.js");
+      await main({ exit });
+    } finally {
+      process.argv = previousArgv;
+      vi.resetModules();
+    }
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/mutually exclusive.*--quick, --long.*--quick, --grouped, or --long/i),
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+    errorSpy.mockRestore();
+  });
+
+  it("uses direct bootstrap for --plan inventory --quick without triage or plan generation", async () => {
+    const {
+      createContainer,
+      execute,
+      doGeneratePlan,
+      requestTriageSpawnerFactory,
+      buildRequestTriagePrompt,
+      parseRequestTriageResult,
+      exit,
+      inventoryPath,
+    } = await runMainWithInventoryPlanMocks({
+      args: ["--quick"],
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(requestTriageSpawnerFactory).not.toHaveBeenCalled();
+    expect(buildRequestTriagePrompt).not.toHaveBeenCalled();
+    expect(parseRequestTriageResult).not.toHaveBeenCalled();
+    expect(doGeneratePlan).not.toHaveBeenCalled();
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        planPath: inventoryPath,
+        planContent: "# Feature Inventory\n\n- Add authentication\n",
+        brief: "brief text",
+        executionPreference: "quick",
+        executionMode: "direct",
+        planDisabled: true,
+      }),
+      expect.any(Object),
+    );
+    expect(execute).toHaveBeenCalledWith([
+      expect.objectContaining({
+        name: "Direct",
+        slices: [
+          expect.objectContaining({
+            number: 1,
+            title: "Direct request",
+            content: "# Feature Inventory\n\n- Add authentication\n",
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it("uses a fresh generated plan identity for direct inventory state instead of hashing the inventory path", async () => {
+    const { createContainer, inventoryPath, generatePlanId } = await runMainWithInventoryPlanMocks({
+      args: ["--quick"],
+      generatedPlanId: "direct42",
+    });
+
+    const deterministicPlanId = resolvePlanId(inventoryPath);
+    const [config] = createContainer.mock.calls[0] ?? [];
+
+    expect(generatePlanId).toHaveBeenCalledTimes(1);
+    expect(config.stateFile).toMatch(/\.orch\/state\/plan-direct42\.json$/);
+    expect(config.logPath).toMatch(/\.orch\/logs\/plan-direct42\.log$/);
+    expect(config.stateFile).not.toMatch(new RegExp(`plan-${deterministicPlanId}\\.json$`));
+  });
+
+  it.each([
+    { flag: "--grouped", executionPreference: "grouped" as const, executionMode: "grouped" as const },
+    { flag: "--long", executionPreference: "long" as const, executionMode: "sliced" as const },
+  ])(
+    "keeps plan generation for inventory $flag and threads $executionMode through config",
+    async ({ flag, executionPreference, executionMode }) => {
+      const {
+        createContainer,
+        doGeneratePlan,
+        requestTriageSpawnerFactory,
+        hudLogs,
+        exit,
+      } = await runMainWithInventoryPlanMocks({
+        args: [flag],
+      });
+
+      expect(exit).not.toHaveBeenCalledWith(1);
+      expect(requestTriageSpawnerFactory).not.toHaveBeenCalled();
+      expect(doGeneratePlan).toHaveBeenCalledWith(
+        expect.any(String),
+        "brief text",
+        expect.any(String),
+        expect.any(Function),
+        expect.any(Function),
+        executionMode,
+      );
+      expect(createContainer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executionPreference,
+          executionMode,
+        }),
+        expect.any(Object),
+      );
+      expect(hudLogs.join("\n")).toContain(`Execution ${executionMode}`);
+    },
+  );
+
+  it("uses request triage for auto inventory mode and skips plan generation for direct results", async () => {
+    const {
+      createContainer,
+      doGeneratePlan,
+      requestTriageSpawnerFactory,
+      buildRequestTriagePrompt,
+      parseRequestTriageResult,
+      inventoryPath,
+      triageAgent,
+    } = await runMainWithInventoryPlanMocks({
+      requestTriageResult: { mode: "direct", reason: "bounded local change" },
+    });
+
+    expect(requestTriageSpawnerFactory).toHaveBeenCalledTimes(1);
+    expect(buildRequestTriagePrompt).toHaveBeenCalledWith("# Feature Inventory\n\n- Add authentication\n");
+    expect(parseRequestTriageResult).toHaveBeenCalledWith(
+      JSON.stringify({ mode: "direct", reason: "bounded local change" }),
+    );
+    expect(doGeneratePlan).not.toHaveBeenCalled();
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        planPath: inventoryPath,
+        executionPreference: "auto",
+        executionMode: "direct",
+      }),
+      expect.any(Object),
+    );
+    expect(triageAgent.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefers non-empty triage resultText when assistantText is empty", async () => {
+    const {
+      createContainer,
+      doGeneratePlan,
+      parseRequestTriageResult,
+      exit,
+    } = await runMainWithInventoryPlanMocks({
+      requestTriageText: "",
+      requestTriageResultText: JSON.stringify({
+        mode: "direct",
+        reason: "bounded local change",
+      }),
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(parseRequestTriageResult).toHaveBeenCalledWith(
+      JSON.stringify({ mode: "direct", reason: "bounded local change" }),
+    );
+    expect(doGeneratePlan).not.toHaveBeenCalled();
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionPreference: "auto",
+        executionMode: "direct",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("falls back to sliced planning when request triage transport fails", async () => {
+    const {
+      createContainer,
+      doGeneratePlan,
+      exit,
+      triageAgent,
+    } = await runMainWithInventoryPlanMocks({
+      requestTriageSendError: new Error("triage unavailable"),
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(doGeneratePlan).toHaveBeenCalledWith(
+      expect.any(String),
+      "brief text",
+      expect.any(String),
+      expect.any(Function),
+      expect.any(Function),
+      "sliced",
+    );
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionPreference: "auto",
+        executionMode: "sliced",
+      }),
+      expect.any(Object),
+    );
+    expect(triageAgent.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      label: "grouped triage result",
+      requestTriageResult: { mode: "grouped" as const, reason: "few coherent milestones" },
+      parsedRequestTriageResult: undefined,
+      executionMode: "grouped" as const,
+    },
+    {
+      label: "malformed triage fallback",
+      requestTriageResult: undefined,
+      requestTriageText: "not json",
+      parsedRequestTriageResult: { mode: "sliced" as const, reason: "fallback to sliced" },
+      executionMode: "sliced" as const,
+    },
+  ])(
+    "keeps plan generation for auto inventory mode on $label",
+    async ({ requestTriageResult, requestTriageText, parsedRequestTriageResult, executionMode }) => {
+      const { createContainer, doGeneratePlan } = await runMainWithInventoryPlanMocks({
+        requestTriageResult,
+        requestTriageText,
+        parsedRequestTriageResult,
+      });
+
+      expect(doGeneratePlan).toHaveBeenCalledWith(
+        expect.any(String),
+        "brief text",
+        expect.any(String),
+        expect.any(Function),
+        expect.any(Function),
+        executionMode,
+      );
+      expect(createContainer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executionPreference: "auto",
+          executionMode,
+        }),
+        expect.any(Object),
+      );
+    },
+  );
+
+  it("surfaces the grouped triage summary in operator output before execution starts", async () => {
+    const { hudLogs } = await runMainWithInventoryPlanMocks({
+      requestTriageResult: { mode: "grouped", reason: "few coherent milestones" },
+    });
+
+    expect(hudLogs.join("\n")).toContain("mode=grouped");
+  });
+
+  it("registers a parseable direct artifact with full slice metadata", async () => {
+    const {
+      inventoryPath,
+      registryPath,
+    } = await runMainWithInventoryPlanMocks({
+      args: ["--quick"],
+      generatedPlanId: "direct42",
+    });
+    const { readRegistry } = await import("#infrastructure/registry/run-registry.js");
+    const { parsePlan } = await import("#infrastructure/plan/plan-parser.js");
+
+    const entries = await readRegistry(registryPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.planPath).toMatch(/\.orch\/plan-direct42\.json$/);
+
+    const groups = await parsePlan(entries[0]!.planPath);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.name).toBe("Direct");
+    expect(groups[0]?.slices[0]).toEqual(
+      expect.objectContaining({
+        title: "Direct request",
+        why: "Direct execution was selected during bootstrap.",
+        files: [{ path: inventoryPath, action: "edit" }],
+        details: "Implement the inventory request directly without generated plan slices.",
+        tests: "Run the relevant tests and explain the coverage changes.",
+      }),
+    );
+  });
+
+  it("uses direct-specific completion copy after a successful direct inventory run", async () => {
+    const { logSection } = await runMainWithInventoryPlanMocks({
+      args: ["--quick"],
+    });
+
+    expect(logSection).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.stringContaining("Direct request complete + final review done"),
+    );
+  });
+
+  it("treats inventory input that is already a plan as plan-authoritative for execution mode", async () => {
+    const groupedPlan = JSON.stringify({
+      executionMode: "grouped",
+      groups: [
+        {
+          name: "Test",
+          slices: [
+            {
+              number: 1,
+              title: "Slice 1",
+              why: "why",
+              files: [{ path: "src/s1.ts", action: "new" }],
+              details: "details",
+              tests: "tests",
+            },
+          ],
+        },
+      ],
+    });
+    const {
+      createContainer,
+      doGeneratePlan,
+      requestTriageSpawnerFactory,
+      buildRequestTriagePrompt,
+      parseRequestTriageResult,
+      hudLogs,
+      inventoryPath,
+      exit,
+    } = await runMainWithInventoryPlanMocks({
+      inputAlreadyPlan: true,
+      inventoryContent: groupedPlan,
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(requestTriageSpawnerFactory).not.toHaveBeenCalled();
+    expect(buildRequestTriagePrompt).not.toHaveBeenCalled();
+    expect(parseRequestTriageResult).not.toHaveBeenCalled();
+    expect(doGeneratePlan).not.toHaveBeenCalled();
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        planPath: inventoryPath,
+        planContent: groupedPlan,
+        executionPreference: "auto",
+        executionMode: "grouped",
+      }),
+      expect.any(Object),
+    );
+    expect(hudLogs.join("\n")).toContain("Execution grouped");
+  });
+
+  it.each([
+    {
+      flag: "--quick",
+      planExecutionMode: "grouped",
+      expectedMessage:
+        'Loaded plan declares executionMode=grouped, so override --quick is incompatible. --work uses the plan\'s declared execution mode.',
+    },
+    {
+      flag: "--long",
+      planExecutionMode: "grouped",
+      expectedMessage:
+        'Loaded plan declares executionMode=grouped, so override --long is incompatible. --work uses the plan\'s declared execution mode.',
+    },
+    {
+      flag: "--grouped",
+      planExecutionMode: "sliced",
+      expectedMessage:
+        'Loaded plan declares executionMode=sliced, so override --grouped is incompatible. --work uses the plan\'s declared execution mode.',
+    },
+  ])(
+    "rejects incompatible override $flag when --plan input is already a plan",
+    async ({ flag, planExecutionMode, expectedMessage }) => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const groupedPlan = JSON.stringify({
+        executionMode: planExecutionMode,
+        groups: [
+          {
+            name: "Test",
+            slices: [
+              {
+                number: 1,
+                title: "Slice 1",
+                why: "why",
+                files: [{ path: "src/s1.ts", action: "new" }],
+                details: "details",
+                tests: "tests",
+              },
+            ],
+          },
+        ],
+      });
+      const {
+        createContainer,
+        doGeneratePlan,
+        requestTriageSpawnerFactory,
+        buildRequestTriagePrompt,
+        parseRequestTriageResult,
+        exit,
+      } = await runMainWithInventoryPlanMocks({
+        args: [flag],
+        inputAlreadyPlan: true,
+        inventoryContent: groupedPlan,
+      });
+
+      expect(requestTriageSpawnerFactory).not.toHaveBeenCalled();
+      expect(buildRequestTriagePrompt).not.toHaveBeenCalled();
+      expect(parseRequestTriageResult).not.toHaveBeenCalled();
+      expect(doGeneratePlan).not.toHaveBeenCalled();
+      expect(createContainer).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(expectedMessage);
+      expect(exit).toHaveBeenCalledWith(1);
+      errorSpy.mockRestore();
+    },
+  );
+
+  it("accepts a compatible --work override when it matches the loaded plan mode", async () => {
+    const groupedPlan = JSON.stringify({
+      executionMode: "grouped",
+      groups: [
+        {
+          name: "Test",
+          slices: [
+            {
+              number: 1,
+              title: "Slice 1",
+              why: "why",
+              files: [{ path: "src/s1.ts", action: "new" }],
+              details: "details",
+              tests: "tests",
+            },
+          ],
+        },
+      ],
+    });
+    const { createContainer, exit } = await runMainWithWorkPlanMocks(["--grouped"], {
+      planContent: groupedPlan,
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionPreference: "grouped",
+        executionMode: "grouped",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("errors when --work override conflicts with the loaded plan mode", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const groupedPlan = JSON.stringify({
+      executionMode: "grouped",
+      groups: [
+        {
+          name: "Test",
+          slices: [
+            {
+              number: 1,
+              title: "Slice 1",
+              why: "why",
+              files: [{ path: "src/s1.ts", action: "new" }],
+              details: "details",
+              tests: "tests",
+            },
+          ],
+        },
+      ],
+    });
+    const { createContainer, exit } = await runMainWithWorkPlanMocks(["--quick"], {
+      planContent: groupedPlan,
+    });
+
+    expect(createContainer).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Loaded plan declares executionMode=grouped, so override --quick is incompatible. --work uses the plan\'s declared execution mode.',
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+    errorSpy.mockRestore();
+  });
+
+  it.each([
+    {
+      label: "direct metadata",
+      planContent: JSON.stringify({
+        executionMode: "direct",
+        groups: [{
+          name: "Test",
+          slices: [{
+            number: 1,
+            title: "Slice 1",
+            why: "why",
+            files: [{ path: "src/s1.ts", action: "new" }],
+            details: "details",
+            tests: "tests",
+          }],
+        }],
+      }),
+      expectedMessage: "Plan metadata executionMode=direct is invalid for --work.",
+    },
+    {
+      label: "unknown metadata",
+      planContent: JSON.stringify({
+        executionMode: "bogus",
+        groups: [{
+          name: "Test",
+          slices: [{
+            number: 1,
+            title: "Slice 1",
+            why: "why",
+            files: [{ path: "src/s1.ts", action: "new" }],
+            details: "details",
+            tests: "tests",
+          }],
+        }],
+      }),
+      expectedMessage: "Invalid plan executionMode metadata: bogus.",
+    },
+  ])("rejects invalid --work $label", async ({ planContent, expectedMessage }) => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { createContainer, exit } = await runMainWithWorkPlanMocks([], { planContent });
+
+    expect(createContainer).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expectedMessage);
+    expect(exit).toHaveBeenCalledWith(1);
+    errorSpy.mockRestore();
+  });
 });
 
 describe("main log path wiring", () => {
@@ -1286,7 +2319,7 @@ describe("main log path wiring", () => {
         onKey: vi.fn(),
         onInterruptSubmit: vi.fn(),
         startPrompt: vi.fn(),
-        createWriter: vi.fn(),
+        createWriter: vi.fn(() => () => {}),
         setSkipping: vi.fn(),
       })),
     }));
@@ -1343,6 +2376,245 @@ describe("main log path wiring", () => {
       expect.any(Object),
     );
   });
+
+  it("keeps the run registered after a successful execution so the dashboard can classify it later", async () => {
+    const planPath = join(tempDir, "plan.md");
+    await writeFile(planPath, MINIMAL_PLAN);
+    const registryPath = join(tempDir, "registry", "runs.json");
+
+    const createContainer = vi.fn(() => ({
+      resolve: vi.fn(() => ({
+        execute: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      })),
+    }));
+
+    vi.resetModules();
+    vi.doMock("../src/composition-root.js", () => ({
+      createContainer,
+    }));
+    vi.doMock("#infrastructure/git/repo-check.js", () => ({
+      assertGitRepo: vi.fn().mockResolvedValue(undefined),
+    }));
+    vi.doMock("#infrastructure/config/orchrc.js", () => ({
+      loadAndResolveOrchrConfig: vi.fn(() => ({
+        skills: {
+          tdd: { enabled: true, value: "tdd skill" },
+          review: { enabled: true, value: "review skill" },
+          verify: { enabled: true, value: "verify skill" },
+          gap: { disabled: true },
+          plan: { disabled: true },
+        },
+        config: {},
+        rules: { tdd: undefined, review: undefined },
+        agents: {},
+      })),
+      resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
+      buildOrchrSummary: vi.fn(() => "summary"),
+    }));
+    vi.doMock("#domain/agent-config.js", async () => {
+      const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
+      return {
+        ...actual,
+        resolveAllAgentConfigs: vi.fn(() => actual.AGENT_DEFAULTS),
+      };
+    });
+    vi.doMock("#infrastructure/fingerprint.js", () => ({
+      runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+    }));
+    vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
+      parsePlan: vi.fn().mockResolvedValue([
+        {
+          name: "Test",
+          slices: [{
+            number: 1,
+            title: "Slice 1",
+            content: "content",
+            why: "why",
+            files: [{ path: "src/s1.ts", action: "new" }],
+            details: "details",
+            tests: "tests",
+          }],
+        },
+      ]),
+    }));
+    vi.doMock("#infrastructure/git/worktree.js", () => ({
+      checkWorktreeResume: vi.fn().mockResolvedValue({ ok: true }),
+      runCleanup: vi.fn(),
+    }));
+    vi.doMock("#infrastructure/git/worktree-setup.js", () => ({
+      resolveWorktree: vi.fn().mockResolvedValue({
+        cwd: tempDir,
+        worktreeInfo: null,
+        skipStash: true,
+      }),
+    }));
+    vi.doMock("#infrastructure/git/git.js", () => ({
+      getStatus: vi.fn().mockResolvedValue(""),
+      stashBackup: vi.fn().mockResolvedValue(false),
+    }));
+    vi.doMock("#ui/hud.js", () => ({
+      createHud: vi.fn(() => ({
+        update: vi.fn(),
+        wrapLog: vi.fn((logger: (...args: unknown[]) => void) => logger),
+        teardown: vi.fn(),
+        setActivity: vi.fn(),
+        onKey: vi.fn(),
+        onInterruptSubmit: vi.fn(),
+        startPrompt: vi.fn(),
+        createWriter: vi.fn(() => () => {}),
+        setSkipping: vi.fn(),
+      })),
+    }));
+    vi.doMock("#ui/display.js", async () => {
+      const actual = await vi.importActual<typeof import("#ui/display.js")>("#ui/display.js");
+      return {
+        ...actual,
+        logSection: vi.fn(),
+        printStartupBanner: vi.fn(),
+        formatPlanSummary: vi.fn(),
+      };
+    });
+
+    const previousArgv = process.argv;
+    const previousCwd = process.cwd();
+    process.argv = [
+      "node",
+      "main.ts",
+      "--work",
+      planPath,
+      "--skip-fingerprint",
+      "--no-interaction",
+    ];
+    process.chdir(tempDir);
+
+    try {
+      const { main } = await import("../src/main.js");
+      await main({
+        registryPath,
+        onSignal: vi.fn(() => process),
+        exit: vi.fn(),
+      });
+    } finally {
+      process.argv = previousArgv;
+      process.chdir(previousCwd);
+      vi.doUnmock("../src/composition-root.js");
+      vi.doUnmock("#infrastructure/git/repo-check.js");
+      vi.doUnmock("#infrastructure/config/orchrc.js");
+      vi.doUnmock("#domain/agent-config.js");
+      vi.doUnmock("#infrastructure/fingerprint.js");
+      vi.doUnmock("#infrastructure/plan/plan-parser.js");
+      vi.doUnmock("#infrastructure/git/worktree.js");
+      vi.doUnmock("#infrastructure/git/worktree-setup.js");
+      vi.doUnmock("#infrastructure/git/git.js");
+      vi.doUnmock("#ui/hud.js");
+      vi.doUnmock("#ui/display.js");
+      vi.resetModules();
+    }
+
+    const registryEntries = JSON.parse(await readFile(registryPath, "utf-8")) as Array<{
+      readonly planPath: string;
+      readonly statePath: string;
+    }>;
+
+    expect(registryEntries).toHaveLength(1);
+    expect(registryEntries[0]).toMatchObject({
+      planPath,
+    });
+  });
+
+  it("keeps a run registered and writes preflight state when plan parsing fails", async () => {
+    const planPath = join(tempDir, "broken-plan.json");
+    const registryPath = join(tempDir, "registry", "runs.json");
+    const orchDir = join(tempDir, ".orch");
+    const planId = resolvePlanId(planPath);
+    const statePath = statePathForPlan(orchDir, planId);
+
+    await writeFile(planPath, "{ definitely-not-json");
+
+    vi.resetModules();
+    vi.doMock("#infrastructure/git/repo-check.js", () => ({
+      assertGitRepo: vi.fn().mockResolvedValue(undefined),
+    }));
+    vi.doMock("#infrastructure/config/orchrc.js", () => ({
+      loadAndResolveOrchrConfig: vi.fn(() => ({
+        skills: {
+          tdd: { enabled: true, value: "tdd skill" },
+          review: { enabled: true, value: "review skill" },
+          verify: { enabled: true, value: "verify skill" },
+          gap: { disabled: true },
+          plan: { disabled: true },
+        },
+        config: {},
+        rules: { tdd: undefined, review: undefined },
+        agents: {},
+      })),
+      resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
+      buildOrchrSummary: vi.fn(() => "summary"),
+    }));
+    vi.doMock("#domain/agent-config.js", async () => {
+      const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
+      return {
+        ...actual,
+        resolveAllAgentConfigs: vi.fn(() => actual.AGENT_DEFAULTS),
+      };
+    });
+    vi.doMock("#infrastructure/fingerprint.js", () => ({
+      runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+    }));
+    vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
+      parsePlan: vi.fn().mockRejectedValue(new Error("Invalid plan")),
+    }));
+
+    const previousArgv = process.argv;
+    const previousCwd = process.cwd();
+    process.argv = [
+      "node",
+      "main.ts",
+      "--work",
+      planPath,
+      "--skip-fingerprint",
+      "--no-interaction",
+    ];
+    process.chdir(tempDir);
+
+    try {
+      const { main } = await import("../src/main.js");
+      await expect(
+        main({
+          registryPath,
+          onSignal: vi.fn(() => process),
+          exit: vi.fn(),
+        }),
+      ).rejects.toThrow("Invalid plan");
+    } finally {
+      process.argv = previousArgv;
+      process.chdir(previousCwd);
+      vi.doUnmock("#infrastructure/git/repo-check.js");
+      vi.doUnmock("#infrastructure/config/orchrc.js");
+      vi.doUnmock("#domain/agent-config.js");
+      vi.doUnmock("#infrastructure/fingerprint.js");
+      vi.doUnmock("#infrastructure/plan/plan-parser.js");
+      vi.resetModules();
+    }
+
+    const registryEntries = JSON.parse(await readFile(registryPath, "utf-8")) as Array<{
+      readonly planPath: string;
+      readonly statePath: string;
+    }>;
+    expect(registryEntries).toHaveLength(1);
+    expect(registryEntries[0]).toMatchObject({
+      planPath,
+      statePath: expect.stringMatching(new RegExp(`${planId}\\.json$`)),
+    });
+
+    const state = JSON.parse(await readFile(statePath, "utf-8")) as {
+      readonly startedAt?: string;
+      readonly currentPhase?: string;
+    };
+    expect(state.startedAt).toEqual(expect.any(String));
+    expect(state.currentPhase).toBe("plan");
+  });
 });
 
 describe("composition root integration", () => {
@@ -1359,7 +2631,7 @@ describe("composition root integration", () => {
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
       wrapLog: vi.fn().mockReturnValue(vi.fn()),
-      createWriter: vi.fn(),
+      createWriter: vi.fn(() => () => {}),
       setSkipping: vi.fn(),
     } as any;
 
@@ -1373,7 +2645,19 @@ describe("composition root integration", () => {
     const verifyAgent = {
       ...makeTestAgent(),
       send: vi.fn().mockResolvedValue(makeTestResult({
-        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+        assistantText: `### VERIFY_JSON
+\`\`\`json
+${JSON.stringify({
+  status: "PASS",
+  checks: [{ check: "npx vitest run", status: "PASS" }],
+  sliceLocalFailures: [],
+  outOfScopeFailures: [],
+  preExistingFailures: [],
+  runnerIssue: null,
+  retryable: false,
+  summary: "Verification passed.",
+}, null, 2)}
+\`\`\``,
       })),
     };
     (orch as any).agents = {
@@ -1432,7 +2716,7 @@ describe("composition root integration", () => {
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
       wrapLog: vi.fn().mockReturnValue(vi.fn()),
-      createWriter: vi.fn(),
+      createWriter: vi.fn(() => () => {}),
       setSkipping: vi.fn(),
     } as any;
 
@@ -1460,7 +2744,7 @@ describe("composition root integration", () => {
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
       wrapLog: vi.fn().mockReturnValue(vi.fn()),
-      createWriter: vi.fn(),
+      createWriter: vi.fn(() => () => {}),
       setSkipping: vi.fn(),
     } as any;
 
@@ -1499,7 +2783,7 @@ describe("composition root integration", () => {
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
       wrapLog: vi.fn().mockReturnValue(vi.fn()),
-      createWriter: vi.fn(),
+      createWriter: vi.fn(() => () => {}),
       setSkipping: vi.fn(),
     } as any;
 
@@ -1549,7 +2833,7 @@ describe("composition root integration", () => {
       onInterruptSubmit: vi.fn(),
       startPrompt: vi.fn(),
       wrapLog: vi.fn().mockReturnValue(vi.fn()),
-      createWriter: vi.fn(),
+      createWriter: vi.fn(() => () => {}),
       setSkipping: vi.fn(),
     } as any;
 
