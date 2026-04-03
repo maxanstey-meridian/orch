@@ -603,6 +603,61 @@ export class RunOrchestration {
     if (this.config.planDisabled) {
       this.phase = transition(this.phase, { kind: "PlanReady", planText: "" });
       this.phase = transition(this.phase, { kind: "PlanAccepted" });
+
+      if (this.config.executionMode === "direct") {
+        const directExecutePrompt = this.prompts.directExecute(sliceContent);
+        this.progressSink.logBadge("tdd", "implementing...");
+        await this.enterPhase("tdd", sliceNumber);
+        const executeResult = await this.withRetry(
+          () => this.tddAgent!.send(directExecutePrompt),
+          this.tddAgent!,
+          "tdd",
+          "direct-execute",
+        );
+
+        if (executeResult.needsInput) {
+          await this.followUp(executeResult, this.tddAgent!);
+        }
+
+        if (this.sliceSkipFlag) {
+          this.phase = { kind: "Idle" };
+          return { tddResult: executeResult, skipped: true };
+        }
+
+        const execInterrupt = this.hardInterruptPending;
+        if (execInterrupt) {
+          return { tddResult: executeResult, skipped: false, hardInterrupt: execInterrupt };
+        }
+
+        const directTestPassPrompt = this.prompts.directTestPass(sliceContent);
+        this.progressSink.logBadge("tdd", "testing...");
+        await this.enterPhase("tdd", sliceNumber);
+        const testPassResult = await this.withRetry(
+          () => this.tddAgent!.send(directTestPassPrompt),
+          this.tddAgent!,
+          "tdd",
+          "direct-test-pass",
+        );
+
+        if (testPassResult.needsInput) {
+          await this.followUp(testPassResult, this.tddAgent!);
+        }
+
+        if (this.sliceSkipFlag) {
+          this.phase = { kind: "Idle" };
+          return { tddResult: executeResult, skipped: true };
+        }
+
+        const testPassInterrupt = this.hardInterruptPending;
+        if (testPassInterrupt) {
+          return { tddResult: executeResult, skipped: false, hardInterrupt: testPassInterrupt };
+        }
+
+        this.tddIsFirst = false;
+        this.phase = transition(this.phase, { kind: "ExecutionDone" });
+        return { tddResult: executeResult, skipped: false };
+      }
+
       const prompt = this.tddIsFirst
         ? this.prompts.withBrief(this.prompts.tdd(sliceContent, undefined, sliceNumber))
         : this.prompts.tdd(sliceContent, undefined, sliceNumber);

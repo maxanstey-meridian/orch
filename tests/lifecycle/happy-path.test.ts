@@ -582,7 +582,11 @@ describe("Happy path lifecycle", () => {
       auto: true,
     });
 
-    spawner.onNextSpawn("tdd", okResult({ assistantText: "slice 1 done" }));
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "direct request implemented" }),
+      okResult({ assistantText: "direct mandatory test pass complete" }),
+    );
     spawner.onNextSpawn("review");
 
     await uc.execute([makeGroup("G1", [makeSlice(1)])]);
@@ -590,5 +594,8 @@ describe("Happy path lifecycle", () => {
     expect(hud.logs.map(stripAnsi)).toContain(formatExecutionModeSummary("direct"));
     expect(spawner.agentsForRole("plan")).toHaveLength(0);
     expect(spawner.agentsForRole("tdd")[0]?.sentPrompts.some((prompt) => prompt.includes("[PLAN:"))).toBe(false);
+    expect(spawner.agentsForRole("tdd")[0]?.sentPrompts).toHaveLength(2);
+    expect(spawner.agentsForRole("tdd")[0]?.sentPrompts[0]).toContain("[DIRECT]");
+    expect(spawner.agentsForRole("tdd")[0]?.sentPrompts[1]).toContain("[DIRECT_TEST_PASS]");
   });
 });
