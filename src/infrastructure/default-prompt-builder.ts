@@ -28,12 +28,28 @@ export class DefaultPromptBuilder extends PromptBuilder {
     super();
   }
 
+  private buildSliceTddPrompt(
+    sliceContent: string,
+    fixInstructions?: string,
+    sliceNumber?: number,
+  ): string {
+    return buildTddPrompt(sliceContent, fixInstructions, this.planContent, sliceNumber);
+  }
+
+  private buildSliceCompletenessPrompt(
+    sliceContent: string,
+    baseSha: string,
+    sliceNumber: number,
+  ): string {
+    return buildCompletenessPrompt(sliceContent, baseSha, this.planContent, sliceNumber);
+  }
+
   plan(sliceContent: string, sliceNumber: number): string {
     return _withBrief(buildPlanPrompt(sliceContent, this.planContent, sliceNumber), this.brief);
   }
 
   tdd(sliceContent: string, fixInstructions?: string, sliceNumber?: number): string {
-    return buildTddPrompt(sliceContent, fixInstructions, this.planContent, sliceNumber);
+    return this.buildSliceTddPrompt(sliceContent, fixInstructions, sliceNumber);
   }
 
   tddExecute(
@@ -102,7 +118,7 @@ ${groupContent}`;
   }
 
   completeness(sliceContent: string, baseSha: string, sliceNumber: number): string {
-    return buildCompletenessPrompt(sliceContent, baseSha, this.planContent, sliceNumber);
+    return this.buildSliceCompletenessPrompt(sliceContent, baseSha, sliceNumber);
   }
 
   groupedCompleteness(groupContent: string, baseSha: string, groupName: string): string {

@@ -55,6 +55,17 @@ describe("DefaultPromptBuilder", () => {
     );
   });
 
+  it("keeps criteria-aware fix-mode tdd prompts aligned with the stored plan context", () => {
+    const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+    const prompt = builder.tdd(SLICE_WITH_CRITERIA, "fix unmet criterion coverage", 2);
+
+    expect(prompt).toBe(
+      buildTddPrompt(SLICE_WITH_CRITERIA, "fix unmet criterion coverage", PLAN_CONTENT, 2),
+    );
+    expect(prompt).toContain(PLAN_CONTENT);
+    expect(prompt).toContain("For each criterion in the `**Criteria:**` section");
+  });
+
   describe("tddExecute", () => {
     it("firstSlice=true, no guidance: includes plan context and brief", () => {
       const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
