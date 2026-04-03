@@ -17,8 +17,7 @@ const hasCodex = (() => {
 const spawnAppServer = () =>
   spawn('codex', ['app-server'], { stdio: ['pipe', 'pipe', 'pipe'] });
 
-// describe.skipIf(!hasCodex)('CodexAgentSpawner integration (real codex binary)', () => {
-describe.skip('CodexAgentSpawner integration (real codex binary)', () => {
+describe.skipIf(!hasCodex)('CodexAgentSpawner integration (real codex binary)', () => {
   let client: CodexAppServerClient | undefined;
   let proc: ReturnType<typeof spawn> | undefined;
 
