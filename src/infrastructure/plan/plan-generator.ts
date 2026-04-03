@@ -142,16 +142,17 @@ export const generatePlan = async (
     }
 
     const requestedMode = rawPlan.executionMode;
-    if (requestedMode !== undefined && requestedMode !== targetExecutionMode) {
+    if (requestedMode === undefined) {
+      throw new Error("Generated plan missing required executionMode metadata");
+    }
+
+    if (requestedMode !== targetExecutionMode) {
       throw new Error(
         `Generated plan declared executionMode "${String(requestedMode)}" but "${targetExecutionMode}" was requested`,
       );
     }
 
-    planDocument = PlanSchema.parse({
-      ...rawPlan,
-      executionMode: targetExecutionMode,
-    });
+    planDocument = PlanSchema.parse(rawPlan);
     groups = parsePlanJson(JSON.stringify(planDocument), "generated plan");
   } catch (e) {
     console.error("--- RAW AGENT OUTPUT ---");

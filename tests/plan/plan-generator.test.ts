@@ -11,6 +11,7 @@ import type { AgentResult } from "#domain/agent-types.js";
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const VALID_PLAN = JSON.stringify({
+  executionMode: "sliced",
   groups: [
     {
       name: "Auth",
@@ -29,6 +30,7 @@ const VALID_PLAN = JSON.stringify({
 });
 
 const VALID_PLAN_WITH_CONTEXT = JSON.stringify({
+  executionMode: "sliced",
   context: {
     architecture: "Vue frontend with generated API client and thin integration seams.",
     keyFiles: {
@@ -46,6 +48,24 @@ const VALID_PLAN_WITH_CONTEXT = JSON.stringify({
       name: "Auth",
       slices: [
         { number: 1, title: "User login", why: "Users need to log in.", files: [{ path: "src/auth.ts", action: "new" }], details: "Implement login flow.", tests: "Login works." },
+      ],
+    },
+  ],
+});
+
+const VALID_PLAN_WITHOUT_EXECUTION_MODE = JSON.stringify({
+  groups: [
+    {
+      name: "Auth",
+      slices: [
+        {
+          number: 1,
+          title: "User login",
+          why: "Users need to log in.",
+          files: [{ path: "src/auth.ts", action: "new" }],
+          details: "Implement login flow.",
+          tests: "Login works.",
+        },
       ],
     },
   ],
@@ -374,7 +394,7 @@ describe("generatePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GROUPED_PLAN);
 
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir, "grouped");
 
@@ -428,6 +448,17 @@ describe("generatePlan", () => {
     expect(result.groups[0].description).toBe(
       "Establish grouped execution semantics and keep boundary deliverables explicit.",
     );
+  });
+
+  it("rejects generated plans that omit required executionMode metadata", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+
+    await expect(
+      generatePlan(inventoryPath, "", mockAgent(VALID_PLAN_WITHOUT_EXECUTION_MODE), outputDir),
+    ).rejects.toThrow("missing required executionMode metadata");
   });
 
   it("preserves optional top-level context when the generated plan includes it", async () => {
@@ -747,7 +778,7 @@ describe("doGeneratePlan", () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GROUPED_PLAN);
     const log = () => {};
 
     const planPath = await doGeneratePlan(
