@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { randomUUID } from "crypto";
 import { existsSync, readFileSync, mkdirSync, watch, writeFileSync } from "fs";
-import { mkdir, readFile, rm, stat, writeFile } from "fs/promises";
-import { basename, dirname, join, resolve } from "path";
+import { readFile } from "fs/promises";
+import { basename, dirname, resolve } from "path";
 import { resolveAllAgentConfigs } from "#domain/agent-config.js";
 import type { ExecutionMode, ExecutionPreference, OrchestratorConfig } from "#domain/config.js";
 import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
@@ -47,7 +47,11 @@ import {
   readQueue,
   removeFromQueue,
 } from "#infrastructure/queue/queue-store.js";
-import { defaultRegistryPath, registerRun } from "#infrastructure/registry/run-registry.js";
+import {
+  defaultRegistryPath,
+  registerRun,
+  withRegistryLock,
+} from "#infrastructure/registry/run-registry.js";
 import {
   buildRequestTriagePrompt,
   parseRequestTriageResult,
@@ -72,6 +76,8 @@ import { createHud } from "#ui/hud.js";
 import { runInit, profileToMarkdown } from "#ui/init.js";
 import { createContainer } from "./composition-root.js";
 
+export { withRegistryLock } from "#infrastructure/registry/run-registry.js";
+
 let log: (...args: unknown[]) => void = (...args: unknown[]) => console.log(...args);
 
 type MainRuntime = {
@@ -86,18 +92,8 @@ type MainRuntime = {
   exit?: (code: number) => void;
 };
 
-type RegistryLockOwner = {
-  readonly pid: number;
-  readonly acquiredAt: string;
-};
-
 const hasCode = (value: unknown): value is { readonly code: string } =>
   typeof value === "object" && value !== null && "code" in value && typeof value.code === "string";
-
-const delay = async (ms: number): Promise<void> =>
-  new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
-
-const LOCK_OWNER_FILE = "owner.json";
 const dashboardBuiltEntryPath = resolve(import.meta.dirname, "..", "dist", "src", "main.js");
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -130,104 +126,6 @@ const resolveDashboardLaunch = (
   }
 
   throw new Error("Cannot resolve a runnable orch entrypoint for dashboard queue execution.");
-};
-
-const isRegistryLockOwner = (value: unknown): value is RegistryLockOwner =>
-  isRecord(value) &&
-  typeof value.pid === "number" &&
-  Number.isInteger(value.pid) &&
-  value.pid > 0 &&
-  typeof value.acquiredAt === "string";
-
-const isProcessAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const readRegistryLockOwner = async (lockPath: string): Promise<RegistryLockOwner | undefined> => {
-  try {
-    const raw = await readFile(join(lockPath, LOCK_OWNER_FILE), "utf8");
-    const parsed: unknown = JSON.parse(raw);
-    return isRegistryLockOwner(parsed) ? parsed : undefined;
-  } catch (error) {
-    if (hasCode(error) && error.code === "ENOENT") {
-      return undefined;
-    }
-
-    return undefined;
-  }
-};
-
-const removeStaleRegistryLock = async (lockPath: string): Promise<boolean> => {
-  const owner = await readRegistryLockOwner(lockPath);
-  if (owner && !isProcessAlive(owner.pid)) {
-    await rm(lockPath, { force: true, recursive: true });
-    return true;
-  }
-
-  if (owner) {
-    return false;
-  }
-
-  try {
-    const lockStat = await stat(lockPath);
-    const ageMs = Date.now() - lockStat.mtimeMs;
-    if (ageMs < 60_000) {
-      return false;
-    }
-
-    await rm(lockPath, { force: true, recursive: true });
-    return true;
-  } catch (error) {
-    if (hasCode(error) && error.code === "ENOENT") {
-      return true;
-    }
-
-    throw error;
-  }
-};
-
-export const withRegistryLock = async <T>(
-  registryPath: string,
-  work: () => Promise<T>,
-): Promise<T> => {
-  const lockPath = `${registryPath}.lock`;
-  await mkdir(dirname(registryPath), { recursive: true });
-
-  for (;;) {
-    try {
-      await mkdir(lockPath);
-      await writeFile(
-        join(lockPath, LOCK_OWNER_FILE),
-        JSON.stringify({
-          pid: process.pid,
-          acquiredAt: new Date().toISOString(),
-        }),
-      );
-      break;
-    } catch (error) {
-      if (hasCode(error) && error.code === "EEXIST") {
-        if (await removeStaleRegistryLock(lockPath)) {
-          continue;
-        }
-
-        await delay(5);
-        continue;
-      }
-
-      throw error;
-    }
-  }
-
-  try {
-    return await work();
-  } finally {
-    await rm(lockPath, { force: true, recursive: true });
-  }
 };
 
 const printLines = (lines: readonly string[]): void => {

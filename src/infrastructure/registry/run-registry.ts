@@ -1,13 +1,34 @@
-import { mkdir, readFile, rm, writeFile } from "fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import type { RunEntry } from "#domain/registry.js";
+
+type RegistryLockOwner = {
+  readonly pid: number;
+  readonly acquiredAt: string;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
 const hasCode = (value: unknown): value is { readonly code: string } =>
   isRecord(value) && typeof value.code === "string";
+
+const isRegistryLockOwner = (value: unknown): value is RegistryLockOwner =>
+  isRecord(value) &&
+  typeof value.pid === "number" &&
+  Number.isInteger(value.pid) &&
+  value.pid > 0 &&
+  typeof value.acquiredAt === "string";
+
+const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const isRunEntry = (value: unknown): value is RunEntry => {
   if (!isRecord(value)) {
@@ -92,18 +113,36 @@ const delay = async (ms: number): Promise<void> =>
     setTimeout(resolvePromise, ms);
   });
 
-const removeStaleRegistryLock = async (lockPath: string): Promise<boolean> => {
+const readRegistryLockOwner = async (lockPath: string): Promise<RegistryLockOwner | undefined> => {
   try {
-    const raw = await readFile(join(lockPath, LOCK_OWNER_FILE), "utf8").catch(() => "");
-    const parsed = raw ? (JSON.parse(raw) as { pid?: unknown }) : {};
-    const pid = typeof parsed.pid === "number" ? parsed.pid : undefined;
-    if (pid !== undefined) {
-      try {
-        process.kill(pid, 0);
-        return false;
-      } catch {
-        // owner is gone; remove stale lock below
-      }
+    const raw = await readFile(join(lockPath, LOCK_OWNER_FILE), "utf8");
+    const parsed: unknown = JSON.parse(raw);
+    return isRegistryLockOwner(parsed) ? parsed : undefined;
+  } catch (error) {
+    if (hasCode(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    return undefined;
+  }
+};
+
+const removeStaleRegistryLock = async (lockPath: string): Promise<boolean> => {
+  const owner = await readRegistryLockOwner(lockPath);
+  if (owner && !isProcessAlive(owner.pid)) {
+    await rm(lockPath, { force: true, recursive: true });
+    return true;
+  }
+
+  if (owner) {
+    return false;
+  }
+
+  try {
+    const lockStat = await stat(lockPath);
+    const ageMs = Date.now() - lockStat.mtimeMs;
+    if (ageMs < 60_000) {
+      return false;
     }
 
     await rm(lockPath, { force: true, recursive: true });

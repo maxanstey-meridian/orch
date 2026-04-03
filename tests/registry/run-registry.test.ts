@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { homedir, tmpdir } from "os";
 import type { RunEntry } from "#domain/registry.js";
@@ -8,7 +8,9 @@ import {
   deregisterRun,
   pruneDeadEntries,
   readRegistry,
+  removeRunFromRegistry,
   registerRun,
+  withRegistryLock,
   writeRegistry,
 } from "#infrastructure/registry/run-registry.js";
 
@@ -154,5 +156,55 @@ describe("run registry", () => {
 
     const raw = await readFile(registryPath, "utf8");
     expect(raw).toBe(JSON.stringify([entry], null, 2));
+  });
+
+  it("removeRunFromRegistry waits for a fresh lock directory without owner metadata", async () => {
+    const registryPath = join(tempDir, "runs.json");
+    const lockPath = `${registryPath}.lock`;
+    const entry = makeEntry();
+    let completed = false;
+
+    await writeRegistry(registryPath, [entry]);
+    await mkdir(lockPath, { recursive: true });
+
+    const pending = removeRunFromRegistry(registryPath, entry.id).then(() => {
+      completed = true;
+    });
+
+    await new Promise((resolveDelay) => {
+      setTimeout(resolveDelay, 25);
+    });
+
+    expect(completed).toBe(false);
+    await expect(readRegistry(registryPath)).resolves.toEqual([entry]);
+
+    await rm(lockPath, { force: true, recursive: true });
+    await pending;
+
+    await expect(readRegistry(registryPath)).resolves.toEqual([]);
+  });
+
+  it("withRegistryLock serializes removal after registration on the same registry path", async () => {
+    const registryPath = join(tempDir, "runs.json");
+    const existingEntry = makeEntry({ id: "existing" });
+    const registeredEntry = makeEntry({ id: "registered", pid: 43210 });
+    let resolveStarted!: () => void;
+    const startedRegistration = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    const registration = withRegistryLock(registryPath, async () => {
+      await writeRegistry(registryPath, [existingEntry, registeredEntry]);
+      resolveStarted();
+      await new Promise((resolveDelay) => {
+        setTimeout(resolveDelay, 25);
+      });
+    });
+
+    await startedRegistration;
+
+    await removeRunFromRegistry(registryPath, existingEntry.id);
+    await registration;
+
+    await expect(readRegistry(registryPath)).resolves.toEqual([registeredEntry]);
   });
 });

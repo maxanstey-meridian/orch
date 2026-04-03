@@ -617,6 +617,13 @@ describe("registry lifecycle", () => {
     expect(secondEntered).toBe(true);
   });
 
+  it("re-exports the shared registry lock implementation from main", async () => {
+    const mainModule = await import("../../src/main.js");
+    const registryModule = await import("#infrastructure/registry/run-registry.js");
+
+    expect(mainModule.withRegistryLock).toBe(registryModule.withRegistryLock);
+  });
+
   it("releases the registry lock when the callback throws", async () => {
     const mainModule = await import("../../src/main.js");
     const withRegistryLock = (mainModule as {
