@@ -1140,7 +1140,20 @@ If anything is missing or divergent, list ALL issues. Do not stop at the first o
       this.phase = transition(this.phase, { kind: "ReviewIssues" });
       priorFindings = reviewText;
       const preFixSha = await this.git.captureRef();
-      const fixPrompt = this.prompts.tdd(unit.content, reviewText, unit.sliceNumber);
+      const fixPrompt = unit.kind === "direct"
+        ? `A code review found issues with the current direct request implementation. Address them.
+
+## Current direct request
+${unit.content}
+
+## Review findings
+${reviewText}
+
+Rules:
+- Keep fixes scoped to this direct request.
+- Do not reframe the work as a plan slice or invent future work.
+- Treat each concrete finding as an implementation obligation unless you can prove it is incorrect with code and passing tests.`
+        : this.prompts.tdd(unit.content, reviewText, unit.sliceNumber);
       this.progressSink.logBadge("tdd", "implementing...");
       await this.enterPhase("tdd", unit.sliceNumber);
       const fixResult = await this.withRetry(

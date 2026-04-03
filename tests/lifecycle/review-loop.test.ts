@@ -242,6 +242,8 @@ describe("Review loop lifecycle", () => {
     expect(tdd.sentPrompts[1]).toContain("[DIRECT_TEST_PASS]");
     expect(tdd.sentPrompts[2]).toContain("content for slice 1");
     expect(tdd.sentPrompts[2]).toContain("missing direct request assertion");
+    expect(tdd.sentPrompts[2]).toContain("Current direct request");
+    expect(tdd.sentPrompts[2]).not.toContain("## Plan Slice");
     expect(spawner.lastAgent("review").sentPrompts).toHaveLength(2);
     expect(spawner.lastAgent("completeness").sentPrompts[0]).toContain("Direct request");
     expect(spawner.lastAgent("completeness").sentPrompts[0]).not.toContain("Slice 1");
