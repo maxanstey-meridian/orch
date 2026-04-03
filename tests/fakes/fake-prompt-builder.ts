@@ -17,8 +17,20 @@ export class PassthroughPromptBuilder extends PromptBuilder {
     return `[EXEC:${sliceNumber}] ${planText}${operatorGuidance ? ` GUIDANCE: ${operatorGuidance}` : ""}`;
   }
 
+  groupedExecute(groupName: string, groupContent: string, firstGroup: boolean, operatorGuidance?: string): string {
+    return `[GROUP_EXEC:${groupName}] ${groupContent}${operatorGuidance ? ` GUIDANCE: ${operatorGuidance}` : ""}`;
+  }
+
+  groupedTestPass(groupName: string, groupContent: string): string {
+    return `[GROUP_TEST_PASS:${groupName}] ${groupContent}`;
+  }
+
   verify(baseSha: string, sliceNumber: number, fixSummary?: string): string {
     return `[VERIFY:${sliceNumber}] from=${baseSha}${fixSummary ? ` FIX: ${fixSummary}` : ""}`;
+  }
+
+  groupedVerify(baseSha: string, groupName: string, fixSummary?: string): string {
+    return `[GROUP_VERIFY:${groupName}] from=${baseSha}${fixSummary ? ` FIX: ${fixSummary}` : ""}`;
   }
 
   review(content: string, baseSha: string, priorFindings?: string): string {
@@ -27,6 +39,10 @@ export class PassthroughPromptBuilder extends PromptBuilder {
 
   completeness(sliceContent: string, baseSha: string, sliceNumber: number): string {
     return `[COMPLETENESS:${sliceNumber}] from=${baseSha}`;
+  }
+
+  groupedCompleteness(groupContent: string, baseSha: string, groupName: string): string {
+    return `[GROUP_COMPLETENESS:${groupName}] from=${baseSha}`;
   }
 
   gap(groupContent: string, baseSha: string): string {

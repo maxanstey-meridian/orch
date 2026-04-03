@@ -207,10 +207,10 @@ ${planAuthority}`;
 
 export const buildVerifyPrompt = (
   baseSha: string,
-  sliceNumber: number,
+  executionUnitLabel: string,
   fixSummary?: string,
 ): string =>
-  `Verify the changes since commit ${baseSha}. Context: TDD implementation of Slice ${sliceNumber}.
+  `Verify the changes since commit ${baseSha}. Context: TDD implementation of ${executionUnitLabel}.
 
 ${fixSummary ? `## Fix summary from the TDD bot\n${fixSummary}\n\n` : ""}## Instructions
 1. Review the changed code and run the verification commands you judge necessary.

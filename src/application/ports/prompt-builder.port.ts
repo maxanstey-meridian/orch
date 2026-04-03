@@ -9,9 +9,18 @@ export abstract class PromptBuilder {
     firstSlice: boolean,
     operatorGuidance?: string,
   ): string;
+  abstract groupedExecute(
+    groupName: string,
+    groupContent: string,
+    firstGroup: boolean,
+    operatorGuidance?: string,
+  ): string;
+  abstract groupedTestPass(groupName: string, groupContent: string): string;
   abstract verify(baseSha: string, sliceNumber: number, fixSummary?: string): string;
+  abstract groupedVerify(baseSha: string, groupName: string, fixSummary?: string): string;
   abstract review(content: string, baseSha: string, priorFindings?: string): string;
   abstract completeness(sliceContent: string, baseSha: string, sliceNumber: number): string;
+  abstract groupedCompleteness(groupContent: string, baseSha: string, groupName: string): string;
   abstract gap(groupContent: string, baseSha: string): string;
   abstract commitSweep(groupName: string): string;
   abstract finalPasses(baseSha: string): readonly FinalPass[];

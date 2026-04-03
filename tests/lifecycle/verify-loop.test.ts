@@ -15,8 +15,38 @@ const makeSlice = (n: number): Slice => ({
 
 const makeGroup = (name: string, slices: Slice[]): Group => ({ name, slices });
 
-const VERIFY_PASS = "### VERIFY_RESULT\n**Status:** PASS\n";
-const VERIFY_FAIL = "### VERIFY_RESULT\n**Status:** FAIL\n**New failures** (caused by recent changes):\n- test_foo broke\n";
+const verifyJson = (overrides?: Partial<{
+  status: "PASS" | "FAIL" | "PASS_WITH_WARNINGS";
+  checks: Array<{ check: string; status: "PASS" | "FAIL" | "WARN" | "SKIPPED" }>;
+  sliceLocalFailures: string[];
+  outOfScopeFailures: string[];
+  preExistingFailures: string[];
+  runnerIssue: string | null;
+  retryable: boolean;
+  summary: string;
+}>): string => `### VERIFY_JSON
+\`\`\`json
+${JSON.stringify({
+  status: "PASS",
+  checks: [{ check: "npx vitest run", status: "PASS" }],
+  sliceLocalFailures: [],
+  outOfScopeFailures: [],
+  preExistingFailures: [],
+  runnerIssue: null,
+  retryable: false,
+  summary: "Verification passed.",
+  ...overrides,
+}, null, 2)}
+\`\`\``;
+
+const VERIFY_PASS = verifyJson();
+const VERIFY_FAIL = verifyJson({
+  status: "FAIL",
+  checks: [{ check: "npx vitest run", status: "FAIL" }],
+  sliceLocalFailures: ["- test_foo broke"],
+  retryable: true,
+  summary: "Verification found slice-local failures.",
+});
 
 const hasPhaseSubsequence = (
   phases: readonly (string | undefined)[],
@@ -160,6 +190,7 @@ describe("Verify loop lifecycle", () => {
     });
 
     git.setHasChanges(true);
+    git.queueHasChanges(true, false);
 
     // TDD: implementation + two fix attempts
     spawner.onNextSpawn("tdd",
@@ -171,7 +202,6 @@ describe("Verify loop lifecycle", () => {
 
     // Verify: FAIL → (TDD makes no changes, operator retries) → FAIL → (TDD fixes) → PASS
     spawner.onNextSpawn("verify",
-      okResult({ assistantText: VERIFY_FAIL }),
       okResult({ assistantText: VERIFY_FAIL }),
       okResult({ assistantText: VERIFY_PASS }),
     );
@@ -231,5 +261,88 @@ describe("Verify loop lifecycle", () => {
     hud.queueAskAnswer("t");
 
     await expect(uc.execute([makeGroup("G1", [makeSlice(1)])])).rejects.toThrow(IncompleteRunError);
+  });
+
+  it("grouped mode re-sends verify failures against the current group only when slice-local failures exist", async () => {
+    const { uc, spawner, persistence, git } = createTestHarness({
+      config: {
+        executionMode: "grouped",
+        planDisabled: true,
+        gapDisabled: true,
+        reviewSkill: null,
+      },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented grouped increment" }),
+      okResult({ assistantText: "mandatory grouped test pass" }),
+      okResult({ assistantText: "fixed grouped verify issues" }),
+    );
+    spawner.onNextSpawn(
+      "verify",
+      okResult({
+        assistantText: verifyJson({
+          status: "FAIL",
+          checks: [{ check: "npx vitest run", status: "FAIL" }],
+          sliceLocalFailures: ["- grouped regression in shared boundary"],
+          retryable: true,
+          summary: "Grouped verification found slice-local failures.",
+        }),
+      }),
+      okResult({ assistantText: VERIFY_PASS }),
+    );
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "GROUP_COMPLETE" }));
+
+    await uc.execute([makeGroup("G1", [makeSlice(1), makeSlice(2)])]);
+
+    expect(persistence.current.lastCompletedSlice).toBe(2);
+    expect(spawner.lastAgent("verify").sentPrompts).toHaveLength(2);
+    expect(spawner.lastAgent("verify").sentPrompts[0]).toContain("[GROUP_VERIFY:G1]");
+    expect(spawner.lastAgent("verify").sentPrompts[1]).toContain("[GROUP_VERIFY:G1]");
+
+    const tdd = spawner.lastAgent("tdd");
+    expect(tdd.sentPrompts).toHaveLength(3);
+    expect(tdd.sentPrompts[2]).toContain("grouped regression in shared boundary");
+    expect(tdd.sentPrompts[2]).toContain("content for slice 1");
+    expect(tdd.sentPrompts[2]).toContain("content for slice 2");
+  });
+
+  it("auto mode stops cleanly when verification reports only out-of-scope failures", async () => {
+    const { uc, hud, spawner, git } = createTestHarness({
+      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented" }));
+    spawner.onNextSpawn("review");
+    spawner.onNextSpawn(
+      "verify",
+      okResult({
+        assistantText: verifyJson({
+          status: "FAIL",
+          checks: [{ check: "npx vitest run", status: "FAIL" }],
+          sliceLocalFailures: [],
+          outOfScopeFailures: ["- unrelated fixture is already broken"],
+          retryable: false,
+          summary: "Verification found only out-of-scope failures.",
+        }),
+      }),
+    );
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+
+    await expect(uc.execute([makeGroup("G1", [makeSlice(1)])])).rejects.toThrow(
+      "Slice 1 verification failed: Verification found only out-of-scope failures.",
+    );
+
+    expect(hud.askPrompts.filter((prompt) => prompt.includes("verification failed"))).toHaveLength(0);
+    expect(spawner.lastAgent("tdd").sentPrompts).toHaveLength(1);
+    expect(spawner.lastAgent("verify").sentPrompts).toHaveLength(1);
   });
 });

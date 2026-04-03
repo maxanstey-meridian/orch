@@ -2572,7 +2572,19 @@ describe("composition root integration", () => {
     const verifyAgent = {
       ...makeTestAgent(),
       send: vi.fn().mockResolvedValue(makeTestResult({
-        assistantText: "### VERIFY_RESULT\n**Status:** PASS\n",
+        assistantText: `### VERIFY_JSON
+\`\`\`json
+${JSON.stringify({
+  status: "PASS",
+  checks: [{ check: "npx vitest run", status: "PASS" }],
+  sliceLocalFailures: [],
+  outOfScopeFailures: [],
+  preExistingFailures: [],
+  runnerIssue: null,
+  retryable: false,
+  summary: "Verification passed.",
+}, null, 2)}
+\`\`\``,
       })),
     };
     (orch as any).agents = {

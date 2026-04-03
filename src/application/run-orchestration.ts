@@ -19,7 +19,7 @@ import { isAlreadyImplemented } from "#domain/transition.js";
 import { transition } from "#domain/transition.js";
 import type { TriageResult } from "#domain/triage.js";
 import { FULL_TRIAGE } from "#domain/triage.js";
-import { parseVerifyResult } from "#domain/verify.js";
+import { isVerifyPassing, parseVerifyResult, type VerifyResult } from "#domain/verify.js";
 import { buildTriagePrompt, parseTriageResult } from "#infrastructure/diff-triage.js";
 import type { AgentSpawner, AgentHandle } from "./ports/agent-spawner.port.js";
 import type { GitOps } from "./ports/git-ops.port.js";
@@ -35,6 +35,15 @@ export type PlanThenExecuteResult = {
   readonly hardInterrupt?: string;
   readonly replan?: boolean;
   readonly planText?: string;
+};
+
+type ExecutionUnit = {
+  readonly kind: "slice" | "group";
+  readonly label: string;
+  readonly content: string;
+  readonly sliceNumber: number;
+  readonly slices: readonly Slice[];
+  readonly groupName: string;
 };
 
 export class RunOrchestration {
@@ -74,6 +83,95 @@ export class RunOrchestration {
     private readonly progressSink: ProgressSink,
     private readonly logWriter: LogWriter,
   ) {}
+
+  private sliceUnit(slice: Slice, groupName: string): ExecutionUnit {
+    return {
+      kind: "slice",
+      label: `Slice ${slice.number}`,
+      content: slice.content,
+      sliceNumber: slice.number,
+      slices: [slice],
+      groupName,
+    };
+  }
+
+  private groupedUnit(group: Group): ExecutionUnit {
+    const representativeSliceNumber = group.slices[group.slices.length - 1]?.number ?? 0;
+    const groupContent = group.slices
+      .map(
+        (slice) =>
+          `### Slice ${slice.number}: ${slice.title}\n\n${slice.content}`,
+      )
+      .join("\n\n---\n\n");
+
+    return {
+      kind: "group",
+      label: `Group ${group.name}`,
+      content: groupContent,
+      sliceNumber: representativeSliceNumber,
+      slices: group.slices,
+      groupName: group.name,
+    };
+  }
+
+  private failIncompleteExecutionUnit(unit: ExecutionUnit, reason: string): never {
+    this.phase = { kind: "Idle" };
+    this.sliceSkipFlag = false;
+    throw new IncompleteRunError(`${unit.label} did not complete: ${reason}`);
+  }
+
+  private summaryPromptForUnit(unit: ExecutionUnit): string {
+    if (unit.kind === "group") {
+      return `Summarise what you just built for ${unit.label} in this format exactly:\n\n## What was built\n<1-2 sentences>\n\n## Key decisions\n<2-4 bullet points>\n\n## Files touched\n<bulleted list>\n\n## Test coverage\n<1-2 sentences>\n\nBe concrete and specific. No filler.`;
+    }
+
+    return `Summarise what you just built for Slice ${unit.sliceNumber} in this format exactly:\n\n## What was built\n<1-2 sentences>\n\n## Key decisions\n<2-4 bullet points>\n\n## Files touched\n<bulleted list>\n\n## Test coverage\n<1-2 sentences>\n\nBe concrete and specific. No filler.`;
+  }
+
+  private verifyPromptForUnit(
+    unit: ExecutionUnit,
+    verifyBaseSha: string,
+    fixSummary?: string,
+  ): string {
+    return unit.kind === "group"
+      ? this.prompts.groupedVerify(verifyBaseSha, unit.groupName, fixSummary)
+      : this.prompts.verify(verifyBaseSha, unit.sliceNumber, fixSummary);
+  }
+
+  private completenessPromptForUnit(unit: ExecutionUnit, baseSha: string): string {
+    return unit.kind === "group"
+      ? this.prompts.groupedCompleteness(unit.content, baseSha, unit.groupName)
+      : this.prompts.completeness(unit.content, baseSha, unit.sliceNumber);
+  }
+
+  private formatVerifyFailureSummary(result: VerifyResult): string {
+    const parts = [result.summary];
+
+    if (result.sliceLocalFailures.length > 0) {
+      parts.push(`Slice-local failures:\n${result.sliceLocalFailures.join("\n")}`);
+    }
+    if (result.outOfScopeFailures.length > 0) {
+      parts.push(`Out-of-scope failures:\n${result.outOfScopeFailures.join("\n")}`);
+    }
+    if (result.preExistingFailures.length > 0) {
+      parts.push(`Pre-existing failures:\n${result.preExistingFailures.join("\n")}`);
+    }
+    if (result.runnerIssue) {
+      parts.push(`Runner issue:\n${result.runnerIssue}`);
+    }
+
+    return parts.join("\n\n");
+  }
+
+  private async markExecutionUnitComplete(unit: ExecutionUnit): Promise<void> {
+    for (const slice of unit.slices) {
+      this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
+      await this.persistence.save(this.state);
+      this.logOrch(`Completed slice ${slice.number}`);
+      this.slicesCompleted++;
+    }
+    this.progressSink.updateProgress({ activeAgent: undefined, activeAgentActivity: undefined });
+  }
 
   private failIncompleteSlice(slice: Slice, reason: string): never {
     this.phase = { kind: "Idle" };
@@ -311,7 +409,6 @@ export class RunOrchestration {
           continue;
         }
 
-        // ── Slice loop ──
         this.progressSink.updateProgress({
           groupName: group.name,
           groupSliceCount: group.slices.length,
@@ -332,7 +429,21 @@ export class RunOrchestration {
         let reviewBase = groupBaseSha;
         let groupCompleted = 0;
 
-        for (const slice of group.slices) {
+        if (this.config.executionMode === "grouped") {
+          const groupedResult = await this.runGroupedExecutionUnit(group, reviewBase, groupBaseSha);
+          reviewBase = groupedResult.reviewBase;
+
+          if (groupedResult.skipped) {
+            this.failIncompleteExecutionUnit(this.groupedUnit(group), "verification or review did not complete");
+          }
+
+          groupCompleted = group.slices.length;
+          this.progressSink.updateProgress({
+            completedSlices: this.slicesCompleted,
+            groupCompleted,
+          });
+        } else {
+          for (const slice of group.slices) {
           // Reset skip state from previous slice
           this.sliceSkipFlag = false;
           this.progressSink.clearSkipping();
@@ -420,12 +531,12 @@ export class RunOrchestration {
 
           // Completeness check
           if (triage.runCompleteness) {
-            await this.completenessCheck(slice, verifyBaseSha);
+            await this.completenessCheck(this.sliceUnit(slice, group.name), verifyBaseSha);
           }
 
           // Post-TDD pipeline: verify → review → summary
-          const sliceResult = await this.runSlice(
-            slice,
+          const sliceResult = await this.runExecutionUnit(
+            this.sliceUnit(slice, group.name),
             reviewBase,
             tddResult,
             verifyBaseSha,
@@ -445,6 +556,7 @@ export class RunOrchestration {
               groupCompleted,
             });
           }
+        }
         }
 
         // Gap analysis
@@ -606,8 +718,76 @@ export class RunOrchestration {
     return { tddResult, skipped: false, planText: plan };
   }
 
-  async runSlice(
-    slice: Slice,
+  async runGroupedExecutionUnit(
+    group: Group,
+    reviewBase: string,
+    groupBaseSha: string,
+  ): Promise<{ reviewBase: string; skipped: boolean }> {
+    const unit = this.groupedUnit(group);
+    this.sliceSkipFlag = false;
+    this.progressSink.clearSkipping();
+
+    if (this.quitRequested) {
+      return { reviewBase, skipped: true };
+    }
+
+    this.progressSink.updateProgress({
+      currentSlice: { number: unit.sliceNumber },
+      completedSlices: this.slicesCompleted,
+    });
+
+    const executePrompt = this.prompts.groupedExecute(
+      unit.groupName,
+      unit.content,
+      this.tddIsFirst,
+    );
+    this.phase = { kind: "Executing", sliceNumber: unit.sliceNumber, planText: null };
+    this.progressSink.logBadge("tdd", "implementing...");
+    await this.enterPhase("tdd", unit.sliceNumber);
+    const executeResult = await this.withRetry(
+      () => this.tddAgent!.send(executePrompt),
+      this.tddAgent!,
+      "tdd",
+      "group-execute",
+    );
+    this.tddIsFirst = false;
+
+    if (executeResult.needsInput) {
+      await this.followUp(executeResult, this.tddAgent!);
+    }
+
+    if (this.sliceSkipFlag) {
+      return { reviewBase, skipped: true };
+    }
+
+    const testPassPrompt = this.prompts.groupedTestPass(unit.groupName, unit.content);
+    this.progressSink.logBadge("tdd", "testing...");
+    await this.enterPhase("tdd", unit.sliceNumber);
+    const testPassResult = await this.withRetry(
+      () => this.tddAgent!.send(testPassPrompt),
+      this.tddAgent!,
+      "tdd",
+      "group-test-pass",
+    );
+
+    if (testPassResult.needsInput) {
+      await this.followUp(testPassResult, this.tddAgent!);
+    }
+
+    this.phase = transition(this.phase, { kind: "ExecutionDone" });
+
+    await this.commitSweep(`Group ${unit.groupName}`);
+
+    const triage = await this.triageDiff(groupBaseSha);
+    if (triage.runCompleteness) {
+      await this.completenessCheck(unit, groupBaseSha);
+    }
+
+    return this.runExecutionUnit(unit, reviewBase, executeResult, groupBaseSha, triage);
+  }
+
+  async runExecutionUnit(
+    unit: ExecutionUnit,
     reviewBase: string,
     tddResult: AgentResult,
     verifyBaseSha: string,
@@ -618,10 +798,7 @@ export class RunOrchestration {
 
     if (isAlreadyImplemented(tddText, headAfterTdd, reviewBase)) {
       this.phase = { kind: "Idle" };
-      this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
-      await this.persistence.save(this.state);
-      this.logOrch(`Completed slice ${slice.number}`);
-      this.slicesCompleted++;
+      await this.markExecutionUnitComplete(unit);
       return { reviewBase, skipped: false };
     }
 
@@ -629,7 +806,7 @@ export class RunOrchestration {
     if (this.config.verifySkill === null || !triage.runVerify) {
       // verify disabled or triage skipped it
     } else {
-      const verified = await this.verify(slice, verifyBaseSha);
+      const verified = await this.verify(unit, verifyBaseSha);
       if (!verified) {
         return { reviewBase, skipped: true };
       }
@@ -644,7 +821,7 @@ export class RunOrchestration {
 
     this.state = advanceState(this.state, {
       kind: "sliceImplemented",
-      sliceNumber: slice.number,
+      sliceNumber: unit.sliceNumber,
       reviewBaseSha: verifyBaseSha,
     });
     await this.persistence.save(this.state);
@@ -653,10 +830,7 @@ export class RunOrchestration {
     const diffStats = await this.git.measureDiff(reviewBase);
     if (!shouldReview(diffStats, this.config.reviewThreshold)) {
       this.phase = transition(this.phase, { kind: "SliceComplete" });
-      this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
-      await this.persistence.save(this.state);
-      this.logOrch(`Completed slice ${slice.number}`);
-      this.slicesCompleted++;
+      await this.markExecutionUnitComplete(unit);
       return { reviewBase, skipped: false };
     }
 
@@ -665,7 +839,7 @@ export class RunOrchestration {
     }
 
     if (this.config.reviewSkill !== null && triage.runReview) {
-      await this.reviewFix(slice.content, reviewBase, slice.number);
+      await this.reviewFix(unit, reviewBase);
     }
     const newReviewBase = await this.git.captureRef();
 
@@ -676,19 +850,13 @@ export class RunOrchestration {
     this.phase = transition(this.phase, { kind: "ReviewClean" });
 
     // Slice summary
-    await this.tddAgent!.sendQuiet(
-      `Summarise what you just built for Slice ${slice.number} in this format exactly:\n\n## What was built\n<1-2 sentences>\n\n## Key decisions\n<2-4 bullet points>\n\n## Files touched\n<bulleted list>\n\n## Test coverage\n<1-2 sentences>\n\nBe concrete and specific. No filler.`,
-    );
+    await this.tddAgent!.sendQuiet(this.summaryPromptForUnit(unit));
 
-    this.state = advanceState(this.state, { kind: "sliceDone", sliceNumber: slice.number });
-    await this.persistence.save(this.state);
-    this.logOrch(`Completed slice ${slice.number}`);
-    this.slicesCompleted++;
-    this.progressSink.updateProgress({ activeAgent: undefined, activeAgentActivity: undefined });
+    await this.markExecutionUnitComplete(unit);
     return { reviewBase: newReviewBase, skipped: false };
   }
 
-  async reviewFix(content: string, baseSha: string, sliceNumber: number): Promise<void> {
+  async reviewFix(unit: ExecutionUnit, baseSha: string): Promise<void> {
     let reviewSha = baseSha;
     let priorFindings: string | undefined;
 
@@ -707,10 +875,10 @@ export class RunOrchestration {
       });
 
       const reviewPrompt = this.reviewIsFirst
-        ? this.prompts.withBrief(this.prompts.review(content, reviewSha, priorFindings))
-        : this.prompts.review(content, reviewSha, priorFindings);
+        ? this.prompts.withBrief(this.prompts.review(unit.content, reviewSha, priorFindings))
+        : this.prompts.review(unit.content, reviewSha, priorFindings);
       this.progressSink.logBadge("review", "reviewing...");
-      await this.enterPhase("review", sliceNumber);
+      await this.enterPhase("review", unit.sliceNumber);
       const reviewResult = await this.withRetry(
         () => this.reviewAgent!.send(reviewPrompt),
         this.reviewAgent!,
@@ -727,9 +895,9 @@ export class RunOrchestration {
       this.phase = transition(this.phase, { kind: "ReviewIssues" });
       priorFindings = reviewText;
       const preFixSha = await this.git.captureRef();
-      const fixPrompt = this.prompts.tdd(content, reviewText);
+      const fixPrompt = this.prompts.tdd(unit.content, reviewText, unit.sliceNumber);
       this.progressSink.logBadge("tdd", "implementing...");
-      await this.enterPhase("tdd", sliceNumber);
+      await this.enterPhase("tdd", unit.sliceNumber);
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt),
         this.tddAgent!,
@@ -750,7 +918,7 @@ export class RunOrchestration {
     }
   }
 
-  async completenessCheck(slice: Slice, baseSha: string): Promise<void> {
+  async completenessCheck(unit: ExecutionUnit, baseSha: string): Promise<void> {
     if (this.sliceSkipFlag) {
       return;
     }
@@ -758,12 +926,12 @@ export class RunOrchestration {
       return;
     }
 
-    const prompt = this.prompts.completeness(slice.content, baseSha, slice.number);
+    const prompt = this.completenessPromptForUnit(unit, baseSha);
 
     for (let cycle = 1; cycle <= this.config.maxReviewCycles; cycle++) {
       const checkAgent = this.agents.spawn("completeness", { cwd: this.config.cwd });
       this.pipeToSink(checkAgent, "completeness");
-      await this.enterPhase("verify", slice.number);
+      await this.enterPhase("verify", unit.sliceNumber);
       const result = await this.withRetry(
         () => checkAgent.send(prompt),
         checkAgent,
@@ -774,7 +942,8 @@ export class RunOrchestration {
 
       const text = result.assistantText ?? "";
       const hasMissing = text.includes("❌") || text.includes("MISSING");
-      if (text.includes("SLICE_COMPLETE") && !hasMissing) {
+      const completionSentinel = unit.kind === "group" ? "GROUP_COMPLETE" : "SLICE_COMPLETE";
+      if (text.includes(completionSentinel) && !hasMissing) {
         return;
       }
 
@@ -783,13 +952,13 @@ export class RunOrchestration {
       this.phase = transition(this.phase, { kind: "CompletenessIssues" });
 
       const fixPrompt = this.prompts.tdd(
-        slice.content,
+        unit.content,
         `A completeness check found that your implementation does not fully match the plan. Fix ALL issues below.\n\n## Completeness Findings\n${text}\n\nRules:\n- ❌ MISSING items are HARD FAILURES. The plan is the contract. Code that works but doesn't implement the plan's specified approach is NOT complete. You must implement what the plan says, not an alternative that passes tests.\n- ⚠️ DIVERGENT items mean your approach differs from the plan's intent. Change your implementation to match the plan, not the other way around.\n- If the plan says "use function X" or "call Y", your code must actually import and call X/Y. Passing tests are necessary but NOT sufficient — the plan's architectural requirements are equally binding.\n- Do NOT argue that your approach is equivalent. Do NOT skip items because tests pass without them. Implement what the plan says.`,
-        slice.number,
+        unit.sliceNumber,
       );
       const preFixSha = await this.git.captureRef();
       this.progressSink.logBadge("tdd", "implementing...");
-      await this.enterPhase("tdd", slice.number);
+      await this.enterPhase("tdd", unit.sliceNumber);
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(this.tddIsFirst ? this.prompts.withBrief(fixPrompt) : fixPrompt),
         this.tddAgent!,
@@ -805,14 +974,14 @@ export class RunOrchestration {
       this.phase = transition(this.phase, { kind: "ExecutionDone" });
 
       if (await this.git.hasChanges(preFixSha)) {
-        await this.commitSweep(`Slice ${slice.number} completeness fix`);
+        await this.commitSweep(`${unit.label} completeness fix`);
       }
     }
 
-    throw new IncompleteRunError(`Slice ${slice.number} completeness failed after retry budget`);
+    throw new IncompleteRunError(`${unit.label} completeness failed after retry budget`);
   }
 
-  async verify(slice: Slice, verifyBaseSha: string): Promise<boolean> {
+  async verify(unit: ExecutionUnit, verifyBaseSha: string): Promise<boolean> {
     this.progressSink.updateProgress({ activeAgent: "VFY", activeAgentActivity: "verifying..." });
 
     if (!this.verifyAgent) {
@@ -820,9 +989,9 @@ export class RunOrchestration {
       this.pipeToSink(this.verifyAgent, "verify");
     }
 
-    const verifyPrompt = this.prompts.verify(verifyBaseSha, slice.number);
+    const verifyPrompt = this.verifyPromptForUnit(unit, verifyBaseSha);
     this.progressSink.logBadge("verify", "verifying...");
-    await this.enterPhase("verify", slice.number);
+    await this.enterPhase("verify", unit.sliceNumber);
     const verifyResult = await this.withRetry(
       () => this.verifyAgent!.send(verifyPrompt),
       this.verifyAgent,
@@ -831,19 +1000,29 @@ export class RunOrchestration {
     );
     let parsed = parseVerifyResult(verifyResult.assistantText ?? "");
 
-    for (let cycle = 1; !parsed.passed && cycle <= this.config.maxReviewCycles; cycle++) {
+    for (let cycle = 1; !isVerifyPassing(parsed) && cycle <= this.config.maxReviewCycles; cycle++) {
       this.phase = transition(this.phase, { kind: "VerifyFailed" });
 
-      const failureContext =
-        parsed.newFailures.length > 0
-          ? parsed.newFailures.join("\n")
-          : "Verification checks failed. Run the test/lint/typecheck pipeline and fix any failures.";
+      const builderFixable = parsed.retryable && parsed.sliceLocalFailures.length > 0;
+      const failureSummary = this.formatVerifyFailureSummary(parsed);
+
+      if (!builderFixable) {
+        if (this.config.auto) {
+          throw new IncompleteRunError(`${unit.label} verification failed: ${parsed.summary}`);
+        }
+
+        const decision = await this.gate.verifyFailed(unit.label, failureSummary, false);
+        if (decision.kind === "skip") {
+          return false;
+        }
+        throw new IncompleteRunError(`${unit.label} verification failed and execution stopped`);
+      }
 
       // Send findings to TDD for fixing
-      const retryPrompt = `Verification found issues after your implementation. Fix them:\n\n${failureContext}`;
+      const retryPrompt = `Verification found issues after your implementation. Fix them in ${unit.label}.\n\n## Current ${unit.kind === "group" ? "group" : "slice"} content\n${unit.content}\n\n## Slice-local failures\n${parsed.sliceLocalFailures.join("\n")}\n\n## Verification summary\n${parsed.summary}`;
       const preFixSha = await this.git.captureRef();
       this.progressSink.logBadge("tdd", "implementing...");
-      await this.enterPhase("tdd", slice.number);
+      await this.enterPhase("tdd", unit.sliceNumber);
       const fixResult = await this.withRetry(
         () => this.tddAgent!.send(retryPrompt),
         this.tddAgent!,
@@ -856,18 +1035,22 @@ export class RunOrchestration {
 
       const tddMadeChanges = await this.git.hasChanges(preFixSha);
 
-      if (!tddMadeChanges && !this.config.auto) {
-        const failSummary =
-          parsed.newFailures.join("\n") || "Verification issues remain but TDD made no changes.";
-        const decision = await this.gate.verifyFailed(slice.number, failSummary);
-
-        if (decision.kind === "stop") {
-          throw new IncompleteRunError(
-            `Slice ${slice.number} verification failed and execution stopped`,
-          );
+      if (!tddMadeChanges) {
+        if (this.config.auto) {
+          throw new IncompleteRunError(`${unit.label} verification failed without builder changes`);
         }
+
+        const decision = await this.gate.verifyFailed(
+          unit.label,
+          `${failureSummary}\n\nBuilder made no relevant change.`,
+          true,
+        );
+
         if (decision.kind === "skip") {
           return false;
+        }
+        if (decision.kind === "stop") {
+          throw new IncompleteRunError(`${unit.label} verification failed and execution stopped`);
         }
         continue;
       }
@@ -875,36 +1058,35 @@ export class RunOrchestration {
       // Re-verify — tell the verifier what TDD fixed
       const fixSummary = fixResult.assistantText?.slice(0, 500) ?? "TDD attempted fixes.";
       this.progressSink.logBadge("verify", "verifying...");
-      await this.enterPhase("verify", slice.number);
+      await this.enterPhase("verify", unit.sliceNumber);
       const reVerifyResult = await this.withRetry(
-        () => this.verifyAgent!.send(this.prompts.verify(verifyBaseSha, slice.number, fixSummary)),
+        () => this.verifyAgent!.send(this.verifyPromptForUnit(unit, verifyBaseSha, fixSummary)),
         this.verifyAgent!,
         "verify",
         "re-verify",
       );
       parsed = parseVerifyResult(reVerifyResult.assistantText ?? "");
 
-      if (!parsed.passed && !this.config.auto) {
-        const failSummary =
-          parsed.newFailures.join("\n") || "Checks still failing after fix attempt.";
-        const decision = await this.gate.verifyFailed(slice.number, failSummary);
+      if (!isVerifyPassing(parsed) && !this.config.auto) {
+        const nextBuilderFixable = parsed.retryable && parsed.sliceLocalFailures.length > 0;
+        const decision = await this.gate.verifyFailed(
+          unit.label,
+          this.formatVerifyFailureSummary(parsed),
+          nextBuilderFixable,
+        );
 
-        if (decision.kind === "stop") {
-          throw new IncompleteRunError(
-            `Slice ${slice.number} verification failed and execution stopped`,
-          );
-        }
         if (decision.kind === "skip") {
           return false;
+        }
+        if (decision.kind === "stop") {
+          throw new IncompleteRunError(`${unit.label} verification failed and execution stopped`);
         }
         continue;
       }
     }
 
-    if (!parsed.passed) {
-      throw new IncompleteRunError(
-        `Slice ${slice.number} verification failed after retry budget`,
-      );
+    if (!isVerifyPassing(parsed)) {
+      throw new IncompleteRunError(`${unit.label} verification failed after retry budget`);
     }
 
     return true;

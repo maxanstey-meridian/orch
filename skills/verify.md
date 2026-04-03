@@ -57,24 +57,35 @@ If anything fails, determine whether it's **new** (caused by the recent changes)
 
 ## Output
 
-End your response with exactly this structure:
+End your response with:
 
+1. A short human summary of what you verified.
+2. Exactly one machine-readable block in this format:
+
+````
+### VERIFY_JSON
+```json
+{
+  "status": "PASS|FAIL|PASS_WITH_WARNINGS",
+  "checks": [
+    { "check": "<command or check name>", "status": "PASS|FAIL|WARN|SKIPPED" }
+  ],
+  "sliceLocalFailures": ["<failure caused by the current execution unit>"],
+  "outOfScopeFailures": ["<failure not owned by the current execution unit>"],
+  "preExistingFailures": ["<failure that already existed before these changes>"],
+  "runnerIssue": "<runner instability or hung process summary>" | null,
+  "retryable": true,
+  "summary": "<one concise summary sentence>"
+}
 ```
-### VERIFY_RESULT
+````
 
-**Status:** PASS | FAIL | PASS_WITH_WARNINGS
-
-**Checks run:**
-- <check>: PASS | FAIL | SKIPPED (reason)
-
-**New failures** (caused by recent changes):
-- <file:line> — <what failed>
-
-**Pre-existing failures** (already broken before these changes):
-- <description>
-
-**Scope rationale:** <why you ran what you ran>
-```
+Classification rules:
+- `sliceLocalFailures` are the only failures the builder should be asked to fix.
+- Use `outOfScopeFailures` for unrelated failures that the current execution unit does not own.
+- Use `preExistingFailures` for failures that already existed before these changes.
+- Use `runnerIssue` for unstable tooling, hung runners, or infrastructure problems.
+- `retryable` is independent from `status`; a FAIL can still be non-retryable.
 
 ## Rules
 
@@ -82,3 +93,4 @@ End your response with exactly this structure:
 - Do NOT fix code. Report only.
 - Do NOT invent commands — only run what you found in the project config.
 - Be fast. Diff, read config, run checks, report. Done.
+- Do not output prose-only success or failure. The `### VERIFY_JSON` block is mandatory.

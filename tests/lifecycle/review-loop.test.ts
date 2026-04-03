@@ -152,4 +152,45 @@ describe("Review loop lifecycle", () => {
 
     expect(persistence.current.lastCompletedSlice).toBe(1);
   });
+
+  it("grouped mode reviews the whole group once per cycle and fixes against aggregated group content", async () => {
+    const { uc, spawner, persistence, git } = createTestHarness({
+      config: { executionMode: "grouped", planDisabled: true, gapDisabled: true, verifySkill: null },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+    git.setDiffStats({ added: 50, removed: 10, total: 60 });
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented grouped increment" }),
+      okResult({ assistantText: "ran grouped mandatory test pass" }),
+      okResult({ assistantText: "fixed grouped review issues" }),
+    );
+    spawner.onNextSpawn(
+      "review",
+      okResult({ assistantText: "Found issues: missing grouped boundary assertion" }),
+      okResult({ assistantText: "REVIEW_CLEAN" }),
+    );
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "GROUP_COMPLETE" }));
+
+    await uc.execute([makeGroup("G1", [makeSlice(1), makeSlice(2)])]);
+
+    expect(persistence.current.lastCompletedSlice).toBe(2);
+    expect(
+      hasPhaseSubsequence(
+        persistence.saveHistory.map((state) => state.currentPhase),
+        ["review", "tdd", "review"],
+      ),
+    ).toBe(true);
+
+    const tdd = spawner.lastAgent("tdd");
+    expect(tdd.sentPrompts[0]).toContain("[GROUP_EXEC:G1]");
+    expect(tdd.sentPrompts[1]).toContain("[GROUP_TEST_PASS:G1]");
+    expect(tdd.sentPrompts[2]).toContain("content for slice 1");
+    expect(tdd.sentPrompts[2]).toContain("content for slice 2");
+    expect(spawner.lastAgent("review").sentPrompts).toHaveLength(2);
+    expect(spawner.lastAgent("completeness").sentPrompts[0]).toContain("[GROUP_COMPLETENESS:G1]");
+  });
 });

@@ -35,6 +35,30 @@ const hasPhaseSubsequence = (
 
 const stripAnsi = (value: string): string => value.replace(/\x1b\[[0-9;]*m/g, "");
 
+const verifyJson = (overrides?: Partial<{
+  status: "PASS" | "FAIL" | "PASS_WITH_WARNINGS";
+  checks: Array<{ check: string; status: "PASS" | "FAIL" | "WARN" | "SKIPPED" }>;
+  sliceLocalFailures: string[];
+  outOfScopeFailures: string[];
+  preExistingFailures: string[];
+  runnerIssue: string | null;
+  retryable: boolean;
+  summary: string;
+}>): string => `### VERIFY_JSON
+\`\`\`json
+${JSON.stringify({
+  status: "PASS",
+  checks: [{ check: "npx vitest run", status: "PASS" }],
+  sliceLocalFailures: [],
+  outOfScopeFailures: [],
+  preExistingFailures: [],
+  runnerIssue: null,
+  retryable: false,
+  summary: "Verification passed.",
+  ...overrides,
+}, null, 2)}
+\`\`\``;
+
 describe("Happy path lifecycle", () => {
   it("single slice completes through plan-execute-verify-review", async () => {
     const { uc, hud, spawner, persistence, git } = createTestHarness({
@@ -66,7 +90,7 @@ describe("Happy path lifecycle", () => {
 
     // Verify agent: returns PASS
     spawner.onNextSpawn("verify",
-      okResult({ assistantText: "### VERIFY_RESULT\n**Status:** PASS\n" }),
+      okResult({ assistantText: verifyJson() }),
     );
 
     // Completeness agent: returns complete
@@ -115,6 +139,44 @@ describe("Happy path lifecycle", () => {
     const tddAgents = spawner.agentsForRole("tdd");
     expect(tddAgents.length).toBe(1);
     expect(tddAgents[0].sentPrompts.length).toBe(2);
+  });
+
+  it("grouped mode runs one execute/test-pass/review/verify/completeness cadence for the whole group", async () => {
+    const { uc, spawner, persistence, git } = createTestHarness({
+      config: {
+        executionMode: "grouped",
+        planDisabled: true,
+        gapDisabled: true,
+      },
+      auto: true,
+    });
+
+    git.setHasChanges(true);
+    git.setDiffStats({ added: 50, removed: 10, total: 60 });
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented grouped unit" }),
+      okResult({ assistantText: "ran grouped mandatory test pass" }),
+    );
+    spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
+    spawner.onNextSpawn("verify", okResult({ assistantText: verifyJson() }));
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "GROUP_COMPLETE" }));
+
+    await uc.execute([makeGroup("G1", [makeSlice(1), makeSlice(2)])]);
+
+    expect(persistence.current.lastCompletedSlice).toBe(2);
+    expect(persistence.current.lastCompletedGroup).toBe("G1");
+    expect(spawner.agentsForRole("verify")).toHaveLength(1);
+    expect(spawner.agentsForRole("completeness")).toHaveLength(1);
+
+    const tdd = spawner.lastAgent("tdd");
+    expect(tdd.sentPrompts).toHaveLength(2);
+    expect(tdd.sentPrompts[0]).toContain("[GROUP_EXEC:G1]");
+    expect(tdd.sentPrompts[1]).toContain("[GROUP_TEST_PASS:G1]");
+    expect(spawner.lastAgent("verify").sentPrompts[0]).toContain("[GROUP_VERIFY:G1]");
+    expect(spawner.lastAgent("completeness").sentPrompts[0]).toContain("[GROUP_COMPLETENESS:G1]");
+    expect(spawner.lastAgent("review").sentPrompts).toHaveLength(1);
   });
 
   it("persists slice and phase progress for an active slice without mutating earlier saves", async () => {
@@ -436,7 +498,7 @@ describe("Happy path lifecycle", () => {
 
     // Verify: PASS
     spawner.onNextSpawn("verify",
-      okResult({ assistantText: "### VERIFY_RESULT\n**Status:** PASS\n" }),
+      okResult({ assistantText: verifyJson() }),
     );
 
     // Completeness

@@ -24,7 +24,11 @@ export class SilentOperatorGate implements OperatorGate {
     return { kind: "accept" };
   }
 
-  async verifyFailed(_sliceNumber: number, _summary: string): Promise<VerifyDecision> {
+  async verifyFailed(
+    _executionUnitLabel: string,
+    _summary: string,
+    _retryable: boolean,
+  ): Promise<VerifyDecision> {
     return { kind: "stop" };
   }
 
@@ -105,18 +109,27 @@ export class InkOperatorGate implements OperatorGate {
     return { kind: "accept" };
   }
 
-  async verifyFailed(sliceNumber: number, summary: string): Promise<VerifyDecision> {
+  async verifyFailed(
+    executionUnitLabel: string,
+    summary: string,
+    retryable: boolean,
+  ): Promise<VerifyDecision> {
     const answer = await this.hud.askUser(
-      `Slice ${sliceNumber} verification failed:\n${summary}\n\n(r)etry / (s)kip / s(t)op? `,
+      retryable
+        ? `${executionUnitLabel} verification failed:\n${summary}\n\n(r)etry / (s)kip / s(t)op? `
+        : `${executionUnitLabel} verification failed:\n${summary}\n\n(s)kip / s(t)op? `,
     );
     const choice = answer.trim().toLowerCase();
+    if (retryable && choice === "r") {
+      return { kind: "retry" };
+    }
     if (choice === "s") {
       return { kind: "skip" };
     }
     if (choice === "t") {
       return { kind: "stop" };
     }
-    return { kind: "retry" };
+    return retryable ? { kind: "retry" } : { kind: "stop" };
   }
 
   async creditExhausted(label: string, message: string): Promise<CreditDecision> {
