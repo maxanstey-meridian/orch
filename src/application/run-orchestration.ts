@@ -434,12 +434,24 @@ Rules:
   }
 
   private async persistRunState(): Promise<void> {
+    const modeAwareState =
+      this.config.executionMode === "direct"
+        ? {
+            ...this.state,
+            currentSlice: undefined,
+            currentGroup: undefined,
+            sliceTimings: undefined,
+            lastCompletedSlice: undefined,
+            lastCompletedGroup: undefined,
+            lastSliceImplemented: undefined,
+            reviewBaseSha: undefined,
+          }
+        : this.state;
+
     this.state = {
-      ...this.state,
+      ...modeAwareState,
       completedAt: undefined,
-      ...(this.config.executionMode === "direct"
-        ? { executionMode: this.config.executionMode }
-        : {}),
+      executionMode: this.config.executionMode,
     };
     this.state = advanceState(this.state, {
       kind: "agentSpawned",

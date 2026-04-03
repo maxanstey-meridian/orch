@@ -328,6 +328,17 @@ const resolveExecutionMode = (executionPreference: ExecutionPreference): Executi
   }
 };
 
+const executionPreferenceFlag = (executionPreference: Exclude<ExecutionPreference, "auto">): string => {
+  switch (executionPreference) {
+    case "quick":
+      return "--quick";
+    case "grouped":
+      return "--grouped";
+    case "long":
+      return "--long";
+  }
+};
+
 const readPlanExecutionMode = (planContent: string): ExecutionMode | undefined => {
   try {
     const parsed: unknown = JSON.parse(planContent);
@@ -404,13 +415,22 @@ const resolvePlannedWorkExecutionMode = (
   planContent: string,
   executionPreference: ExecutionPreference,
 ): ExecutionMode => {
-  if (executionPreference !== "auto") {
+  const planExecutionMode = readPlanExecutionMode(planContent) ?? "sliced";
+
+  if (executionPreference === "auto") {
+    return planExecutionMode;
+  }
+
+  const requestedMode = resolveExecutionMode(executionPreference);
+  if (requestedMode !== planExecutionMode) {
     throw new Error(
-      "Execution mode overrides are not supported with --work until plan metadata is available.",
+      `Loaded plan declares executionMode=${planExecutionMode}, so override ${executionPreferenceFlag(
+        executionPreference,
+      )} is incompatible. --work uses the plan's declared execution mode.`,
     );
   }
 
-  return readPlanExecutionMode(planContent) ?? "sliced";
+  return planExecutionMode;
 };
 
 const resolveInventoryExecutionMode = async (opts: {
@@ -754,11 +774,6 @@ export const main = async (runtime: MainRuntime = {}) => {
   try {
     if (workMode) {
       planPath = resolve(workPath!);
-      if (executionPreference !== "auto") {
-        throw new Error(
-          "Execution mode overrides are not supported with --work until plan metadata is available.",
-        );
-      }
       planContent = readFileSync(planPath, "utf-8");
       executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
       printExecutionModeBanner(log, executionMode);
@@ -1046,6 +1061,7 @@ export const main = async (runtime: MainRuntime = {}) => {
           printStartupBanner(log, {
             planPath,
             brief,
+            executionMode,
             auto,
             interactive,
             groupFilter,

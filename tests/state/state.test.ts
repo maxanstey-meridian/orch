@@ -30,6 +30,13 @@ describe("state", () => {
     expect(loaded).toEqual(state);
   });
 
+  it("persists grouped executionMode and loads it back", async () => {
+    const state = { executionMode: "grouped" as const };
+    await saveState(testPath, state);
+    const loaded = await loadState(testPath);
+    expect(loaded).toEqual(state);
+  });
+
   it("persists completedAt and loads it back", async () => {
     const state = { executionMode: "direct" as const, completedAt: "2026-04-10T11:00:00.000Z" };
     await saveState(testPath, state);

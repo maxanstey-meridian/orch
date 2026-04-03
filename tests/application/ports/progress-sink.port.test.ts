@@ -5,6 +5,8 @@ import type { AgentRole } from "#domain/agent-types.js";
 import type { ExecutionMode } from "#domain/config.js";
 import type { Slice } from "#domain/plan.js";
 import { InkOperatorGate, SilentOperatorGate, styleForRole } from "#ui/ink-operator-gate.js";
+import { buildStatusLine } from "#ui/hud.js";
+import type { HudState } from "#ui/hud.js";
 import { FakeHud } from "../../fakes/fake-hud.js";
 
 class TestProgressSink extends ProgressSink {
@@ -115,5 +117,82 @@ describe("verify gates", () => {
       kind: "stop",
     });
     expect(hud.askPrompts[0]).not.toContain("(r)etry");
+  });
+});
+
+describe("mode-aware HUD progress", () => {
+  const mergeHudState = (
+    updates: ReadonlyArray<Partial<HudState>>,
+  ): HudState => {
+    return updates.reduce<HudState>(
+      (state, update) => ({ ...state, ...update }),
+      {
+        totalSlices: 0,
+        completedSlices: 0,
+        startTime: Date.now() - 1_000,
+      },
+    );
+  };
+
+  it("suppresses stale slice counters after a sliced run switches to grouped mode", () => {
+    const hud = new FakeHud();
+    const sink = new (class extends ProgressSink {
+      registerInterrupts(): InterruptHandler {
+        return { onGuide: () => {}, onInterrupt: () => {}, onSkip: () => {}, onQuit: () => {} };
+      }
+      updateProgress(update: ProgressUpdate): void {
+        hud.update(update as Partial<HudState>);
+      }
+      setActivity(_summary: string): void {}
+      log(_text: string): void {}
+      logExecutionMode(executionMode: ExecutionMode): void {
+        hud.update({ executionMode } as Partial<HudState>);
+      }
+      createStreamer(_role: AgentRole): (text: string) => void {
+        return () => {};
+      }
+      logSliceIntro(_slice: Slice): void {}
+      logBadge(_role: AgentRole, _phase: string): void {}
+      clearSkipping(): void {}
+      teardown(): void {}
+    })();
+
+    sink.updateProgress({ totalSlices: 5, completedSlices: 1, currentSlice: { number: 2 } });
+    sink.logExecutionMode("grouped");
+    sink.updateProgress({ groupName: "Core", groupSliceCount: 3, groupCompleted: 1 });
+
+    const line = buildStatusLine(mergeHudState(hud.updates), 120);
+    expect(line).toContain("Group: Core");
+    expect(line).not.toContain("S2/5");
+  });
+
+  it("suppresses stale slice counters after a sliced run switches to direct mode", () => {
+    const hud = new FakeHud();
+    const sink = new (class extends ProgressSink {
+      registerInterrupts(): InterruptHandler {
+        return { onGuide: () => {}, onInterrupt: () => {}, onSkip: () => {}, onQuit: () => {} };
+      }
+      updateProgress(update: ProgressUpdate): void {
+        hud.update(update as Partial<HudState>);
+      }
+      setActivity(_summary: string): void {}
+      log(_text: string): void {}
+      logExecutionMode(executionMode: ExecutionMode): void {
+        hud.update({ executionMode } as Partial<HudState>);
+      }
+      createStreamer(_role: AgentRole): (text: string) => void {
+        return () => {};
+      }
+      logSliceIntro(_slice: Slice): void {}
+      logBadge(_role: AgentRole, _phase: string): void {}
+      clearSkipping(): void {}
+      teardown(): void {}
+    })();
+
+    sink.updateProgress({ totalSlices: 5, completedSlices: 1, currentSlice: { number: 2 } });
+    sink.logExecutionMode("direct");
+
+    const line = buildStatusLine(mergeHudState(hud.updates), 120);
+    expect(line).not.toContain("S2/5");
   });
 });

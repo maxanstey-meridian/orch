@@ -150,6 +150,7 @@ export const printExecutionModeBanner = (
 export type BannerOpts = {
   readonly planPath: string;
   readonly brief: string;
+  readonly executionMode: ExecutionMode;
   readonly auto: boolean;
   readonly interactive: boolean;
   readonly groupFilter?: string;
@@ -161,6 +162,7 @@ export type BannerOpts = {
 };
 
 export const printStartupBanner = (log: LogFn, opts: BannerOpts): void => {
+  const executionSummary = formatExecutionModeSummary(opts.executionMode).replace(/^Execution\s+/, "");
   log(
     `\n${a.bold}🚀 Orchestrator${a.reset} ${a.dim}${new Date().toISOString().slice(0, 16)}${a.reset}`,
   );
@@ -173,7 +175,10 @@ export const printStartupBanner = (log: LogFn, opts: BannerOpts): void => {
     `   ${a.dim}Brief${a.reset}   ${opts.brief ? `${a.green}✓${a.reset} .orch/brief.md` : `${a.dim}none${a.reset}`}`,
   );
   log(
-    `   ${a.dim}Mode${a.reset}    ${opts.groupFilter ? `start from "${opts.groupFilter}"` : opts.auto ? "automatic" : "interactive"}`,
+    `   ${a.dim}Execution${a.reset} ${executionSummary}`,
+  );
+  log(
+    `   ${a.dim}Control${a.reset} ${opts.groupFilter ? `start from "${opts.groupFilter}"` : opts.auto ? "automatic" : "interactive"}`,
   );
   if (opts.orchrcSummary) {
     log(`   ${a.dim}Config${a.reset}  .orchrc.json (${opts.orchrcSummary})`);

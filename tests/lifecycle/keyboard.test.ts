@@ -62,4 +62,64 @@ describe("Keyboard shortcuts", () => {
     const tdd = spawner.lastAgent("tdd");
     expect(tdd.sentPrompts.length).toBe(1); // only slice 1
   });
+
+  it("pressing G in direct mode opens the guide prompt and injects the submitted text", async () => {
+    const { uc, hud, spawner } = createTestHarness({
+      config: {
+        executionMode: "direct",
+        planDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        gapDisabled: true,
+      },
+      auto: true,
+    });
+
+    spawner.onNextSpawn(
+      "tdd",
+      () => {
+        hud.simulateKey("g");
+        hud.simulateInterruptSubmit("stay within the direct request", "guide");
+        return okResult({ assistantText: "implemented" });
+      },
+      okResult({ assistantText: "test pass" }),
+    );
+    spawner.onNextSpawn("review");
+
+    await uc.execute([makeGroup("Direct", [makeSlice(1)])]);
+
+    expect(hud.promptsStarted).toContain("guide");
+    expect(spawner.lastAgent("tdd").injectedMessages).toContain(
+      "stay within the direct request",
+    );
+  });
+
+  it("pressing I in grouped mode opens the interrupt prompt and routes the submitted text", async () => {
+    const { uc, hud, spawner } = createTestHarness({
+      config: {
+        executionMode: "grouped",
+        planDisabled: true,
+        verifySkill: null,
+        reviewSkill: null,
+        gapDisabled: true,
+      },
+      auto: true,
+    });
+
+    spawner.onNextSpawn(
+      "tdd",
+      () => {
+        hud.simulateKey("i");
+        hud.simulateInterruptSubmit("stop and refocus on the current group", "interrupt");
+        return okResult({ assistantText: "implemented" });
+      },
+      okResult({ assistantText: "test pass" }),
+    );
+    spawner.onNextSpawn("review");
+
+    await uc.execute([makeGroup("Core", [makeSlice(1), makeSlice(2)])]);
+
+    expect(hud.promptsStarted).toContain("interrupt");
+    expect(uc.hardInterruptPending).toBe("stop and refocus on the current group");
+  });
 });

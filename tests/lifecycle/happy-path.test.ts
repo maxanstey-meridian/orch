@@ -245,15 +245,19 @@ describe("Happy path lifecycle", () => {
 
     const tddPhaseSave = persistence.saveHistory.find((state) => state.currentPhase === "tdd");
 
-    expect(tddPhaseSave).toEqual({
-      currentPhase: "tdd",
-      currentSlice: 1,
-      currentGroup: "G1",
-      startedAt: expect.any(String),
-      tddSession: { provider: "claude", id: expect.any(String) },
-      reviewSession: { provider: "claude", id: expect.any(String) },
-      sliceTimings: [{ number: 1, startedAt: expect.any(String) }],
-    });
+    expect(tddPhaseSave).toEqual(
+      expect.objectContaining({
+        executionMode: "sliced",
+        currentPhase: "tdd",
+        currentSlice: 1,
+        currentGroup: "G1",
+        startedAt: expect.any(String),
+        tddSession: { provider: "claude", id: expect.any(String) },
+        reviewSession: { provider: "claude", id: expect.any(String) },
+        sliceTimings: [{ number: 1, startedAt: expect.any(String) }],
+      }),
+    );
+    expect(tddPhaseSave?.completedAt).toBeUndefined();
     expect(tddPhaseSave?.sliceTimings?.[0]?.completedAt).toBeUndefined();
     expect(persistence.current.sliceTimings).toEqual([
       {

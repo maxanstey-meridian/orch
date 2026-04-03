@@ -224,6 +224,7 @@ export class InkProgressSink implements ProgressSink {
   }
 
   logExecutionMode(executionMode: ExecutionMode): void {
+    this.hud.update({ executionMode });
     printExecutionModeBanner(this.logFn, executionMode);
   }
 

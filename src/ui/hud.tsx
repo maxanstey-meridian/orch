@@ -1,8 +1,10 @@
 import { render, Text, Static, useInput } from "ink";
 import { createInterface } from "node:readline";
 import React, { useState, useEffect } from "react";
+import type { ExecutionMode } from "#domain/config.js";
 
 export type HudState = {
+  executionMode?: ExecutionMode;
   currentSlice?: { number: number };
   totalSlices: number;
   completedSlices: number;
@@ -74,7 +76,11 @@ const buildProgressBar = (completed: number, total: number, width: number): stri
 
 export const buildStatusLine = (state: HudState, columns: number): string => {
   const parts: string[] = [];
-  if (state.currentSlice) {
+  if (
+    state.currentSlice &&
+    state.executionMode !== "direct" &&
+    state.executionMode !== "grouped"
+  ) {
     parts.push(`S${state.currentSlice.number}/${state.totalSlices}`);
   }
   if (state.groupName != null) {
