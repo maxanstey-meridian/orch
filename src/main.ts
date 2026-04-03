@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// smoke test
-import { readFileSync, mkdirSync, writeFileSync } from "fs";
-import { readFile } from "fs/promises";
-import { resolve } from "path";
+import { randomUUID } from "crypto";
+import { existsSync, readFileSync, mkdirSync, watch, writeFileSync } from "fs";
+import { mkdir, readFile, rm, stat, writeFile } from "fs/promises";
+import { basename, dirname, join, resolve } from "path";
 import { resolveAllAgentConfigs } from "#domain/agent-config.js";
 import type { ExecutionMode, ExecutionPreference, OrchestratorConfig } from "#domain/config.js";
 import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
