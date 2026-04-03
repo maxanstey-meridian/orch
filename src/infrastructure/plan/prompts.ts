@@ -193,6 +193,8 @@ ${sliceContent}
 ## Review Feedback
 ${fixInstructions}
 
+${criteriaChecklist}
+
 ${integration}
 
 ${autonomy}
@@ -433,6 +435,7 @@ export const buildReviewPrompt = (
 ## Criteria check
 Check each criterion in the \`**Criteria:**\` section and verify whether the built code and tests actually satisfy it.
 If a criterion is not met, surface that as a material finding with code and test evidence.
+When criteria are present, include a \`## Criteria check\` section in your output summarising whether each criterion is satisfied.
 `
     : "";
 

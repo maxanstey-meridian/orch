@@ -99,6 +99,23 @@ describe("buildTddPrompt", () => {
     expect(skill).toContain("mandatory criteria coverage checklist");
     expect(skill).toContain("at least one regression guard per criterion");
   });
+
+  it("keeps the criteria checklist in fix mode when criteria are present", () => {
+    const result = buildTddPrompt(SLICE_WITH_CRITERIA, "fix the unmet criteria");
+
+    expect(result).toContain("fix the unmet criteria");
+    expect(result).toContain("For each criterion in the `**Criteria:**` section");
+    expect(result).toContain("at least one regression guard per criterion");
+  });
+
+  it("keeps legacy tdd wording when no criteria section exists", () => {
+    const result = buildTddPrompt(SLICE_WITHOUT_CRITERIA);
+
+    expect(result).toContain("RED");
+    expect(result).toContain("GREEN");
+    expect(result).not.toContain("## Criteria coverage");
+    expect(result).not.toContain("For each criterion in the `**Criteria:**` section");
+  });
 });
 
 describe("buildDirectExecutePrompt", () => {
@@ -174,6 +191,7 @@ describe("buildReviewPrompt", () => {
 
     expect(criteriaResult).toContain("## Criteria check");
     expect(criteriaResult).toContain("Check each criterion in the `**Criteria:**` section");
+    expect(criteriaResult).toContain("include a `## Criteria check` section in your output");
     expect(criteriaResult).toContain("REVIEW_CLEAN");
     expect(criteriaResult).not.toContain("for context, not as acceptance criteria");
     expect(legacyResult).toContain("for context, not as acceptance criteria");
