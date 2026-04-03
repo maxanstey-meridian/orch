@@ -26,6 +26,10 @@ import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
 import type { Group } from "#domain/plan.js";
 import type { QueueEntry } from "#domain/queue.js";
 import {
+  REQUEST_TRIAGE_FALLBACK,
+  formatRequestTriageSummary,
+} from "#domain/triage.js";
+import {
   parseBranchFlag,
   parseExecutionPreference,
   parseProviderFlag,
@@ -414,6 +418,7 @@ const resolveInventoryExecutionMode = async (opts: {
   requestContent: string;
   agentConfig: ReturnType<typeof resolveAllAgentConfigs>;
   cwd: string;
+  log: (...args: unknown[]) => void;
 }): Promise<ExecutionMode> => {
   if (opts.executionPreference !== "auto") {
     return resolveExecutionMode(opts.executionPreference);
@@ -427,8 +432,15 @@ const resolveInventoryExecutionMode = async (opts: {
   try {
     const prompt = buildRequestTriagePrompt(opts.requestContent);
     const result = await triageAgent.send(prompt);
-    const triage = parseRequestTriageResult(result.assistantText ?? result.resultText ?? "");
+    const assistantText = result.assistantText.trim();
+    const resultText = result.resultText.trim();
+    const triageText = assistantText.length > 0 ? assistantText : resultText;
+    const triage = parseRequestTriageResult(triageText);
+    opts.log(formatRequestTriageSummary(triage));
     return triage.mode;
+  } catch {
+    opts.log(formatRequestTriageSummary(REQUEST_TRIAGE_FALLBACK));
+    return REQUEST_TRIAGE_FALLBACK.mode;
   } finally {
     triageAgent.kill();
   }
@@ -766,6 +778,7 @@ export const main = async (runtime: MainRuntime = {}) => {
           requestContent: srcContent,
           agentConfig,
           cwd,
+          log,
         });
         printExecutionModeBanner(log, executionMode);
         const spawnPlanGenerator = planGeneratorSpawnerFactory({ agentConfig, cwd });
