@@ -108,6 +108,20 @@ export const planSummaryLines = (groups: readonly Group[]): string[] => {
 
 export type GeneratePlanResult = { planPath: string; planId: string; groups: readonly Group[] };
 
+const assertGeneratedPlanHasCriteria = (planDocument: ReturnType<typeof PlanSchema.parse>): void => {
+  for (const group of planDocument.groups) {
+    for (const slice of group.slices) {
+      if (slice.criteria?.length) {
+        continue;
+      }
+
+      throw new Error(
+        `Generated plan slice ${slice.number} ("${slice.title}") is missing required "criteria"`,
+      );
+    }
+  }
+};
+
 export const generatePlan = async (
   inventoryPath: string,
   briefContent: string,
@@ -161,6 +175,7 @@ export const generatePlan = async (
     }
 
     planDocument = PlanSchema.parse(rawPlan);
+    assertGeneratedPlanHasCriteria(planDocument);
     groups = parsePlanJson(JSON.stringify(planDocument), "generated plan");
   } catch (e) {
     console.error("--- RAW AGENT OUTPUT ---");

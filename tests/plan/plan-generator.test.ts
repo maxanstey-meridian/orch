@@ -29,6 +29,49 @@ const VALID_PLAN = JSON.stringify({
   ],
 });
 
+const VALID_GENERATED_PLAN = JSON.stringify({
+  executionMode: "sliced",
+  groups: [
+    {
+      name: "Auth",
+      slices: [
+        {
+          number: 1,
+          title: "User login",
+          why: "Users need to log in.",
+          files: [{ path: "src/auth.ts", action: "new" }],
+          criteria: ["Login path implemented", "Login tests cover the happy path"],
+          details: "Implement login flow.",
+          tests: "Login works.",
+        },
+        {
+          number: 2,
+          title: "Token refresh",
+          why: "Tokens expire.",
+          files: [{ path: "src/auth.ts", action: "edit" }],
+          criteria: ["Refresh path implemented", "Refresh tests cover expiry handling"],
+          details: "Implement token refresh.",
+          tests: "Refresh works.",
+        },
+      ],
+    },
+    {
+      name: "Dashboard",
+      slices: [
+        {
+          number: 3,
+          title: "Widget rendering",
+          why: "Users need widgets.",
+          files: [{ path: "src/dashboard.ts", action: "new" }],
+          criteria: ["Widgets render from the new module", "Rendering tests cover the main case"],
+          details: "Render widgets.",
+          tests: "Widgets render.",
+        },
+      ],
+    },
+  ],
+});
+
 const VALID_PLAN_WITH_CONTEXT = JSON.stringify({
   executionMode: "sliced",
   context: {
@@ -48,6 +91,38 @@ const VALID_PLAN_WITH_CONTEXT = JSON.stringify({
       name: "Auth",
       slices: [
         { number: 1, title: "User login", why: "Users need to log in.", files: [{ path: "src/auth.ts", action: "new" }], details: "Implement login flow.", tests: "Login works." },
+      ],
+    },
+  ],
+});
+
+const VALID_GENERATED_PLAN_WITH_CONTEXT = JSON.stringify({
+  executionMode: "sliced",
+  context: {
+    architecture: "Vue frontend with generated API client and thin integration seams.",
+    keyFiles: {
+      "src/embed/config.ts": "Embed contract and runtime config.",
+    },
+    concepts: {
+      runtimeComposition: "The embed owns runtime wiring and host only supplies config.",
+    },
+    conventions: {
+      testingBias: "Prefer seam-level tests over DOM-heavy ceremony.",
+    },
+  },
+  groups: [
+    {
+      name: "Auth",
+      slices: [
+        {
+          number: 1,
+          title: "User login",
+          why: "Users need to log in.",
+          files: [{ path: "src/auth.ts", action: "new" }],
+          criteria: ["Login contract is explicit", "Generated plan preserves repo context"],
+          details: "Implement login flow.",
+          tests: "Login works.",
+        },
       ],
     },
   ],
@@ -123,8 +198,41 @@ const VALID_GROUPED_PLAN = JSON.stringify({
   ],
 });
 
+const VALID_GENERATED_GROUPED_PLAN = JSON.stringify({
+  executionMode: "grouped",
+  groups: [
+    {
+      name: "Planning Contract",
+      description: "Establish grouped execution semantics and keep boundary deliverables explicit.",
+      slices: [
+        {
+          number: 1,
+          title: "Add grouped prompt contract",
+          why: "The planner needs explicit grouped instructions before generation is trustworthy.",
+          files: [{ path: "src/infrastructure/plan/prompts.ts", action: "edit" }],
+          criteria: [
+            "Grouped prompt guidance is emitted",
+            "Review and verify cadence is described at group boundaries",
+          ],
+          details: "Add grouped planning guidance and make review/verify happen at group boundaries.",
+          tests: "Assert grouped prompt wording and prompt capture behavior.",
+        },
+        {
+          number: 2,
+          title: "Preserve grouped metadata",
+          why: "Grouped plans need self-describing boundaries after validation.",
+          files: [{ path: "src/domain/plan.ts", action: "edit" }],
+          criteria: ["Group descriptions survive validation", "Parsed groups keep grouped metadata"],
+          details: "Carry group descriptions through schema validation and domain parsing.",
+          tests: "Assert group descriptions survive generatePlan round-trips.",
+        },
+      ],
+    },
+  ],
+});
 
-const PLAN_WITH_PREAMBLE = `Here's the plan I generated:\n${VALID_PLAN}\nLet me know if you'd like changes.`;
+
+const PLAN_WITH_PREAMBLE = `Here's the plan I generated:\n${VALID_GENERATED_PLAN}\nLet me know if you'd like changes.`;
 
 const mockAgent = (responseText: string): PromptAgent => ({
   send: async (_prompt: string) =>
@@ -350,7 +458,7 @@ describe("generatePlan", () => {
       send: async () =>
         ({
           exitCode: 0,
-          assistantText: VALID_PLAN,
+          assistantText: VALID_GENERATED_PLAN,
           resultText: "",
           needsInput: false,
           sessionId: "mock",
@@ -367,7 +475,7 @@ describe("generatePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Login\nUsers can log in.\n\n## Dashboard\nWidgets.");
 
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GENERATED_PLAN);
 
     const result = await generatePlan(inventoryPath, "Brief content here", agent, outputDir);
 
@@ -401,7 +509,7 @@ describe("generatePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GENERATED_PLAN);
 
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
@@ -419,7 +527,7 @@ describe("generatePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_GROUPED_PLAN);
+    const agent = mockAgent(VALID_GENERATED_GROUPED_PLAN);
 
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir, "grouped");
 
@@ -435,12 +543,12 @@ describe("generatePlan", () => {
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
     const agent: PromptAgent = {
-      ...mockAgent(VALID_GROUPED_PLAN),
+      ...mockAgent(VALID_GENERATED_GROUPED_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
         return {
           exitCode: 0,
-          assistantText: VALID_GROUPED_PLAN,
+          assistantText: VALID_GENERATED_GROUPED_PLAN,
           resultText: "",
           needsInput: false,
           sessionId: "mock",
@@ -462,7 +570,13 @@ describe("generatePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Planning\nGrouped plan support.");
 
     const outputDir = join(tmpDir, ".orch");
-    const result = await generatePlan(inventoryPath, "", mockAgent(VALID_GROUPED_PLAN), outputDir, "grouped");
+    const result = await generatePlan(
+      inventoryPath,
+      "",
+      mockAgent(VALID_GENERATED_GROUPED_PLAN),
+      outputDir,
+      "grouped",
+    );
 
     const written = readFileSync(result.planPath, "utf-8");
     const parsed = PlanSchema.parse(JSON.parse(written));
@@ -486,13 +600,24 @@ describe("generatePlan", () => {
     ).rejects.toThrow("missing required executionMode metadata");
   });
 
+  it("rejects generated plans whose slices omit required criteria", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+
+    await expect(generatePlan(inventoryPath, "", mockAgent(VALID_PLAN), outputDir)).rejects.toThrow(
+      'missing required "criteria"',
+    );
+  });
+
 
   it("preserves optional top-level context when the generated plan includes it", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN_WITH_CONTEXT);
+    const agent = mockAgent(VALID_GENERATED_PLAN_WITH_CONTEXT);
 
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
@@ -517,7 +642,7 @@ describe("generatePlan", () => {
           resultText: "",
           needsInput: false,
           sessionId: "mock",
-          planText: VALID_PLAN,
+          planText: VALID_GENERATED_PLAN,
         }) as AgentResult,
       kill: () => {},
     };
@@ -542,7 +667,7 @@ describe("generatePlan", () => {
 
   it("throws when inventory file does not exist", async () => {
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GENERATED_PLAN);
 
     await expect(
       generatePlan("/does/not/exist/inventory.md", "brief", agent, outputDir),
@@ -576,12 +701,12 @@ describe("generatePlan", () => {
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
     const agent: PromptAgent = {
-      ...mockAgent(VALID_PLAN),
+      ...mockAgent(VALID_GENERATED_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
         return {
           exitCode: 0,
-          assistantText: VALID_PLAN,
+          assistantText: VALID_GENERATED_PLAN,
           resultText: "",
           needsInput: false,
           sessionId: "mock",
@@ -600,7 +725,7 @@ describe("generatePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GENERATED_PLAN);
 
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
@@ -615,7 +740,7 @@ describe("generatePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN); // minified
+    const agent = mockAgent(VALID_GENERATED_PLAN); // minified
 
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
@@ -634,7 +759,7 @@ describe("generatePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GENERATED_PLAN);
 
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
@@ -650,7 +775,7 @@ describe("generatePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GENERATED_PLAN);
 
     const result = await generatePlan(inventoryPath, "", agent, outputDir);
 
@@ -668,7 +793,7 @@ describe("generatePlan", () => {
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
     const outputDir = join(tmpDir, "nonexistent", "deep", ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GENERATED_PLAN);
 
     const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
 
@@ -683,12 +808,12 @@ describe("generatePlan", () => {
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
     const agent: PromptAgent = {
-      ...mockAgent(VALID_PLAN),
+      ...mockAgent(VALID_GENERATED_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
         return {
           exitCode: 0,
-          assistantText: VALID_PLAN,
+          assistantText: VALID_GENERATED_PLAN,
           resultText: "",
           needsInput: false,
           sessionId: "mock",
@@ -710,12 +835,12 @@ describe("generatePlan", () => {
     const outputDir = join(tmpDir, ".orch");
     let capturedPrompt = "";
     const agent: PromptAgent = {
-      ...mockAgent(VALID_PLAN),
+      ...mockAgent(VALID_GENERATED_PLAN),
       send: async (prompt: string) => {
         capturedPrompt = prompt;
         return {
           exitCode: 0,
-          assistantText: VALID_PLAN,
+          assistantText: VALID_GENERATED_PLAN,
           resultText: "",
           needsInput: false,
           sessionId: "mock",
@@ -834,7 +959,7 @@ describe("doGeneratePlan", () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GENERATED_PLAN);
     const log = () => {};
 
     const planPath = await doGeneratePlan(inventoryPath, "", outputDir, log, () => agent);
@@ -848,7 +973,7 @@ describe("doGeneratePlan", () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_GROUPED_PLAN);
+    const agent = mockAgent(VALID_GENERATED_GROUPED_PLAN);
     const log = () => {};
 
     const planPath = await doGeneratePlan(
@@ -871,7 +996,7 @@ describe("doGeneratePlan", () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GENERATED_PLAN);
     const logged: string[] = [];
     const log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
 
@@ -887,7 +1012,7 @@ describe("doGeneratePlan", () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
     const outputDir = join(tmpDir, ".orch");
-    const agent = mockAgent(VALID_PLAN);
+    const agent = mockAgent(VALID_GENERATED_PLAN);
     const logged: string[] = [];
     const log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
 
@@ -904,7 +1029,7 @@ describe("doGeneratePlan", () => {
     const outputDir = join(tmpDir, ".orch");
     const killed: boolean[] = [];
     const agent: PromptAgent = {
-      ...mockAgent(VALID_PLAN),
+      ...mockAgent(VALID_GENERATED_PLAN),
       kill: () => { killed.push(true); },
     };
     const log = () => {};
