@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// smoke test
 import { randomUUID } from "crypto";
 import { existsSync, readFileSync, mkdirSync, watch, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
