@@ -1253,6 +1253,12 @@ const runMainWithWorkPlanMocks = async (
     planContent?: string;
     preloadedState?: Record<string, unknown>;
     assertGitRepoImplementation?: (cwd: string) => Promise<void>;
+    resolveWorktreeResult?: {
+      cwd: string;
+      worktreeInfo: { path: string; branch: string } | null;
+      skipStash: boolean;
+      updatedState?: Record<string, unknown>;
+    };
   },
 ) => {
   const planPath = join(tempDir, "plan.md");
@@ -1271,11 +1277,14 @@ const runMainWithWorkPlanMocks = async (
   }));
   const assertGitRepo = vi.fn(options?.assertGitRepoImplementation ?? (async () => undefined));
   const runFingerprint = vi.fn().mockResolvedValue({ brief: "brief text" });
-  const resolveWorktree = vi.fn().mockResolvedValue({
-    cwd: tempDir,
-    worktreeInfo: null,
-    skipStash: true,
-  });
+  const resolveWorktree = vi.fn().mockResolvedValue(
+    options?.resolveWorktreeResult ?? {
+      cwd: tempDir,
+      worktreeInfo: null,
+      skipStash: true,
+      updatedState: {},
+    },
+  );
   const complexityTriageSpawnerFactory = vi.fn(() => () => ({
     send: vi.fn(),
     kill: vi.fn(),
@@ -1448,6 +1457,26 @@ const runMainWithInventoryPlanMocks = async (options?: {
   inventoryContent?: string;
   generatedPlanId?: string;
   assertGitRepoImplementation?: (cwd: string) => Promise<void>;
+  resolveWorktreeImplementation?: (args: {
+    branchName: string | undefined;
+    cwd: string;
+    treePath: string | undefined;
+    activePlanId: string;
+    state: Record<string, unknown>;
+    stateFile: string;
+    log: (...args: unknown[]) => void;
+  }) => Promise<{
+    cwd: string;
+    worktreeInfo: { path: string; branch: string } | null;
+    skipStash: boolean;
+    updatedState?: Record<string, unknown>;
+  }>;
+  resolveWorktreeResult?: {
+    cwd: string;
+    worktreeInfo: { path: string; branch: string } | null;
+    skipStash: boolean;
+    updatedState?: Record<string, unknown>;
+  };
 }) => {
   const inventoryPath = join(tempDir, "inventory.md");
   await writeFile(
@@ -1487,11 +1516,15 @@ const runMainWithInventoryPlanMocks = async (options?: {
   const generatePlanId = vi.fn(() => options?.generatedPlanId ?? "direct01");
   const assertGitRepo = vi.fn(options?.assertGitRepoImplementation ?? (async () => undefined));
   const runFingerprint = vi.fn().mockResolvedValue({ brief: "brief text" });
-  const resolveWorktree = vi.fn().mockResolvedValue({
+  const defaultResolveWorktreeResult = options?.resolveWorktreeResult ?? {
     cwd: tempDir,
     worktreeInfo: null,
     skipStash: true,
-  });
+    updatedState: {},
+  };
+  const resolveWorktree = options?.resolveWorktreeImplementation === undefined
+    ? vi.fn().mockResolvedValue(defaultResolveWorktreeResult)
+    : vi.fn(options.resolveWorktreeImplementation);
   const triageAgent = {
     send: options?.requestTriageSendError === undefined
       ? vi.fn().mockResolvedValue({
@@ -1705,6 +1738,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     registryPath,
     resolveWorktree,
     runFingerprint,
+    stateFile: statePathForPlan(join(tempDir, ".orch"), options?.generatedPlanId ?? "direct01"),
     triageAgent,
     logSection,
   };
@@ -2346,6 +2380,98 @@ describe("main execution preference wiring", () => {
         executionMode: "grouped",
       }),
       expect.any(Object),
+    );
+  });
+
+  it("passes --tree through resolveWorktree and uses the selected tree as cwd for --work", async () => {
+    const externalTreePath = join(tempDir, "existing-tree");
+    await mkdir(externalTreePath, { recursive: true });
+
+    const { createContainer, resolveWorktree } = await runMainWithWorkPlanMocks(
+      ["--tree", externalTreePath],
+      {
+        resolveWorktreeResult: {
+          cwd: externalTreePath,
+          worktreeInfo: { path: externalTreePath, branch: "feature/existing" },
+          skipStash: true,
+          updatedState: {},
+        },
+      },
+    );
+
+    expect(resolveWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({
+        treePath: externalTreePath,
+      }),
+    );
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: externalTreePath,
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("passes --tree through direct inventory execution and preserves startup state when worktree metadata is added", async () => {
+    const externalTreePath = join(tempDir, "existing-tree");
+    await mkdir(externalTreePath, { recursive: true });
+
+    const {
+      createContainer,
+      resolveWorktree,
+      stateFile,
+    } = await runMainWithInventoryPlanMocks({
+      args: ["--quick", "--tree", externalTreePath],
+      generatedPlanId: "direct42",
+      resolveWorktreeImplementation: async ({ stateFile, state, treePath }) => {
+        const persistedState = await loadState(stateFile);
+        const updatedState = {
+          ...persistedState,
+          ...state,
+          worktree: {
+            path: treePath!,
+            branch: "feature/existing",
+            baseSha: "deadbeef",
+            managed: false,
+          },
+        };
+        await saveState(stateFile, updatedState);
+        return {
+          cwd: treePath!,
+          worktreeInfo: { path: treePath!, branch: "feature/existing" },
+          skipStash: true,
+          updatedState,
+        };
+      },
+    });
+
+    expect(resolveWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({
+        treePath: externalTreePath,
+      }),
+    );
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: externalTreePath,
+        stateFile: expect.stringMatching(/\.orch\/state\/plan-direct42\.json$/),
+      }),
+      expect.any(Object),
+    );
+
+    const persistedState = await loadState(stateFile);
+    expect(persistedState).toEqual(
+      expect.objectContaining({
+        startedAt: expect.any(String),
+        tier: "medium",
+        activeTier: "medium",
+        currentPhase: "plan",
+        worktree: {
+          path: externalTreePath,
+          branch: "feature/existing",
+          baseSha: "deadbeef",
+          managed: false,
+        },
+      }),
     );
   });
 

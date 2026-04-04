@@ -26,7 +26,7 @@ describe("FsStatePersistence", () => {
       reviewBaseSha: "abc123",
       tddSession: { provider: "codex" as const, id: "tdd-sess" },
       reviewSession: { provider: "claude" as const, id: "rev-sess" },
-      worktree: { path: "/tmp/wt", branch: "feat", baseSha: "def456" },
+      worktree: { path: "/tmp/wt", branch: "feat", baseSha: "def456", managed: false },
     };
     await adapter.save(full);
     const loaded = await adapter.load();

@@ -1,6 +1,6 @@
 import type { LogFn } from "#ui/display.js";
-import { saveState, type OrchestratorState } from "../state/state.js";
-import { captureRef } from "./git.js";
+import { loadState, saveState, type OrchestratorState } from "../state/state.js";
+import { captureCurrentBranch, captureRef } from "./git.js";
 import { createWorktree } from "./worktree.js";
 
 type WorktreeResult = {
@@ -13,14 +13,23 @@ type WorktreeResult = {
 type ResolveWorktreeOpts = {
   readonly branchName: string | undefined;
   readonly cwd: string;
+  readonly treePath: string | undefined;
   readonly activePlanId: string;
   readonly state: OrchestratorState;
   readonly stateFile: string;
   readonly log: LogFn;
 };
 
+const mergePersistedState = async (
+  stateFile: string,
+  fallbackState: OrchestratorState,
+): Promise<OrchestratorState> => {
+  const persistedState = await loadState(stateFile);
+  return Object.keys(persistedState).length === 0 ? fallbackState : persistedState;
+};
+
 export const resolveWorktree = async (opts: ResolveWorktreeOpts): Promise<WorktreeResult> => {
-  const { branchName, cwd, activePlanId, state, stateFile, log } = opts;
+  const { branchName, cwd, treePath, activePlanId, state, stateFile, log } = opts;
 
   // checkWorktreeResume already verified the worktree exists and is on the right branch
   if (state.worktree) {
@@ -32,11 +41,32 @@ export const resolveWorktree = async (opts: ResolveWorktreeOpts): Promise<Worktr
     };
   }
 
+  if (treePath) {
+    const [branch, baseSha, persistedState] = await Promise.all([
+      captureCurrentBranch(treePath),
+      captureRef(treePath),
+      mergePersistedState(stateFile, state),
+    ]);
+    const worktree = { path: treePath, branch, baseSha, managed: false };
+    const updatedState: OrchestratorState = { ...persistedState, worktree };
+    await saveState(stateFile, updatedState);
+    log(`Using external tree at ${treePath} on branch ${branch}`);
+    return {
+      cwd: treePath,
+      worktreeInfo: { path: treePath, branch },
+      skipStash: true,
+      updatedState,
+    };
+  }
+
   if (branchName) {
-    const baseSha = await captureRef(cwd);
+    const [baseSha, persistedState] = await Promise.all([
+      captureRef(cwd),
+      mergePersistedState(stateFile, state),
+    ]);
     const treePath = await createWorktree(cwd, activePlanId, branchName);
-    const worktree = { path: treePath, branch: branchName, baseSha };
-    const updatedState: OrchestratorState = { ...state, worktree };
+    const worktree = { path: treePath, branch: branchName, baseSha, managed: true };
+    const updatedState: OrchestratorState = { ...persistedState, worktree };
     await saveState(stateFile, updatedState);
     log(`Worktree created at ${treePath} on branch ${branchName}`);
     return {

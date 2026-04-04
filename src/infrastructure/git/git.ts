@@ -12,6 +12,15 @@ const resolveHeadRef = async (cwd: string): Promise<string> => git(["rev-parse",
 
 export const captureRef = async (cwd: string): Promise<string> => resolveHeadRef(cwd);
 
+export const captureCurrentBranch = async (cwd: string): Promise<string> => {
+  const branch = await git(["branch", "--show-current"], cwd);
+  if (branch.length === 0) {
+    throw new Error(`Cannot determine current branch for ${cwd}. Detached HEAD is not supported.`);
+  }
+
+  return branch;
+};
+
 export const hasChanges = async (cwd: string, since: string): Promise<boolean> => {
   const head = await resolveHeadRef(cwd);
   if (head !== since) {

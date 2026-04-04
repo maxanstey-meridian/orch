@@ -44,6 +44,7 @@ export type OrchestratorState = {
     readonly path: string;
     readonly branch: string;
     readonly baseSha: string;
+    readonly managed: boolean;
   };
 };
 

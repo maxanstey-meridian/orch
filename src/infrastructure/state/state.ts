@@ -60,6 +60,7 @@ const stateSchema = z
         path: z.string().min(1),
         branch: z.string().min(1),
         baseSha: z.string().min(1),
+        managed: z.boolean(),
       })
       .optional(),
   })

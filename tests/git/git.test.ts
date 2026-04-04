@@ -5,6 +5,7 @@ import { tmpdir } from "os";
 import { execSync } from "child_process";
 import {
   captureRef,
+  captureCurrentBranch,
   hasChanges,
   getDiff,
   getStatus,
@@ -35,6 +36,19 @@ describe("git", () => {
     const expected = exec("git rev-parse HEAD", repoDir);
     expect(ref).toBe(expected);
     expect(ref).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("captures the current branch for an existing tree", async () => {
+    exec("git checkout -b feature/current-branch", repoDir);
+
+    await expect(captureCurrentBranch(repoDir)).resolves.toBe("feature/current-branch");
+  });
+
+  it("fails when branch capture runs in detached HEAD", async () => {
+    const ref = exec("git rev-parse HEAD", repoDir);
+    exec(`git checkout ${ref}`, repoDir);
+
+    await expect(captureCurrentBranch(repoDir)).rejects.toThrow("Detached HEAD is not supported");
   });
 
   it("reports no changes when repo is clean at same ref", async () => {

@@ -6,22 +6,25 @@ vi.mock("../../src/infrastructure/git/worktree.js", () => ({
 
 vi.mock("../../src/infrastructure/git/git.js", () => ({
   captureRef: vi.fn(),
+  captureCurrentBranch: vi.fn(),
 }));
 
 vi.mock("../../src/infrastructure/state/state.js", () => ({
+  loadState: vi.fn(),
   saveState: vi.fn(),
 }));
 
 import { resolveWorktree } from "#infrastructure/git/worktree-setup.js";
 import { createWorktree } from "#infrastructure/git/worktree.js";
-import { captureRef } from "#infrastructure/git/git.js";
-import { saveState } from "#infrastructure/state/state.js";
+import { captureCurrentBranch, captureRef } from "#infrastructure/git/git.js";
+import { loadState, saveState } from "#infrastructure/state/state.js";
 
 const noop = () => {};
 
 describe("resolveWorktree", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.mocked(loadState).mockResolvedValue({});
   });
 
   it("returns original cwd and skipStash=false when no branch", async () => {
@@ -29,6 +32,7 @@ describe("resolveWorktree", () => {
     const result = await resolveWorktree({
       branchName: undefined,
       cwd: "/repo",
+      treePath: undefined,
       activePlanId: "abc123",
       state,
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -49,6 +53,7 @@ describe("resolveWorktree", () => {
     const result = await resolveWorktree({
       branchName: "orch/abc123",
       cwd: "/repo",
+      treePath: undefined,
       activePlanId: "abc123",
       state: {},
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -64,6 +69,7 @@ describe("resolveWorktree", () => {
       path: "/repo/.orch/trees/abc123",
       branch: "orch/abc123",
       baseSha: "deadbeef",
+      managed: true,
     });
   });
 
@@ -75,6 +81,7 @@ describe("resolveWorktree", () => {
     await resolveWorktree({
       branchName: "orch/abc123",
       cwd: "/repo",
+      treePath: undefined,
       activePlanId: "abc123",
       state: {},
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -82,17 +89,93 @@ describe("resolveWorktree", () => {
     });
 
     expect(saveState).toHaveBeenCalledWith("/repo/.orch/state/plan-abc123.json", {
-      worktree: { path: "/repo/.orch/trees/abc123", branch: "orch/abc123", baseSha: "deadbeef" },
+      worktree: {
+        path: "/repo/.orch/trees/abc123",
+        branch: "orch/abc123",
+        baseSha: "deadbeef",
+        managed: true,
+      },
+    });
+  });
+
+  it("uses an external tree as cwd without creating a managed worktree", async () => {
+    vi.mocked(captureCurrentBranch).mockResolvedValue("feature/existing");
+    vi.mocked(captureRef).mockResolvedValue("deadbeef");
+    vi.mocked(saveState).mockResolvedValue(undefined);
+
+    const result = await resolveWorktree({
+      branchName: undefined,
+      cwd: "/repo",
+      treePath: "/repo-existing-tree",
+      activePlanId: "abc123",
+      state: {},
+      stateFile: "/repo/.orch/state/plan-abc123.json",
+      log: noop,
+    });
+
+    expect(result.cwd).toBe("/repo-existing-tree");
+    expect(result.skipStash).toBe(true);
+    expect(result.worktreeInfo).toEqual({
+      path: "/repo-existing-tree",
+      branch: "feature/existing",
+    });
+    expect(result.updatedState.worktree).toEqual({
+      path: "/repo-existing-tree",
+      branch: "feature/existing",
+      baseSha: "deadbeef",
+      managed: false,
+    });
+    expect(captureCurrentBranch).toHaveBeenCalledWith("/repo-existing-tree");
+    expect(captureRef).toHaveBeenCalledWith("/repo-existing-tree");
+    expect(createWorktree).not.toHaveBeenCalled();
+  });
+
+  it("persists external tree metadata onto the current saved state instead of stale state input", async () => {
+    vi.mocked(loadState).mockResolvedValue({
+      startedAt: "2026-04-04T10:00:00.000Z",
+      tier: "medium",
+      currentPhase: "plan",
+    });
+    vi.mocked(captureCurrentBranch).mockResolvedValue("feature/existing");
+    vi.mocked(captureRef).mockResolvedValue("deadbeef");
+    vi.mocked(saveState).mockResolvedValue(undefined);
+
+    await resolveWorktree({
+      branchName: undefined,
+      cwd: "/repo",
+      treePath: "/repo-existing-tree",
+      activePlanId: "abc123",
+      state: {},
+      stateFile: "/repo/.orch/state/plan-abc123.json",
+      log: noop,
+    });
+
+    expect(saveState).toHaveBeenCalledWith("/repo/.orch/state/plan-abc123.json", {
+      startedAt: "2026-04-04T10:00:00.000Z",
+      tier: "medium",
+      currentPhase: "plan",
+      worktree: {
+        path: "/repo-existing-tree",
+        branch: "feature/existing",
+        baseSha: "deadbeef",
+        managed: false,
+      },
     });
   });
 
   it("reuses existing worktree from state on resume (checkWorktreeResume already verified)", async () => {
-    const worktree = { path: "/repo/.orch/trees/abc123", branch: "orch/abc123", baseSha: "deadbeef" };
+    const worktree = {
+      path: "/repo/.orch/trees/abc123",
+      branch: "orch/abc123",
+      baseSha: "deadbeef",
+      managed: false,
+    };
     const state = { lastCompletedSlice: 2, worktree };
 
     const result = await resolveWorktree({
       branchName: undefined,
       cwd: "/repo",
+      treePath: undefined,
       activePlanId: "abc123",
       state,
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -106,11 +189,17 @@ describe("resolveWorktree", () => {
   });
 
   it("reuses existing worktree from state even when --branch is passed again", async () => {
-    const worktree = { path: "/repo/.orch/trees/abc123", branch: "orch/abc123", baseSha: "deadbeef" };
+    const worktree = {
+      path: "/repo/.orch/trees/abc123",
+      branch: "orch/abc123",
+      baseSha: "deadbeef",
+      managed: true,
+    };
 
     const result = await resolveWorktree({
       branchName: "orch/abc123",
       cwd: "/repo",
+      treePath: undefined,
       activePlanId: "abc123",
       state: { worktree },
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -129,6 +218,7 @@ describe("resolveWorktree", () => {
       resolveWorktree({
         branchName: "orch/abc123",
         cwd: "/repo",
+        treePath: undefined,
         activePlanId: "abc123",
         state: {},
         stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -146,6 +236,7 @@ describe("resolveWorktree", () => {
       resolveWorktree({
         branchName: "orch/abc123",
         cwd: "/repo",
+        treePath: undefined,
         activePlanId: "abc123",
         state: {},
         stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -158,11 +249,17 @@ describe("resolveWorktree", () => {
   });
 
   it("reuses existing worktree even when --branch specifies a different branch name", async () => {
-    const worktree = { path: "/repo/.orch/trees/abc123", branch: "orch/abc123", baseSha: "deadbeef" };
+    const worktree = {
+      path: "/repo/.orch/trees/abc123",
+      branch: "orch/abc123",
+      baseSha: "deadbeef",
+      managed: true,
+    };
 
     const result = await resolveWorktree({
       branchName: "orch/different-branch",
       cwd: "/repo",
+      treePath: undefined,
       activePlanId: "abc123",
       state: { worktree },
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -182,6 +279,7 @@ describe("resolveWorktree", () => {
     const result = await resolveWorktree({
       branchName: "orch/abc123",
       cwd: "/repo",
+      treePath: undefined,
       activePlanId: "abc123",
       state: { lastCompletedSlice: 5 },
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -193,6 +291,7 @@ describe("resolveWorktree", () => {
       path: "/repo/.orch/trees/abc123",
       branch: "orch/abc123",
       baseSha: "deadbeef",
+      managed: true,
     });
   });
 });

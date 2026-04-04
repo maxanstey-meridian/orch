@@ -37,7 +37,7 @@ describe("StatePersistence", () => {
       reviewBaseSha: "abc123",
       tddSession: { provider: "codex", id: "tdd-1" },
       reviewSession: { provider: "claude", id: "rev-1" },
-      worktree: { path: "/tmp/wt", branch: "feat", baseSha: "def456" },
+      worktree: { path: "/tmp/wt", branch: "feat", baseSha: "def456", managed: false },
     };
     await persistence.save(state);
     const loaded = await persistence.load();

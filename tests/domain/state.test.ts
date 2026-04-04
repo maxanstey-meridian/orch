@@ -63,12 +63,17 @@ describe("advanceState", () => {
     const state: OrchestratorState = {
       tddSession: { provider: "codex", id: "t1" },
       reviewSession: { provider: "codex", id: "r1" },
-      worktree: { path: "/tmp/wt", branch: "feat", baseSha: "base" },
+      worktree: { path: "/tmp/wt", branch: "feat", baseSha: "base", managed: true },
     };
     const next = advanceState(state, { kind: "sliceDone", sliceNumber: 2 });
     expect(next.tddSession).toEqual({ provider: "codex", id: "t1" });
     expect(next.reviewSession).toEqual({ provider: "codex", id: "r1" });
-    expect(next.worktree).toEqual({ path: "/tmp/wt", branch: "feat", baseSha: "base" });
+    expect(next.worktree).toEqual({
+      path: "/tmp/wt",
+      branch: "feat",
+      baseSha: "base",
+      managed: true,
+    });
     expect(next.lastCompletedSlice).toBe(2);
   });
 

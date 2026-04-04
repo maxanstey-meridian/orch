@@ -201,22 +201,45 @@ describe("state", () => {
   });
 
   it("throws when worktree.path is empty string", async () => {
-    await writeFile(testPath, JSON.stringify({ worktree: { path: "", branch: "b", baseSha: "abc" } }));
+    await writeFile(
+      testPath,
+      JSON.stringify({ worktree: { path: "", branch: "b", baseSha: "abc", managed: true } }),
+    );
     await expect(loadState(testPath)).rejects.toThrow("worktree");
   });
 
   it("throws when worktree.branch is empty string", async () => {
-    await writeFile(testPath, JSON.stringify({ worktree: { path: "/tmp/wt", branch: "", baseSha: "abc" } }));
+    await writeFile(
+      testPath,
+      JSON.stringify({
+        worktree: { path: "/tmp/wt", branch: "", baseSha: "abc", managed: true },
+      }),
+    );
     await expect(loadState(testPath)).rejects.toThrow("worktree");
   });
 
   it("throws when worktree.baseSha is empty string", async () => {
-    await writeFile(testPath, JSON.stringify({ worktree: { path: "/tmp/wt", branch: "b", baseSha: "" } }));
+    await writeFile(
+      testPath,
+      JSON.stringify({
+        worktree: { path: "/tmp/wt", branch: "b", baseSha: "", managed: true },
+      }),
+    );
     await expect(loadState(testPath)).rejects.toThrow("worktree");
   });
 
   it("throws when worktree is missing required fields", async () => {
     await writeFile(testPath, JSON.stringify({ worktree: { path: "/tmp/wt" } }));
+    await expect(loadState(testPath)).rejects.toThrow("worktree");
+  });
+
+  it("throws when worktree.managed is missing", async () => {
+    await writeFile(
+      testPath,
+      JSON.stringify({
+        worktree: { path: "/tmp/wt", branch: "orch/abc123", baseSha: "deadbeef" },
+      }),
+    );
     await expect(loadState(testPath)).rejects.toThrow("worktree");
   });
 
@@ -230,7 +253,12 @@ describe("state", () => {
   it("persists worktree field and loads it back", async () => {
     const state = {
       lastCompletedSlice: 1,
-      worktree: { path: "/tmp/wt", branch: "orch/abc123", baseSha: "deadbeef" },
+      worktree: {
+        path: "/tmp/wt",
+        branch: "orch/abc123",
+        baseSha: "deadbeef",
+        managed: false,
+      },
     };
     await saveState(testPath, state);
     const loaded = await loadState(testPath);

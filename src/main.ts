@@ -818,8 +818,19 @@ export const main = async (runtime: MainRuntime = {}) => {
       const planLogPath = logPathForPlan(orchDir, activePlanId);
       log(`${ts()} ${a.dim}Log file: ${planLogPath}${a.reset}`);
       log(`${ts()} ${a.dim}Initialising agents — this may take a few minutes...${a.reset}`);
-      const orchestratorConfig = {
+      const {
+        cwd: effectiveCwd,
+      } = await resolveWorktree({
+        branchName,
         cwd,
+        treePath,
+        activePlanId,
+        state: await loadState(stateFile),
+        stateFile,
+        log,
+      });
+      const orchestratorConfig = {
+        cwd: effectiveCwd,
         planPath,
         planContent: planContent ?? "",
         brief,
@@ -861,7 +872,7 @@ export const main = async (runtime: MainRuntime = {}) => {
       }
 
       logSection(log, `${a.green}✅ Direct request complete + final review done${a.reset}`);
-      const status = await getStatus(cwd);
+      const status = await getStatus(effectiveCwd);
       log(`\n${status}`);
       cleanup();
       return;
@@ -896,6 +907,7 @@ export const main = async (runtime: MainRuntime = {}) => {
     } = await resolveWorktree({
       branchName,
       cwd,
+      treePath,
       activePlanId,
       state,
       stateFile,
