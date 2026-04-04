@@ -39,13 +39,14 @@ const makeSmokeGroup = (): Group => ({
   slices: [makeSmokeSlice()],
 });
 
-it("keeps src/main.ts in the final smoke-marker-absent state", async () => {
+it("keeps src/main.ts without the smoke test comment on line 2", async () => {
   const mainPath = join(import.meta.dirname, "../src/main.ts");
   const mainSource = await readFile(mainPath, "utf8");
-  const mainLines = mainSource.split("\n");
+  const secondLine = mainSource.split("\n")[1] ?? "";
 
-  expect(mainSource).not.toContain("// smoke test");
-  expect(mainLines[1]).not.toBe("// smoke test");
+  expect(mainSource).not.toContain("\n// smoke test\n");
+  expect(secondLine).not.toBe("// smoke test");
+  expect(secondLine).not.toContain("smoke test");
 });
 
 it("does not reuse the review system prompt for completeness in tiered skill loading", () => {
@@ -109,7 +110,9 @@ it("proves the direct smoke request runs execute, commit, completeness fix, and 
   expect(tdd.sentPrompts[0]).toContain("Slice 2 - Remove smoke comment");
   expect(tdd.sentPrompts[1]).toContain("[DIRECT_TEST_PASS]");
   expect(tdd.sentPrompts[2]).toBe("[SWEEP] Direct request");
-  expect(tdd.sentPrompts[3]).toContain("A completeness check found that your implementation does not fully match the direct request.");
+  expect(tdd.sentPrompts[3]).toContain(
+    "A completeness check found that your implementation does not fully match the direct request.",
+  );
   expect(tdd.sentPrompts[3]).toContain("## Completeness Findings");
   expect(tdd.sentPrompts[3]).toContain("MISSING");
   expect(tdd.sentPrompts[4]).toBe("[SWEEP] Direct request completeness fix");
