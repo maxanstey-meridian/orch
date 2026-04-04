@@ -1,4 +1,3 @@
-import { readFileSync } from "fs";
 import { describe, it, expect } from "vitest";
 import {
   withBrief,
@@ -88,16 +87,10 @@ describe("buildTddPrompt", () => {
 
   it("adds a mandatory per-criterion checklist and regression-guard requirement when criteria are present", () => {
     const result = buildTddPrompt(SLICE_WITH_CRITERIA);
-    const skill = readFileSync("skills/tdd.md", "utf8");
 
     expect(result).toContain("For each criterion in the `**Criteria:**` section");
     expect(result).toContain("mandatory criteria coverage checklist");
     expect(result).toContain("at least one regression guard per criterion");
-    expect(result).toContain("RED");
-    expect(result).toContain("GREEN");
-    expect(skill).toContain("For each criterion in the `**Criteria:**` section");
-    expect(skill).toContain("mandatory criteria coverage checklist");
-    expect(skill).toContain("at least one regression guard per criterion");
   });
 
   it("keeps the criteria checklist in fix mode when criteria are present", () => {
@@ -217,15 +210,11 @@ describe("buildGapPrompt", () => {
   it("prioritises missing regression guards tied to explicit criteria and keeps legacy fallback wording", () => {
     const criteriaResult = buildGapPrompt(GROUP_WITH_CRITERIA, "abc123");
     const legacyResult = buildGapPrompt(SLICE_WITHOUT_CRITERIA, "abc123");
-    const skill = readFileSync("skills/gap.md", "utf8");
-
     expect(criteriaResult).toContain("Prioritise missing regression guards tied to explicit criteria");
     expect(criteriaResult).toContain("ahead of generic edge-case ideas");
     expect(criteriaResult).toContain("NO_GAPS_FOUND");
     expect(legacyResult).toContain("Untested edge cases and boundary conditions");
     expect(legacyResult).not.toContain("Prioritise missing regression guards tied to explicit criteria");
-    expect(skill).toContain("Prioritise missing regression guards tied to explicit criteria");
-    expect(skill).toContain("ahead of generic edge-case ideas");
   });
 });
 

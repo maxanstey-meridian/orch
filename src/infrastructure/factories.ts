@@ -26,7 +26,8 @@ import { DefaultPromptBuilder } from "./default-prompt-builder.js";
 import { FsStatePersistence } from "./fs-state-persistence.js";
 import { FsLogWriter, NullLogWriter } from "./log/log-writer.js";
 
-const CODEX_TRIAGE_MODEL = "gpt-5.4-mini";
+const CODEX_CHEAP_MODEL = "gpt-5.4-mini";
+const CODEX_CHEAP_ROLES: ReadonlySet<string> = new Set(["triage", "verify"]);
 
 export const agentSpawnerFactory = (
   config: OrchestratorConfig,
@@ -57,7 +58,7 @@ export const agentSpawnerFactory = (
     (codexTriageSpawner ??= new CodexAgentSpawner(
       config.cwd,
       { auto: config.auto },
-      () => spawnCodex("-c", `model="${CODEX_TRIAGE_MODEL}"`),
+      () => spawnCodex("-c", `model="${CODEX_CHEAP_MODEL}"`),
       runtimeInteractionGate,
     ));
 
@@ -68,7 +69,7 @@ export const agentSpawnerFactory = (
         case "claude":
           return getClaudeSpawner().spawn(role, { ...opts, model: model ?? opts?.model });
         case "codex":
-          if (role === "triage") {
+          if (CODEX_CHEAP_ROLES.has(role)) {
             return getCodexTriageSpawner().spawn(role, opts);
           }
           return getCodexSpawner().spawn(role, opts);

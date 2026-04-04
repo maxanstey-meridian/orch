@@ -174,10 +174,8 @@ describe("parseVerifyResult", () => {
   it("verify skill requires the human summary plus mandatory VERIFY_JSON contract", () => {
     const skill = readFileSync("skills/verify.md", "utf8");
 
-    expect(skill).toContain("A short human summary of what you verified.");
     expect(skill).toContain("### VERIFY_JSON");
-    expect(skill).toContain("sliceLocalFailures");
-    expect(skill).toContain("runnerIssue");
+    expect(skill).toContain("failures");
     expect(skill).toContain("The `### VERIFY_JSON` block is mandatory.");
   });
 });

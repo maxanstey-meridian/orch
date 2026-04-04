@@ -18,8 +18,15 @@ export const CLAUDE_MODEL_IDS: Record<ClaudeModel, string> = {
 const VALID_PROVIDERS: readonly string[] = ["claude", "codex"];
 const VALID_CLAUDE_MODELS = Object.keys(CLAUDE_MODEL_IDS);
 
+const CHEAP_MODEL_ROLES: ReadonlySet<AgentRole> = new Set(["verify", "triage"]);
+
 export const AGENT_DEFAULTS: Record<AgentRole, ResolvedAgentConfig> = Object.fromEntries(
-  AGENT_ROLES.map((role) => [role, { provider: "claude" as const }]),
+  AGENT_ROLES.map((role) => [
+    role,
+    CHEAP_MODEL_ROLES.has(role)
+      ? { provider: "claude" as const, model: CLAUDE_MODEL_IDS.haiku }
+      : { provider: "claude" as const },
+  ]),
 ) as Record<AgentRole, ResolvedAgentConfig>;
 
 export const parseAgentConfigValue = (value: string): ResolvedAgentConfig => {

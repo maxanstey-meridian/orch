@@ -674,13 +674,11 @@ export const main = async (runtime: MainRuntime = {}) => {
   let planPath: string;
   let planContent: string | undefined;
   let executionMode: ExecutionMode;
-  let tier: ComplexityTier = COMPLEXITY_TRIAGE_FALLBACK.tier;
   try {
     if (workMode) {
       planPath = resolve(workPath!);
       planContent = readFileSync(planPath, "utf-8");
       executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
-      tier = await resolveComplexityTier({ requestContent: planContent, agentConfig, cwd, log });
       printExecutionModeBanner(log, executionMode);
     } else {
       const inputPath = resolve(inventoryPath!);
@@ -691,16 +689,15 @@ export const main = async (runtime: MainRuntime = {}) => {
         planPath = inputPath;
         planContent = srcContent;
         executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
-        tier = await resolveComplexityTier({ requestContent: srcContent, agentConfig, cwd, log });
         printExecutionModeBanner(log, executionMode);
       } else {
-        const triageOpts = { requestContent: srcContent, agentConfig, cwd, log };
-        const [resolvedMode, resolvedTier] = await Promise.all([
-          resolveInventoryExecutionMode({ executionPreference, ...triageOpts }),
-          resolveComplexityTier(triageOpts),
-        ]);
-        executionMode = resolvedMode;
-        tier = resolvedTier;
+        executionMode = await resolveInventoryExecutionMode({
+          executionPreference,
+          requestContent: srcContent,
+          agentConfig,
+          cwd,
+          log,
+        });
         printExecutionModeBanner(log, executionMode);
         const spawnPlanGenerator = planGeneratorSpawnerFactory({ agentConfig, cwd });
         if (executionMode === "direct") {
@@ -723,10 +720,7 @@ export const main = async (runtime: MainRuntime = {}) => {
     return;
   }
 
-  // 4. Load tier-appropriate skills
-  const skills: SkillSet = loadTieredSkills(tier, orchrc);
-
-  // 5. Derive per-plan state path
+  // 4. Derive per-plan state path
   const activePlanId =
     executionMode === "direct" ? generatePlanId() : ensureCanonicalPlan(planPath, orchDir);
   const registryPlanPath =
@@ -769,9 +763,20 @@ export const main = async (runtime: MainRuntime = {}) => {
     return;
   }
 
+  // 5. Complexity triage + tier-appropriate skills (after early exits to avoid spending credits)
+  const existingState = await loadState(stateFile);
+  const tier = existingState.tier ?? await resolveComplexityTier({
+    requestContent: planContent ?? "",
+    agentConfig,
+    cwd,
+    log,
+  });
+  const skills: SkillSet = loadTieredSkills(tier, orchrc);
+
   const runId = randomUUID();
   await saveState(stateFile, {
-    ...(await loadState(stateFile)),
+    ...existingState,
+    tier,
     startedAt: new Date().toISOString(),
     currentPhase: "plan",
   });
@@ -801,10 +806,13 @@ export const main = async (runtime: MainRuntime = {}) => {
 
   try {
     if (executionMode === "direct") {
-      const directGroups = buildDirectExecutionGroups(planContent ?? "", planPath);
+      const directGroups = isPlanFormat(planContent ?? "")
+        ? await parsePlan(planPath)
+        : buildDirectExecutionGroups(planContent ?? "", planPath);
+      const totalDirectSlices = directGroups.reduce((n, g) => n + g.slices.length, 0);
       const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
       const hud = createHud(isTTY);
-      hud.update({ totalSlices: 1, completedSlices: 0, startTime: Date.now() });
+      hud.update({ totalSlices: totalDirectSlices, completedSlices: 0, startTime: Date.now() });
       log = hud.wrapLog(origLog);
       for (const line of earlyLog) {
         log(line);

@@ -468,51 +468,61 @@ Rules:
   }
 
   private async runDirectExecution(group: Group, reviewBase: string): Promise<void> {
-    const directSlice = group.slices[0];
-    if (!directSlice) {
+    if (group.slices.length === 0) {
       return;
     }
 
-    const unit = this.directUnit(directSlice.content, directSlice.number);
     this.sliceSkipFlag = false;
     this.progressSink.clearSkipping();
-
     const verifyBaseSha = await this.git.captureRef();
-    this.phase = transition(this.phase, { kind: "StartPlanning", sliceNumber: unit.sliceNumber });
 
-    let pteResult = await this.planThenExecute(unit.content, unit.sliceNumber);
-    if (pteResult.replan) {
-      pteResult = await this.planThenExecute(unit.content, unit.sliceNumber, true);
+    // Execute each slice sequentially — no verification between slices
+    let lastTddResult: Awaited<ReturnType<typeof this.planThenExecute>>["tddResult"] | undefined;
+    for (const slice of group.slices) {
+      const unit = this.directUnit(slice.content, slice.number);
+      this.phase = transition(this.phase, { kind: "StartPlanning", sliceNumber: unit.sliceNumber });
+
+      let pteResult = await this.planThenExecute(unit.content, unit.sliceNumber);
+      if (pteResult.replan) {
+        pteResult = await this.planThenExecute(unit.content, unit.sliceNumber, true);
+      }
+
+      if (pteResult.skipped) {
+        this.failIncompleteExecutionUnit(unit, "execution was skipped before delivery");
+      }
+
+      let tddResult = pteResult.tddResult;
+
+      if (pteResult.hardInterrupt) {
+        const guidance = pteResult.hardInterrupt;
+        this.hardInterruptPending = null;
+        await this.respawnTdd();
+        this.progressSink.logBadge("tdd", "implementing...");
+        await this.enterPhase("tdd", unit.sliceNumber);
+        tddResult = await this.withRetry(
+          () => this.tddAgent!.send(this.prompts.withBrief(guidance)),
+          this.tddAgent!,
+          "tdd",
+          "tdd-interrupt",
+        );
+        this.phase = { kind: "Verifying", sliceNumber: unit.sliceNumber };
+      }
+
+      this.tddIsFirst = false;
+
+      if (tddResult.needsInput) {
+        await this.followUp(tddResult, this.tddAgent!);
+      }
+
+      await this.commitSweep(unit.label);
+      lastTddResult = tddResult;
+      this.progressSink.logBadge("tdd", `slice ${slice.number} done`);
     }
 
-    if (pteResult.skipped) {
-      this.failIncompleteExecutionUnit(unit, "execution was skipped before delivery");
-    }
-
-    let tddResult = pteResult.tddResult;
-
-    if (pteResult.hardInterrupt) {
-      const guidance = pteResult.hardInterrupt;
-      this.hardInterruptPending = null;
-      await this.respawnTdd();
-      this.progressSink.logBadge("tdd", "implementing...");
-      await this.enterPhase("tdd", unit.sliceNumber);
-      tddResult = await this.withRetry(
-        () => this.tddAgent!.send(this.prompts.withBrief(guidance)),
-        this.tddAgent!,
-        "tdd",
-        "tdd-interrupt",
-      );
-      this.phase = { kind: "Verifying", sliceNumber: unit.sliceNumber };
-    }
-
-    this.tddIsFirst = false;
-
-    if (tddResult.needsInput) {
-      await this.followUp(tddResult, this.tddAgent!);
-    }
-
-    await this.commitSweep(unit.label);
+    // Verify/review once at the end using the full group content as the unit
+    const lastSlice = group.slices[group.slices.length - 1]!;
+    const fullContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
+    const unit = this.directUnit(fullContent, lastSlice.number);
 
     const triage = await this.triageDiff(verifyBaseSha);
     if (triage.runCompleteness) {
@@ -522,7 +532,7 @@ Rules:
     const directResult = await this.runExecutionUnit(
       unit,
       reviewBase,
-      tddResult,
+      lastTddResult!,
       verifyBaseSha,
       triage,
     );

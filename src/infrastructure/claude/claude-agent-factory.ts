@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import type { AgentStyle } from "#domain/agent-types.js";
-import { BOT_PLAN, BOT_GAP } from "#ui/display.js";
+import { BOT_PLAN } from "#ui/display.js";
 import { createClaudeAgent, type ClaudeAgentProcess } from "./claude-agent-process.js";
 
 // ─── Agent helpers ───────────────────────────────────────────────────────────
@@ -57,26 +57,10 @@ export const spawnClaudePlanAgent = (
     cwd,
   });
 
-const planSkillContent = readFileSync(
-  resolve(import.meta.dirname, "..", "..", "..", "skills", "plan.md"),
-  "utf-8",
-);
-
 const generatePlanSkillContent = readFileSync(
   resolve(import.meta.dirname, "..", "..", "..", "skills", "generate-plan.md"),
   "utf-8",
 );
-
-const gapSkillContent = readFileSync(
-  resolve(import.meta.dirname, "..", "..", "..", "skills", "gap.md"),
-  "utf-8",
-);
-
-export const spawnClaudeGapAgent = (cwd?: string, model?: string): ClaudeAgentProcess =>
-  spawnClaudeAgent(BOT_GAP, gapSkillContent, undefined, cwd, model);
-
-export const spawnClaudePlanAgentWithSkill = (cwd?: string, model?: string): ClaudeAgentProcess =>
-  spawnClaudePlanAgent(BOT_PLAN, planSkillContent, cwd, model);
 
 export const spawnClaudeGeneratePlanAgent = (cwd?: string, model?: string): ClaudeAgentProcess =>
   spawnClaudeAgent(BOT_PLAN, generatePlanSkillContent, undefined, cwd, model);

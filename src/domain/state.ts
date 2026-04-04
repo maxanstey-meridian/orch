@@ -1,5 +1,5 @@
-import type { Provider } from "./config.js";
-import type { ExecutionMode } from "./config.js";
+import type { Provider, ExecutionMode } from "./config.js";
+import type { ComplexityTier } from "./triage.js";
 
 export type PersistedPhase = "tdd" | "review" | "verify" | "gap" | "final" | "plan";
 
@@ -12,6 +12,7 @@ export type OrchestratorState = {
   readonly startedAt?: string;
   readonly completedAt?: string;
   readonly executionMode?: ExecutionMode;
+  readonly tier?: ComplexityTier;
   readonly currentPhase?: PersistedPhase;
   readonly currentSlice?: number;
   readonly currentGroup?: string;
