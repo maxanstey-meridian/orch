@@ -1252,6 +1252,7 @@ const runMainWithWorkPlanMocks = async (
   options?: {
     planContent?: string;
     preloadedState?: Record<string, unknown>;
+    assertGitRepoImplementation?: (cwd: string) => Promise<void>;
   },
 ) => {
   const planPath = join(tempDir, "plan.md");
@@ -1268,6 +1269,13 @@ const runMainWithWorkPlanMocks = async (
       dispose: vi.fn(),
     })),
   }));
+  const assertGitRepo = vi.fn(options?.assertGitRepoImplementation ?? (async () => undefined));
+  const runFingerprint = vi.fn().mockResolvedValue({ brief: "brief text" });
+  const resolveWorktree = vi.fn().mockResolvedValue({
+    cwd: tempDir,
+    worktreeInfo: null,
+    skipStash: true,
+  });
   const complexityTriageSpawnerFactory = vi.fn(() => () => ({
     send: vi.fn(),
     kill: vi.fn(),
@@ -1278,7 +1286,7 @@ const runMainWithWorkPlanMocks = async (
     createContainer,
   }));
   vi.doMock("#infrastructure/git/repo-check.js", () => ({
-    assertGitRepo: vi.fn().mockResolvedValue(undefined),
+    assertGitRepo,
   }));
   vi.doMock("#infrastructure/config/orchrc.js", () => ({
     loadAndResolveOrchrConfig: vi.fn(() => ({
@@ -1314,7 +1322,7 @@ const runMainWithWorkPlanMocks = async (
     };
   });
   vi.doMock("#infrastructure/fingerprint.js", () => ({
-    runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+    runFingerprint,
   }));
   vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
     parsePlan: vi.fn().mockResolvedValue([
@@ -1337,11 +1345,7 @@ const runMainWithWorkPlanMocks = async (
     runCleanup: vi.fn(),
   }));
   vi.doMock("#infrastructure/git/worktree-setup.js", () => ({
-    resolveWorktree: vi.fn().mockResolvedValue({
-      cwd: tempDir,
-      worktreeInfo: null,
-      skipStash: true,
-    }),
+    resolveWorktree,
   }));
   vi.doMock("#infrastructure/git/git.js", () => ({
     getStatus: vi.fn().mockResolvedValue(""),
@@ -1421,7 +1425,16 @@ const runMainWithWorkPlanMocks = async (
     vi.resetModules();
   }
 
-  return { createContainer, exit, planPath, stateFile, complexityTriageSpawnerFactory };
+  return {
+    assertGitRepo,
+    createContainer,
+    exit,
+    planPath,
+    runFingerprint,
+    resolveWorktree,
+    stateFile,
+    complexityTriageSpawnerFactory,
+  };
 };
 
 const runMainWithInventoryPlanMocks = async (options?: {
@@ -1434,6 +1447,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
   inputAlreadyPlan?: boolean;
   inventoryContent?: string;
   generatedPlanId?: string;
+  assertGitRepoImplementation?: (cwd: string) => Promise<void>;
 }) => {
   const inventoryPath = join(tempDir, "inventory.md");
   await writeFile(
@@ -1471,6 +1485,13 @@ const runMainWithInventoryPlanMocks = async (options?: {
   }));
   const doGeneratePlan = vi.fn().mockResolvedValue(generatedPlanPath);
   const generatePlanId = vi.fn(() => options?.generatedPlanId ?? "direct01");
+  const assertGitRepo = vi.fn(options?.assertGitRepoImplementation ?? (async () => undefined));
+  const runFingerprint = vi.fn().mockResolvedValue({ brief: "brief text" });
+  const resolveWorktree = vi.fn().mockResolvedValue({
+    cwd: tempDir,
+    worktreeInfo: null,
+    skipStash: true,
+  });
   const triageAgent = {
     send: options?.requestTriageSendError === undefined
       ? vi.fn().mockResolvedValue({
@@ -1499,7 +1520,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     createContainer,
   }));
   vi.doMock("#infrastructure/git/repo-check.js", () => ({
-    assertGitRepo: vi.fn().mockResolvedValue(undefined),
+    assertGitRepo,
   }));
   vi.doMock("#infrastructure/config/orchrc.js", () => ({
     loadAndResolveOrchrConfig: vi.fn(() => ({
@@ -1535,7 +1556,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     };
   });
   vi.doMock("#infrastructure/fingerprint.js", () => ({
-    runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+    runFingerprint,
   }));
   vi.doMock("#infrastructure/plan/plan-generator.js", async () => {
     const actual =
@@ -1592,11 +1613,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     runCleanup: vi.fn(),
   }));
   vi.doMock("#infrastructure/git/worktree-setup.js", () => ({
-    resolveWorktree: vi.fn().mockResolvedValue({
-      cwd: tempDir,
-      worktreeInfo: null,
-      skipStash: true,
-    }),
+    resolveWorktree,
   }));
   vi.doMock("#infrastructure/git/git.js", () => ({
     getStatus: vi.fn().mockResolvedValue(""),
@@ -1674,6 +1691,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
   }
 
   return {
+    assertGitRepo,
     createContainer,
     execute,
     doGeneratePlan,
@@ -1685,10 +1703,107 @@ const runMainWithInventoryPlanMocks = async (options?: {
     hudLogs,
     inventoryPath,
     registryPath,
+    resolveWorktree,
+    runFingerprint,
     triageAgent,
     logSection,
   };
 };
+
+describe("main tree flag validation", () => {
+  const runWithMode = async (
+    mode: "work" | "plan",
+    args: string[],
+    options?: {
+      assertGitRepoImplementation?: (cwd: string) => Promise<void>;
+    },
+  ) =>
+    mode === "work"
+      ? runMainWithWorkPlanMocks(args, options)
+      : runMainWithInventoryPlanMocks({
+          args,
+          assertGitRepoImplementation: options?.assertGitRepoImplementation,
+        });
+
+  it.each(["work", "plan"] as const)(
+    "exits before bootstrap when --tree is missing a value in %s mode",
+    async (mode) => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const result = await runWithMode(mode, ["--tree"]);
+
+      expect(errorSpy).toHaveBeenCalledWith("--tree requires a path value.");
+      expect(result.exit).toHaveBeenCalledWith(1);
+      expect(result.assertGitRepo).not.toHaveBeenCalled();
+      expect(result.runFingerprint).not.toHaveBeenCalled();
+      expect(result.resolveWorktree).not.toHaveBeenCalled();
+      expect(result.createContainer).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
+    },
+  );
+
+  it.each(["work", "plan"] as const)(
+    "rejects combining --tree with --branch in %s mode",
+    async (mode) => {
+      const treePath = join(tempDir, `${mode}-existing-tree`);
+      await mkdir(treePath, { recursive: true });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const result = await runWithMode(mode, ["--tree", treePath, "--branch", "feature/existing"]);
+
+      expect(errorSpy).toHaveBeenCalledWith("--tree and --branch are mutually exclusive.");
+      expect(result.exit).toHaveBeenCalledWith(1);
+      expect(result.assertGitRepo).not.toHaveBeenCalled();
+      expect(result.runFingerprint).not.toHaveBeenCalled();
+      expect(result.resolveWorktree).not.toHaveBeenCalled();
+      expect(result.createContainer).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
+    },
+  );
+
+  it.each(["work", "plan"] as const)(
+    "rejects a nonexistent --tree path before bootstrap in %s mode",
+    async (mode) => {
+      const treePath = join(tempDir, `${mode}-missing-tree`);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const result = await runWithMode(mode, ["--tree", treePath]);
+
+      expect(errorSpy).toHaveBeenCalledWith(`--tree path does not exist: ${treePath}`);
+      expect(result.exit).toHaveBeenCalledWith(1);
+      expect(result.assertGitRepo).not.toHaveBeenCalled();
+      expect(result.runFingerprint).not.toHaveBeenCalled();
+      expect(result.resolveWorktree).not.toHaveBeenCalled();
+      expect(result.createContainer).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
+    },
+  );
+
+  it.each(["work", "plan"] as const)(
+    "rejects a non-git --tree directory before planning or execution in %s mode",
+    async (mode) => {
+      const treePath = join(tempDir, `${mode}-plain-dir`);
+      await mkdir(treePath, { recursive: true });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const result = await runWithMode(mode, ["--tree", treePath], {
+        assertGitRepoImplementation: async (cwd) => {
+          if (cwd === treePath) {
+            throw new Error(
+              'Not a git repository. The orchestrator requires git for change tracking.\nRun: git init && git commit --allow-empty -m "init"',
+            );
+          }
+        },
+      });
+
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Not a git repository"));
+      expect(result.exit).toHaveBeenCalledWith(1);
+      expect(result.assertGitRepo).toHaveBeenCalledTimes(2);
+      expect(result.assertGitRepo.mock.calls[0]?.[0]).not.toBe(result.assertGitRepo.mock.calls[1]?.[0]);
+      expect(result.assertGitRepo.mock.calls[1]?.[0]).toContain(`${mode}-plain-dir`);
+      expect(result.runFingerprint).not.toHaveBeenCalled();
+      expect(result.resolveWorktree).not.toHaveBeenCalled();
+      expect(result.createContainer).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
+    },
+  );
+});
 
 describe("main execution preference wiring", () => {
   it("passes auto and sliced into createContainer when no execution mode override is present", async () => {

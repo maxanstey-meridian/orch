@@ -23,6 +23,7 @@ import {
   parseBranchFlag,
   parseExecutionPreference,
   parseProviderFlag,
+  parseTreeFlag,
 } from "#infrastructure/cli/cli-args.js";
 import { parseSubcommand } from "#infrastructure/cli/subcommands.js";
 import { loadAndResolveOrchrConfig, buildOrchrSummary } from "#infrastructure/config/orchrc.js";
@@ -570,6 +571,14 @@ export const main = async (runtime: MainRuntime = {}) => {
   const groupFilter = getArg("--group");
   const initMode = args.includes("--init");
   const showPlan = args.includes("--show-plan");
+  let treePath: string | undefined;
+  try {
+    const rawTreePath = parseTreeFlag(args);
+    treePath = rawTreePath === undefined ? undefined : resolve(rawTreePath);
+  } catch (error) {
+    exitWithError(error instanceof Error ? error.message : String(error));
+    return;
+  }
   let executionPreference: ExecutionPreference;
   try {
     executionPreference = parseExecutionPreference(args);
@@ -593,8 +602,16 @@ export const main = async (runtime: MainRuntime = {}) => {
     );
     return;
   }
+  if (treePath !== undefined && args.includes("--branch")) {
+    exitWithError("--tree and --branch are mutually exclusive.");
+    return;
+  }
   if (workMode && !workPath) {
     exitWithError("--work requires a plan path. Usage: --work <plan.md>");
+    return;
+  }
+  if (treePath !== undefined && !existsSync(treePath)) {
+    exitWithError(`--tree path does not exist: ${treePath}`);
     return;
   }
   if (cleanupMode && !workMode) {
@@ -613,6 +630,14 @@ export const main = async (runtime: MainRuntime = {}) => {
   }
 
   await assertGitRepo(cwd);
+  if (treePath !== undefined) {
+    try {
+      await assertGitRepo(treePath);
+    } catch (error) {
+      exitWithError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+  }
 
   // 1. Load config
   const orchrc = loadAndResolveOrchrConfig(cwd);

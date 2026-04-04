@@ -41,6 +41,7 @@ vi.mock("#infrastructure/cli/cli-args.js", () => ({
   parseBranchFlag: mocks.parseBranchFlag,
   parseExecutionPreference: mocks.parseExecutionPreference,
   parseProviderFlag: mocks.parseProviderFlag,
+  parseTreeFlag: vi.fn(),
 }));
 
 vi.mock("#infrastructure/config/orchrc.js", () => ({

@@ -40,6 +40,20 @@ export const parseBranchFlag = (args: string[], planId: string): string | undefi
   return next;
 };
 
+export const parseTreeFlag = (args: string[]): string | undefined => {
+  const idx = args.indexOf("--tree");
+  if (idx === -1) {
+    return undefined;
+  }
+
+  const value = args[idx + 1];
+  if (!value || value.startsWith("-")) {
+    throw new Error("--tree requires a path value.");
+  }
+
+  return value;
+};
+
 export const parseExecutionPreference = (args: string[]): ExecutionPreference => {
   const selectedFlags = EXECUTION_PREFERENCE_FLAGS.filter(([flag]) => args.includes(flag));
   if (selectedFlags.length === 0) {
