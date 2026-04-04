@@ -56,25 +56,46 @@ export type ResumeCheck = { readonly ok: true } | { readonly ok: false; readonly
 
 export const checkWorktreeResume = async (
   branchFlag: string | undefined,
+  treePath: string | undefined,
   state: OrchestratorState,
 ): Promise<ResumeCheck> => {
-  if (!branchFlag && state.worktree) {
+  if (!state.worktree) {
+    if (
+      (branchFlag || treePath) &&
+      (state.lastCompletedSlice != null || state.lastCompletedGroup != null)
+    ) {
+      return {
+        ok: false,
+        message: `Previous run was in-place (no --branch). Use --reset to start fresh before switching to worktree mode.`,
+      };
+    }
+
+    return { ok: true };
+  }
+
+  if (state.worktree.managed) {
+    if (!branchFlag) {
+      return {
+        ok: false,
+        message: `Previous run used --branch ${state.worktree.branch}. Pass --branch again to resume, or --reset to start fresh.`,
+      };
+    }
+  } else if (branchFlag) {
     return {
       ok: false,
-      message: `Previous run used --branch ${state.worktree.branch}. Pass --branch again to resume, or --reset to start fresh.`,
+      message: `Previous run used --tree ${state.worktree.path}. Omit --branch and resume that tree, or --reset to start fresh.`,
+    };
+  } else if (treePath !== undefined && treePath !== state.worktree.path) {
+    return {
+      ok: false,
+      message: `Previous run used --tree ${state.worktree.path}. Pass --tree ${state.worktree.path} again to resume, or --reset to start fresh.`,
     };
   }
+
   if (
-    branchFlag &&
-    !state.worktree &&
-    (state.lastCompletedSlice != null || state.lastCompletedGroup != null)
+    state.worktree &&
+    (state.worktree.managed ? branchFlag !== undefined : true)
   ) {
-    return {
-      ok: false,
-      message: `Previous run was in-place (no --branch). Use --reset to start fresh before switching to worktree mode.`,
-    };
-  }
-  if (branchFlag && state.worktree) {
     const status = await verifyWorktree(state.worktree.path, state.worktree.branch);
     if (status.ok) {
       if (state.lastCompletedSlice != null && state.lastCompletedSlice > 0) {
@@ -101,6 +122,7 @@ export const checkWorktreeResume = async (
       };
     }
   }
+
   return { ok: true };
 };
 
@@ -110,7 +132,7 @@ export const runCleanup = async (
   repoRoot: string,
 ): Promise<string> => {
   let removedWorktree = false;
-  if (state.worktree) {
+  if (state.worktree?.managed) {
     try {
       await removeWorktree(state.worktree.path, repoRoot);
       removedWorktree = true;
@@ -119,6 +141,10 @@ export const runCleanup = async (
     }
   }
   await clearState(stateFile);
+  if (state.worktree && !state.worktree.managed) {
+    return `Preserved external tree at ${state.worktree.path}. State cleared.`;
+  }
+
   return removedWorktree
     ? `Removed worktree at ${state.worktree!.path}. State cleared.`
     : "No worktree to clean up. State cleared.";

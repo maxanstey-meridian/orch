@@ -25,9 +25,11 @@ afterEach(async () => {
 });
 
 describe("checkWorktreeResume", () => {
-  it("errors when no --branch but state has worktree", async () => {
-    const state = { worktree: { path: "/fake", branch: "orch/x", baseSha: "abc123" } };
-    const result = await checkWorktreeResume(undefined, state);
+  it("errors when no --branch but state has a managed worktree", async () => {
+    const state = {
+      worktree: { path: "/fake", branch: "orch/x", baseSha: "abc123", managed: true },
+    };
+    const result = await checkWorktreeResume(undefined, undefined, state);
     expect(result).toEqual({
       ok: false,
       message: expect.stringContaining("Previous run used --branch"),
@@ -37,7 +39,17 @@ describe("checkWorktreeResume", () => {
 
   it("errors when --branch but previous run was in-place with progress", async () => {
     const state = { lastCompletedSlice: 3 };
-    const result = await checkWorktreeResume("orch/new", state);
+    const result = await checkWorktreeResume("orch/new", undefined, state);
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining("Previous run was in-place"),
+    });
+    expect((result as { message: string }).message).toContain("--reset");
+  });
+
+  it("errors when --tree but previous run was in-place with progress", async () => {
+    const state = { lastCompletedSlice: 3 };
+    const result = await checkWorktreeResume(undefined, join(repoDir, "external-tree"), state);
     expect(result).toEqual({
       ok: false,
       message: expect.stringContaining("Previous run was in-place"),
@@ -47,7 +59,7 @@ describe("checkWorktreeResume", () => {
 
   it("errors when --branch but previous run was in-place with only lastCompletedGroup progress", async () => {
     const state = { lastCompletedGroup: "Auth" };
-    const result = await checkWorktreeResume("orch/new", state);
+    const result = await checkWorktreeResume("orch/new", undefined, state);
     expect(result).toEqual({
       ok: false,
       message: expect.stringContaining("Previous run was in-place"),
@@ -58,8 +70,10 @@ describe("checkWorktreeResume", () => {
   it("returns ok when state worktree exists and is valid", async () => {
     const treePath = await createWorktree(repoDir, "plan-resume", "orch/plan-resume");
     const baseSha = exec("git rev-parse HEAD", treePath);
-    const state = { worktree: { path: treePath, branch: "orch/plan-resume", baseSha } };
-    const result = await checkWorktreeResume("orch/plan-resume", state);
+    const state = {
+      worktree: { path: treePath, branch: "orch/plan-resume", baseSha, managed: true },
+    };
+    const result = await checkWorktreeResume("orch/plan-resume", undefined, state);
     expect(result).toEqual({ ok: true });
   });
 
@@ -67,10 +81,10 @@ describe("checkWorktreeResume", () => {
     const treePath = await createWorktree(repoDir, "plan-fresh", "orch/plan-fresh");
     const baseSha = exec("git rev-parse HEAD", treePath);
     const state = {
-      worktree: { path: treePath, branch: "orch/plan-fresh", baseSha },
+      worktree: { path: treePath, branch: "orch/plan-fresh", baseSha, managed: true },
       lastCompletedSlice: 0,
     };
-    const result = await checkWorktreeResume("orch/plan-fresh", state);
+    const result = await checkWorktreeResume("orch/plan-fresh", undefined, state);
     expect(result).toEqual({ ok: true });
   });
 
@@ -78,8 +92,10 @@ describe("checkWorktreeResume", () => {
     const treePath = await createWorktree(repoDir, "plan-br", "orch/plan-br");
     exec("git checkout -b other", treePath);
     const baseSha = exec("git rev-parse HEAD", treePath);
-    const state = { worktree: { path: treePath, branch: "orch/plan-br", baseSha } };
-    const result = await checkWorktreeResume("orch/plan-br", state);
+    const state = {
+      worktree: { path: treePath, branch: "orch/plan-br", baseSha, managed: true },
+    };
+    const result = await checkWorktreeResume("orch/plan-br", undefined, state);
     expect(result).toEqual({
       ok: false,
       message: expect.stringContaining("is on branch"),
@@ -93,19 +109,26 @@ describe("checkWorktreeResume", () => {
     const treePath = await createWorktree(repoDir, "plan-stale", "orch/plan-stale");
     const baseSha = exec("git rev-parse HEAD", treePath);
     const state = {
-      worktree: { path: treePath, branch: "orch/plan-stale", baseSha },
+      worktree: { path: treePath, branch: "orch/plan-stale", baseSha, managed: true },
       lastCompletedSlice: 2,
     };
-    const result = await checkWorktreeResume("orch/plan-stale", state);
+    const result = await checkWorktreeResume("orch/plan-stale", undefined, state);
     expect(result).toEqual({
       ok: false,
       message: expect.stringContaining("Commits missing"),
     });
   });
 
-  it("errors when state worktree path is missing", async () => {
-    const state = { worktree: { path: "/tmp/gone-" + Date.now(), branch: "orch/x", baseSha: "abc" } };
-    const result = await checkWorktreeResume("orch/x", state);
+  it("errors when managed worktree path is missing", async () => {
+    const state = {
+      worktree: {
+        path: "/tmp/gone-" + Date.now(),
+        branch: "orch/x",
+        baseSha: "abc",
+        managed: true,
+      },
+    };
+    const result = await checkWorktreeResume("orch/x", undefined, state);
     expect(result).toEqual({
       ok: false,
       message: expect.stringContaining("Worktree missing"),
@@ -113,23 +136,113 @@ describe("checkWorktreeResume", () => {
     expect((result as { message: string }).message).toContain("--reset");
   });
 
+  it("returns ok for an external tree without requiring --branch", async () => {
+    const externalTreePath = join(repoDir, "external-tree");
+    exec(`git worktree add ${externalTreePath}`, repoDir);
+    const baseSha = exec("git rev-parse HEAD", externalTreePath);
+    const branch = exec("git branch --show-current", externalTreePath);
+    const state = {
+      worktree: { path: externalTreePath, branch, baseSha, managed: false },
+    };
+
+    const result = await checkWorktreeResume(undefined, undefined, state);
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("errors when an external tree is resumed from a different --tree path", async () => {
+    const externalTreePath = join(repoDir, "external-tree");
+    exec(`git worktree add ${externalTreePath}`, repoDir);
+    const baseSha = exec("git rev-parse HEAD", externalTreePath);
+    const branch = exec("git branch --show-current", externalTreePath);
+    const state = {
+      worktree: { path: externalTreePath, branch, baseSha, managed: false },
+    };
+
+    const result = await checkWorktreeResume(undefined, join(repoDir, "other-tree"), state);
+
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining("Previous run used --tree"),
+    });
+    expect((result as { message: string }).message).toContain(externalTreePath);
+  });
+
+  it("errors when an external tree resume switches to --branch mode", async () => {
+    const externalTreePath = join(repoDir, "external-branch-mode");
+    exec(`git worktree add ${externalTreePath}`, repoDir);
+    const baseSha = exec("git rev-parse HEAD", externalTreePath);
+    const branch = exec("git branch --show-current", externalTreePath);
+    const state = {
+      worktree: { path: externalTreePath, branch, baseSha, managed: false },
+    };
+
+    const result = await checkWorktreeResume("orch/new", undefined, state);
+
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining("Previous run used --tree"),
+    });
+    expect((result as { message: string }).message).toContain("Omit --branch");
+  });
+
+  it("errors when an external tree is on the wrong branch", async () => {
+    const externalTreePath = join(repoDir, "external-branch");
+    exec(`git worktree add ${externalTreePath}`, repoDir);
+    const baseSha = exec("git rev-parse HEAD", externalTreePath);
+    const branch = exec("git branch --show-current", externalTreePath);
+    exec("git checkout -b other", externalTreePath);
+    const state = {
+      worktree: { path: externalTreePath, branch, baseSha, managed: false },
+    };
+
+    const result = await checkWorktreeResume(undefined, externalTreePath, state);
+
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining("is on branch"),
+    });
+    expect((result as { message: string }).message).toContain("other");
+    expect((result as { message: string }).message).toContain(branch);
+  });
+
+  it("errors when an external tree HEAD has not advanced but slices are marked complete", async () => {
+    const externalTreePath = join(repoDir, "external-stale");
+    exec(`git worktree add ${externalTreePath}`, repoDir);
+    const baseSha = exec("git rev-parse HEAD", externalTreePath);
+    const branch = exec("git branch --show-current", externalTreePath);
+    const state = {
+      worktree: { path: externalTreePath, branch, baseSha, managed: false },
+      lastCompletedSlice: 2,
+    };
+
+    const result = await checkWorktreeResume(undefined, externalTreePath, state);
+
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining("Commits missing"),
+    });
+  });
+
   it("returns ok with no worktree state and no branch flag", async () => {
-    const result = await checkWorktreeResume(undefined, {});
+    const result = await checkWorktreeResume(undefined, undefined, {});
     expect(result).toEqual({ ok: true });
   });
 
   it("returns ok for fresh start with --branch and empty state", async () => {
-    const result = await checkWorktreeResume("orch/new", {});
+    const result = await checkWorktreeResume("orch/new", undefined, {});
     expect(result).toEqual({ ok: true });
   });
 });
 
 describe("runCleanup", () => {
-  it("removes worktree directory and clears state file when worktree state exists", async () => {
+  it("removes managed worktree directory and clears state file when worktree state exists", async () => {
     const treePath = await createWorktree(repoDir, "plan-cleanup", "orch/plan-cleanup");
     const baseSha = exec("git rev-parse HEAD", treePath);
     const stateFile = join(repoDir, ".orch/state/plan-cleanup.json");
-    const state = { worktree: { path: treePath, branch: "orch/plan-cleanup", baseSha } };
+    const state = {
+      worktree: { path: treePath, branch: "orch/plan-cleanup", baseSha, managed: true },
+    };
     await mkdir(join(repoDir, ".orch/state"), { recursive: true });
     await saveState(stateFile, state);
 
@@ -157,7 +270,9 @@ describe("runCleanup", () => {
     const treePath = await createWorktree(repoDir, "plan-gone", "orch/plan-gone");
     const baseSha = exec("git rev-parse HEAD", treePath);
     const stateFile = join(repoDir, ".orch/state/plan-gone.json");
-    const state = { worktree: { path: treePath, branch: "orch/plan-gone", baseSha } };
+    const state = {
+      worktree: { path: treePath, branch: "orch/plan-gone", baseSha, managed: true },
+    };
     await mkdir(join(repoDir, ".orch/state"), { recursive: true });
     await saveState(stateFile, state);
     // Manually remove the worktree before cleanup
@@ -180,6 +295,27 @@ describe("runCleanup", () => {
     const s = await stat(treePath);
     expect(s.isDirectory()).toBe(true);
     expect(message).toContain("No worktree to clean up");
+  });
+
+  it("preserves external trees and only clears Orch state", async () => {
+    const externalTreePath = join(repoDir, "external-cleanup");
+    exec(`git worktree add ${externalTreePath}`, repoDir);
+    const baseSha = exec("git rev-parse HEAD", externalTreePath);
+    const branch = exec("git branch --show-current", externalTreePath);
+    const stateFile = join(repoDir, ".orch/state/plan-external-cleanup.json");
+    const state = {
+      worktree: { path: externalTreePath, branch, baseSha, managed: false },
+    };
+    await mkdir(join(repoDir, ".orch/state"), { recursive: true });
+    await saveState(stateFile, state);
+
+    const message = await runCleanup(stateFile, state, repoDir);
+
+    const externalTreeStats = await stat(externalTreePath);
+    expect(externalTreeStats.isDirectory()).toBe(true);
+    await expect(stat(stateFile)).rejects.toThrow();
+    expect(message).toContain("Preserved external tree");
+    expect(message).toContain(externalTreePath);
   });
 
   it("succeeds when state file does not exist", async () => {

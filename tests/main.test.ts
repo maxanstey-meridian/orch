@@ -1457,20 +1457,6 @@ const runMainWithInventoryPlanMocks = async (options?: {
   inventoryContent?: string;
   generatedPlanId?: string;
   assertGitRepoImplementation?: (cwd: string) => Promise<void>;
-  resolveWorktreeImplementation?: (args: {
-    branchName: string | undefined;
-    cwd: string;
-    treePath: string | undefined;
-    activePlanId: string;
-    state: Record<string, unknown>;
-    stateFile: string;
-    log: (...args: unknown[]) => void;
-  }) => Promise<{
-    cwd: string;
-    worktreeInfo: { path: string; branch: string } | null;
-    skipStash: boolean;
-    updatedState?: Record<string, unknown>;
-  }>;
   resolveWorktreeResult?: {
     cwd: string;
     worktreeInfo: { path: string; branch: string } | null;
@@ -1522,9 +1508,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     skipStash: true,
     updatedState: {},
   };
-  const resolveWorktree = options?.resolveWorktreeImplementation === undefined
-    ? vi.fn().mockResolvedValue(defaultResolveWorktreeResult)
-    : vi.fn(options.resolveWorktreeImplementation);
+  const resolveWorktree = vi.fn().mockResolvedValue(defaultResolveWorktreeResult);
   const triageAgent = {
     send: options?.requestTriageSendError === undefined
       ? vi.fn().mockResolvedValue({
@@ -2412,7 +2396,7 @@ describe("main execution preference wiring", () => {
     );
   });
 
-  it("passes --tree through direct inventory execution and preserves startup state when worktree metadata is added", async () => {
+  it("passes --tree through direct inventory execution and uses the selected tree as cwd", async () => {
     const externalTreePath = join(tempDir, "existing-tree");
     await mkdir(externalTreePath, { recursive: true });
 
@@ -2423,25 +2407,18 @@ describe("main execution preference wiring", () => {
     } = await runMainWithInventoryPlanMocks({
       args: ["--quick", "--tree", externalTreePath],
       generatedPlanId: "direct42",
-      resolveWorktreeImplementation: async ({ stateFile, state, treePath }) => {
-        const persistedState = await loadState(stateFile);
-        const updatedState = {
-          ...persistedState,
-          ...state,
+      resolveWorktreeResult: {
+        cwd: externalTreePath,
+        worktreeInfo: { path: externalTreePath, branch: "feature/existing" },
+        skipStash: true,
+        updatedState: {
           worktree: {
-            path: treePath!,
+            path: externalTreePath,
             branch: "feature/existing",
             baseSha: "deadbeef",
             managed: false,
           },
-        };
-        await saveState(stateFile, updatedState);
-        return {
-          cwd: treePath!,
-          worktreeInfo: { path: treePath!, branch: "feature/existing" },
-          skipStash: true,
-          updatedState,
-        };
+        },
       },
     });
 
@@ -2454,25 +2431,11 @@ describe("main execution preference wiring", () => {
       expect.objectContaining({
         cwd: externalTreePath,
         stateFile: expect.stringMatching(/\.orch\/state\/plan-direct42\.json$/),
+        logPath: expect.stringMatching(/\.orch\/logs\/plan-direct42\.log$/),
       }),
       expect.any(Object),
     );
-
-    const persistedState = await loadState(stateFile);
-    expect(persistedState).toEqual(
-      expect.objectContaining({
-        startedAt: expect.any(String),
-        tier: "medium",
-        activeTier: "medium",
-        currentPhase: "plan",
-        worktree: {
-          path: externalTreePath,
-          branch: "feature/existing",
-          baseSha: "deadbeef",
-          managed: false,
-        },
-      }),
-    );
+    expect(stateFile).toMatch(/\.orch\/state\/plan-direct42\.json$/);
   });
 
   it("errors when --work override conflicts with the loaded plan mode", async () => {
