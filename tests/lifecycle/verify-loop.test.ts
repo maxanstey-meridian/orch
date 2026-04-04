@@ -69,7 +69,7 @@ const hasPhaseSubsequence = (
 describe("Verify loop lifecycle", () => {
   it("verify passes first try, slice completes normally", async () => {
     const { uc, hud, spawner, persistence, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      config: { skills: { plan: null, gap: null, review: null } },
       auto: true,
     });
 
@@ -90,7 +90,7 @@ describe("Verify loop lifecycle", () => {
 
   it("verify fails, TDD fixes, re-verify passes", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      config: { skills: { plan: null, gap: null, review: null } },
       auto: true,
     });
 
@@ -126,7 +126,7 @@ describe("Verify loop lifecycle", () => {
 
   it("auto mode retries verify failures up to the shared retry budget", async () => {
     const { uc, hud, spawner, persistence, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, reviewSkill: null, maxReviewCycles: 3 },
+      config: { skills: { plan: null, gap: null, review: null }, maxReviewCycles: 3 },
       auto: true,
     });
 
@@ -157,7 +157,7 @@ describe("Verify loop lifecycle", () => {
 
   it("persists verify and tdd phases across a verify-fix retry", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      config: { skills: { plan: null, gap: null, review: null } },
       auto: true,
     });
 
@@ -186,7 +186,7 @@ describe("Verify loop lifecycle", () => {
 
   it("verify fails, TDD makes no changes, operator chooses retry then passes", async () => {
     const { uc, hud, spawner, persistence, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      config: { skills: { plan: null, gap: null, review: null } },
     });
 
     git.setHasChanges(true);
@@ -220,7 +220,7 @@ describe("Verify loop lifecycle", () => {
 
   it("verify fails, operator chooses skip, throws IncompleteRunError", async () => {
     const { uc, hud, spawner, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      config: { skills: { plan: null, gap: null, review: null } },
     });
 
     // Initial hasChanges=true (so runSlice doesn't skip), but after TDD fix attempt → false (no real changes)
@@ -243,7 +243,7 @@ describe("Verify loop lifecycle", () => {
 
   it("verify fails, operator chooses stop, throws IncompleteRunError", async () => {
     const { uc, hud, spawner, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      config: { skills: { plan: null, gap: null, review: null } },
     });
 
     git.queueHasChanges(true); // completenessCheck
@@ -267,9 +267,7 @@ describe("Verify loop lifecycle", () => {
     const { uc, spawner, persistence, git } = createTestHarness({
       config: {
         executionMode: "grouped",
-        planDisabled: true,
-        gapDisabled: true,
-        reviewSkill: null,
+        skills: { plan: null, gap: null, review: null },
       },
       auto: true,
     });
@@ -316,8 +314,7 @@ describe("Verify loop lifecycle", () => {
     const { uc, hud, spawner, persistence, git } = createTestHarness({
       config: {
         executionMode: "direct",
-        gapDisabled: true,
-        reviewSkill: null,
+        skills: { gap: null, review: null },
       },
       auto: true,
     });
@@ -371,7 +368,7 @@ describe("Verify loop lifecycle", () => {
 
   it("auto mode stops cleanly when verification reports only out-of-scope failures", async () => {
     const { uc, hud, spawner, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      config: { skills: { plan: null, gap: null, review: null } },
       auto: true,
     });
 
@@ -432,7 +429,7 @@ describe("Verify loop lifecycle", () => {
     },
   ])("direct mode stops cleanly when verification reports only $name", async ({ verifyResult, expectedMessage }) => {
     const { uc, hud, spawner, git } = createTestHarness({
-      config: { executionMode: "direct", gapDisabled: true, reviewSkill: null },
+      config: { executionMode: "direct", skills: { gap: null, review: null } },
       auto: true,
     });
 
@@ -472,9 +469,7 @@ describe("Verify loop lifecycle", () => {
     const { uc, hud, spawner, git } = createTestHarness({
       config: {
         executionMode: "grouped",
-        planDisabled: true,
-        gapDisabled: true,
-        reviewSkill: null,
+        skills: { plan: null, gap: null, review: null },
       },
       auto: true,
     });
@@ -514,7 +509,7 @@ describe("Verify loop lifecycle", () => {
 
   it("auto mode stops cleanly when verification reports only pre-existing failures", async () => {
     const { uc, hud, spawner, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      config: { skills: { plan: null, gap: null, review: null } },
       auto: true,
     });
 
@@ -550,7 +545,7 @@ describe("Verify loop lifecycle", () => {
 
   it("auto mode stops cleanly when verification reports only a runner issue", async () => {
     const { uc, hud, spawner, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      config: { skills: { plan: null, gap: null, review: null } },
       auto: true,
     });
 
@@ -588,9 +583,7 @@ describe("Verify loop lifecycle", () => {
     const { uc, hud, spawner, git } = createTestHarness({
       config: {
         executionMode: "grouped",
-        planDisabled: true,
-        gapDisabled: true,
-        reviewSkill: null,
+        skills: { plan: null, gap: null, review: null },
       },
       auto: true,
     });
@@ -632,7 +625,7 @@ describe("Verify loop lifecycle", () => {
 
   it("auto mode stops after a builder-fixable verify failure when the builder makes no relevant change", async () => {
     const { uc, hud, spawner, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, reviewSkill: null },
+      config: { skills: { plan: null, gap: null, review: null } },
       auto: true,
     });
 

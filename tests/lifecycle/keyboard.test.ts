@@ -18,7 +18,7 @@ const makeGroup = (name: string, slices: Slice[]): Group => ({ name, slices });
 describe("Keyboard shortcuts", () => {
   it("pressing S toggles skipping on, pressing S again toggles it off", async () => {
     const { uc, hud, spawner } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
 
@@ -42,7 +42,7 @@ describe("Keyboard shortcuts", () => {
 
   it("pressing Q stops orchestration gracefully", async () => {
     const { uc, hud, spawner, persistence } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
 
@@ -67,10 +67,7 @@ describe("Keyboard shortcuts", () => {
     const { uc, hud, spawner } = createTestHarness({
       config: {
         executionMode: "direct",
-        planDisabled: true,
-        verifySkill: null,
-        reviewSkill: null,
-        gapDisabled: true,
+        skills: { plan: null, verify: null, review: null, gap: null },
       },
       auto: true,
     });
@@ -98,10 +95,7 @@ describe("Keyboard shortcuts", () => {
     const { uc, hud, spawner } = createTestHarness({
       config: {
         executionMode: "grouped",
-        planDisabled: true,
-        verifySkill: null,
-        reviewSkill: null,
-        gapDisabled: true,
+        skills: { plan: null, verify: null, review: null, gap: null },
       },
       auto: true,
     });

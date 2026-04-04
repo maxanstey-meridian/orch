@@ -31,7 +31,7 @@ ${JSON.stringify({
 describe("log writer lifecycle", () => {
   it("orchestrator events are written to log writer", async () => {
     const { uc, hud, spawner, git, logWriter } = createTestHarness({
-      config: { gapDisabled: true },
+      config: { skills: { gap: null } },
     });
 
     git.setHasChanges(true);
@@ -53,7 +53,7 @@ describe("log writer lifecycle", () => {
 
   it("phase changes are written to log writer", async () => {
     const { uc, hud, spawner, git, logWriter } = createTestHarness({
-      config: { gapDisabled: true },
+      config: { skills: { gap: null } },
     });
 
     git.setHasChanges(true);
@@ -74,7 +74,7 @@ describe("log writer lifecycle", () => {
 
   it("log writer is closed after execute completes", async () => {
     const { uc, hud, spawner, git, logWriter } = createTestHarness({
-      config: { gapDisabled: true },
+      config: { skills: { gap: null } },
     });
 
     git.setHasChanges(true);
@@ -95,7 +95,7 @@ describe("log writer lifecycle", () => {
 
   it("agent output is tee'd to log writer", async () => {
     const { uc, spawner, logWriter } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
 
@@ -116,7 +116,7 @@ describe("log writer lifecycle", () => {
 
   it("errors are written to log writer", async () => {
     const { uc, git, logWriter } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
 

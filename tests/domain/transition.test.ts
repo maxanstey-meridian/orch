@@ -213,21 +213,21 @@ describe("transition", () => {
 });
 
 describe("canSkip", () => {
-  const baseConfig = { planDisabled: false, gapDisabled: false, verifySkill: "verify" as string | null };
+  const baseConfig = { skills: { plan: "test" as string | null, verify: "test" as string | null, gap: "test" as string | null } };
 
-  it("returns true for Planning when planDisabled", () => {
-    expect(canSkip({ kind: "Planning", sliceNumber: 1, attempt: 1 }, { ...baseConfig, planDisabled: true })).toBe(true);
+  it("returns true for Planning when plan skill is null", () => {
+    expect(canSkip({ kind: "Planning", sliceNumber: 1, attempt: 1 }, { skills: { ...baseConfig.skills, plan: null } })).toBe(true);
   });
 
-  it("returns true for Verifying when verifySkill is null", () => {
-    expect(canSkip({ kind: "Verifying", sliceNumber: 1 }, { ...baseConfig, verifySkill: null })).toBe(true);
+  it("returns true for Verifying when verify skill is null", () => {
+    expect(canSkip({ kind: "Verifying", sliceNumber: 1 }, { skills: { ...baseConfig.skills, verify: null } })).toBe(true);
   });
 
-  it("returns true for GapAnalysis when gapDisabled", () => {
-    expect(canSkip({ kind: "GapAnalysis", groupName: "X" }, { ...baseConfig, gapDisabled: true })).toBe(true);
+  it("returns true for GapAnalysis when gap skill is null", () => {
+    expect(canSkip({ kind: "GapAnalysis", groupName: "X" }, { skills: { ...baseConfig.skills, gap: null } })).toBe(true);
   });
 
-  it("returns false for Planning when planDisabled is false", () => {
+  it("returns false for Planning when plan skill is set", () => {
     expect(canSkip({ kind: "Planning", sliceNumber: 1, attempt: 1 }, baseConfig)).toBe(false);
   });
 

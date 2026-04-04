@@ -35,7 +35,7 @@ const hasPhaseSubsequence = (
 describe("Review loop lifecycle", () => {
   it("review clean on first cycle, slice completes", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, verifySkill: null },
+      config: { skills: { plan: null, gap: null, verify: null } },
       auto: true,
     });
 
@@ -61,7 +61,7 @@ describe("Review loop lifecycle", () => {
 
   it("review finds issues, TDD fixes, second review clean", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, verifySkill: null },
+      config: { skills: { plan: null, gap: null, verify: null } },
       auto: true,
     });
 
@@ -95,7 +95,7 @@ describe("Review loop lifecycle", () => {
 
   it("persists review and tdd phases across a review-fix retry", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, verifySkill: null },
+      config: { skills: { plan: null, gap: null, verify: null } },
       auto: true,
     });
 
@@ -124,7 +124,7 @@ describe("Review loop lifecycle", () => {
 
   it("max review cycles exhausted, slice still completes", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, verifySkill: null, maxReviewCycles: 2 },
+      config: { skills: { plan: null, gap: null, verify: null }, maxReviewCycles: 2 },
       auto: true,
     });
 
@@ -155,7 +155,7 @@ describe("Review loop lifecycle", () => {
 
   it("grouped mode reviews the whole group once per cycle and fixes against aggregated group content", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
-      config: { executionMode: "grouped", planDisabled: true, gapDisabled: true, verifySkill: null },
+      config: { executionMode: "grouped", skills: { plan: null, gap: null, verify: null } },
       auto: true,
     });
 
@@ -196,7 +196,7 @@ describe("Review loop lifecycle", () => {
 
   it("direct mode fixes review findings against the whole request without persisting slice completion", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
-      config: { executionMode: "direct", gapDisabled: true, verifySkill: null },
+      config: { executionMode: "direct", skills: { gap: null, verify: null } },
       auto: true,
     });
 

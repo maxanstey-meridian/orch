@@ -1043,7 +1043,7 @@ Rules:
       return { tddResult: executeResult, skipped: false };
     }
 
-    if (this.config.planDisabled) {
+    if (this.config.skills.plan === null) {
       this.phase = transition(this.phase, { kind: "PlanReady", planText: "" });
       this.phase = transition(this.phase, { kind: "PlanAccepted" });
 
@@ -1252,7 +1252,7 @@ Rules:
     }
 
     // Verify gate
-    if (this.config.verifySkill === null || !triage.runVerify) {
+    if (this.config.skills.verify === null || !triage.runVerify) {
       // verify disabled or triage skipped it
     } else {
       const verified = await this.verify(unit, verifyBaseSha);
@@ -1289,7 +1289,7 @@ Rules:
       return { reviewBase, skipped: true };
     }
 
-    if (this.config.reviewSkill !== null && triage.runReview) {
+    if (this.config.skills.review !== null && triage.runReview) {
       await this.reviewFix(unit, reviewBase);
     }
     const newReviewBase = await this.git.captureRef();
@@ -1652,7 +1652,7 @@ Rules:
     if (!(await this.git.hasChanges(groupBaseSha))) {
       return;
     }
-    if (this.config.gapDisabled) {
+    if (this.config.skills.gap === null) {
       return;
     }
 

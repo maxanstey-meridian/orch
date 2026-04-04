@@ -32,7 +32,7 @@ ${JSON.stringify({
 describe("Skip lifecycle", () => {
   it("skip during plan phase aborts with IncompleteRunError", async () => {
     const { uc, hud, spawner } = createTestHarness({
-      config: { gapDisabled: true },
+      config: { skills: { gap: null } },
     });
 
     // Plan agent: when send() is called, trigger skip via the HUD key
@@ -51,7 +51,7 @@ describe("Skip lifecycle", () => {
 
   it("skip returns false when no active slice (idle phase)", async () => {
     const { uc, hud, spawner } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
 
@@ -69,7 +69,7 @@ describe("Skip lifecycle", () => {
     const { git } = createTestHarness(); // unused, just need the real one
     // Actually, let's test this differently — trigger skip on the harness's git
     const harness = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
 
@@ -98,7 +98,7 @@ describe("Skip lifecycle", () => {
 
   it("skip sets UI indicator via setSkipping(true)", async () => {
     const { uc, hud, spawner } = createTestHarness({
-      config: { gapDisabled: true },
+      config: { skills: { gap: null } },
     });
 
     // Plan agent: trigger skip when the plan prompt is sent (we're in Planning phase)
@@ -119,7 +119,7 @@ describe("Skip lifecycle", () => {
 
   it("sliceSkipFlag is reset after IncompleteRunError", async () => {
     const { uc, hud, spawner } = createTestHarness({
-      config: { gapDisabled: true },
+      config: { skills: { gap: null } },
     });
 
     spawner.onNextSpawn("plan", () => {
@@ -139,7 +139,7 @@ describe("Skip lifecycle", () => {
 
   it("skip during verify phase causes slice failure", async () => {
     const { uc, hud, spawner, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true },
+      config: { skills: { plan: null, gap: null } },
       auto: true,
     });
 

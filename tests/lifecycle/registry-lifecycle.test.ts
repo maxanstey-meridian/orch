@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => ({
   planFileName: vi.fn(),
   resolvePlanId: vi.fn(),
   resolveAllAgentConfigs: vi.fn(),
-  resolveSkillValue: vi.fn(),
+  loadTieredSkills: vi.fn(),
   resolveWorktree: vi.fn(),
   runFingerprint: vi.fn(),
   saveState: vi.fn(),
@@ -45,8 +45,27 @@ vi.mock("#infrastructure/cli/cli-args.js", () => ({
 vi.mock("#infrastructure/config/orchrc.js", () => ({
   buildOrchrSummary: mocks.buildOrchrSummary,
   loadAndResolveOrchrConfig: mocks.loadAndResolveOrchrConfig,
-  resolveSkillValue: mocks.resolveSkillValue,
 }));
+
+vi.mock("#infrastructure/complexity-triage.js", () => ({
+  buildComplexityTriagePrompt: vi.fn(),
+  parseComplexityTriageResult: vi.fn(() => ({ tier: "medium", reason: "test" })),
+}));
+
+vi.mock("#infrastructure/skill-loader.js", () => ({
+  loadTieredSkills: mocks.loadTieredSkills,
+}));
+
+vi.mock("#infrastructure/factories.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("#infrastructure/factories.js")>();
+  return {
+    ...actual,
+    complexityTriageSpawnerFactory: vi.fn(() => () => ({
+      send: vi.fn(),
+      kill: vi.fn(),
+    })),
+  };
+});
 
 vi.mock("#infrastructure/fingerprint.js", () => ({
   runFingerprint: mocks.runFingerprint,
@@ -188,7 +207,10 @@ beforeEach(async () => {
     config: {},
     agents: undefined,
   });
-  mocks.resolveSkillValue.mockImplementation((_resolved, builtIn: string) => builtIn);
+  mocks.loadTieredSkills.mockReturnValue({
+    tdd: "tdd-skill", review: "review-skill", verify: "verify-skill",
+    gap: "gap-skill", plan: "plan-skill", completeness: "completeness-skill",
+  });
   mocks.buildOrchrSummary.mockReturnValue(undefined);
   mocks.runFingerprint.mockResolvedValue({ brief: "brief" });
   mocks.parseProviderFlag.mockReturnValue("claude");

@@ -73,11 +73,8 @@ const makeConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorConfig
   maxReviewCycles: 3,
   stateFile: "/tmp/state.json",
   logPath: null,
-  tddSkill: "tdd-skill",
-  reviewSkill: "review-skill",
-  verifySkill: "verify-skill",
-  gapDisabled: false,
-  planDisabled: false,
+  tier: "medium",
+  skills: { tdd: "tdd-skill", review: "review-skill", verify: "verify-skill", gap: "gap-skill", plan: "plan-skill", completeness: "completeness-skill" },
   maxReplans: 2,
   defaultProvider: "claude",
   agentConfig: AGENT_DEFAULTS,
@@ -107,7 +104,7 @@ describe("agentSpawnerFactory", () => {
 
     const { agentSpawnerFactory } = await import("../../src/infrastructure/factories.js");
     const config = makeConfig({
-      tddSkill: "my-tdd-skill",
+      skills: { tdd: "my-tdd-skill", review: "review-skill", verify: "verify-skill", gap: "gap-skill", plan: "plan-skill", completeness: "completeness-skill" },
       cwd: "/custom/cwd",
     });
     const spawner = agentSpawnerFactory(config, dummyGate);

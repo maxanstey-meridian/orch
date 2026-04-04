@@ -28,3 +28,15 @@ export const REQUEST_TRIAGE_FALLBACK: RequestTriageResult = {
 
 export const formatRequestTriageSummary = (result: RequestTriageResult): string =>
   `mode=${result.mode}`;
+
+export type ComplexityTier = "trivial" | "small" | "medium" | "large";
+
+export type ComplexityTriageResult = {
+  readonly tier: ComplexityTier;
+  readonly reason: string;
+};
+
+export const COMPLEXITY_TRIAGE_FALLBACK: ComplexityTriageResult = {
+  tier: "medium",
+  reason: "complexity triage unavailable; default to medium",
+};

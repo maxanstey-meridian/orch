@@ -20,10 +20,7 @@ describe("Crash recovery lifecycle", () => {
     const { uc, spawner, persistence } = createTestHarness({
       config: {
         executionMode: "direct",
-        planDisabled: true,
-        verifySkill: null,
-        reviewSkill: null,
-        gapDisabled: true,
+        skills: { plan: null, verify: null, review: null, gap: null },
       },
       state: {
         executionMode: "sliced",
@@ -62,7 +59,7 @@ describe("Crash recovery lifecycle", () => {
 
   it("resumes from persisted state, skips completed slices", async () => {
     const { uc, spawner, persistence } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       state: {
         lastCompletedSlice: 2,
         tddSession: { provider: "claude", id: "old-tdd-session" },
@@ -104,10 +101,7 @@ describe("Crash recovery lifecycle", () => {
   it("drops persisted sessions when they belong to a different provider", async () => {
     const { uc, spawner, persistence } = createTestHarness({
       config: {
-        planDisabled: true,
-        verifySkill: null,
-        reviewSkill: null,
-        gapDisabled: true,
+        skills: { plan: null, verify: null, review: null, gap: null },
         defaultProvider: "codex",
         agentConfig: {
           ...AGENT_DEFAULTS,
@@ -138,7 +132,7 @@ describe("Crash recovery lifecycle", () => {
 
   it("state persisted incrementally after each slice", async () => {
     const { uc, spawner, persistence } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
 
@@ -165,7 +159,7 @@ describe("Crash recovery lifecycle", () => {
   it("fresh instance from saved state resumes correctly", async () => {
     // Run 1: execute only slice 1
     const run1 = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
 
@@ -177,7 +171,7 @@ describe("Crash recovery lifecycle", () => {
 
     // Run 2: fresh instance with run 1's saved state, full group (slices 1+2)
     const run2 = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       state: run1.persistence.current,
       auto: true,
     });
@@ -196,10 +190,7 @@ describe("Crash recovery lifecycle", () => {
   it("resumes and persists sessions using each role's configured provider", async () => {
     const { uc, spawner, persistence } = createTestHarness({
       config: {
-        planDisabled: true,
-        verifySkill: null,
-        reviewSkill: null,
-        gapDisabled: true,
+        skills: { plan: null, verify: null, review: null, gap: null },
         defaultProvider: "claude",
         agentConfig: {
           ...AGENT_DEFAULTS,
@@ -234,10 +225,7 @@ describe("Crash recovery lifecycle", () => {
     const { uc, spawner, persistence } = createTestHarness({
       config: {
         executionMode: "grouped",
-        planDisabled: true,
-        verifySkill: null,
-        reviewSkill: null,
-        gapDisabled: true,
+        skills: { plan: null, verify: null, review: null, gap: null },
       },
       state: {
         lastCompletedSlice: 2,
@@ -263,10 +251,7 @@ describe("Crash recovery lifecycle", () => {
     const { uc, spawner } = createTestHarness({
       config: {
         executionMode: "grouped",
-        planDisabled: true,
-        verifySkill: null,
-        reviewSkill: null,
-        gapDisabled: true,
+        skills: { plan: null, verify: null, review: null, gap: null },
       },
       state: {
         lastCompletedSlice: 2,

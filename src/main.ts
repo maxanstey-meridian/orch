@@ -4,30 +4,37 @@ import { existsSync, readFileSync, mkdirSync, watch, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { basename, dirname, resolve } from "path";
 import { resolveAllAgentConfigs } from "#domain/agent-config.js";
-import type { ExecutionMode, ExecutionPreference, OrchestratorConfig } from "#domain/config.js";
+import type { ExecutionMode, ExecutionPreference, OrchestratorConfig, SkillSet } from "#domain/config.js";
 import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
 import type { Group } from "#domain/plan.js";
 import type { QueueEntry } from "#domain/queue.js";
-import { REQUEST_TRIAGE_FALLBACK, formatRequestTriageSummary } from "#domain/triage.js";
+import {
+  COMPLEXITY_TRIAGE_FALLBACK,
+  REQUEST_TRIAGE_FALLBACK,
+  formatRequestTriageSummary,
+  type ComplexityTier,
+} from "#domain/triage.js";
 import {
   parseBranchFlag,
   parseExecutionPreference,
   parseProviderFlag,
 } from "#infrastructure/cli/cli-args.js";
 import { parseSubcommand } from "#infrastructure/cli/subcommands.js";
-import {
-  loadAndResolveOrchrConfig,
-  resolveSkillValue,
-  buildOrchrSummary,
-} from "#infrastructure/config/orchrc.js";
+import { loadAndResolveOrchrConfig, buildOrchrSummary } from "#infrastructure/config/orchrc.js";
 import { aggregateDashboard } from "#infrastructure/dashboard/data-aggregator.js";
 import {
+  buildComplexityTriagePrompt,
+  parseComplexityTriageResult,
+} from "#infrastructure/complexity-triage.js";
+import {
+  complexityTriageSpawnerFactory,
   planGeneratorSpawnerFactory,
   requestTriageSpawnerFactory,
 } from "#infrastructure/factories.js";
 import { runFingerprint } from "#infrastructure/fingerprint.js";
 import { getStatus, stashBackup } from "#infrastructure/git/git.js";
+import { loadTieredSkills } from "#infrastructure/skill-loader.js";
 import { assertGitRepo } from "#infrastructure/git/repo-check.js";
 import { resolveWorktree } from "#infrastructure/git/worktree-setup.js";
 import { checkWorktreeResume, runCleanup } from "#infrastructure/git/worktree.js";
@@ -345,6 +352,34 @@ const resolveInventoryExecutionMode = async (opts: {
   }
 };
 
+const resolveComplexityTier = async (opts: {
+  requestContent: string;
+  agentConfig: ReturnType<typeof resolveAllAgentConfigs>;
+  cwd: string;
+  log: (...args: unknown[]) => void;
+}): Promise<ComplexityTier> => {
+  const triageAgent = complexityTriageSpawnerFactory({
+    agentConfig: opts.agentConfig,
+    cwd: opts.cwd,
+  })();
+
+  try {
+    const prompt = buildComplexityTriagePrompt(opts.requestContent);
+    const result = await triageAgent.send(prompt);
+    const assistantText = result.assistantText.trim();
+    const resultText = result.resultText.trim();
+    const triageText = assistantText.length > 0 ? assistantText : resultText;
+    const triage = parseComplexityTriageResult(triageText);
+    opts.log(`tier=${triage.tier} (${triage.reason})`);
+    return triage.tier;
+  } catch {
+    opts.log(`tier=${COMPLEXITY_TRIAGE_FALLBACK.tier} (fallback)`);
+    return COMPLEXITY_TRIAGE_FALLBACK.tier;
+  } finally {
+    triageAgent.kill();
+  }
+};
+
 const findDashboardEntry = (
   model: DashboardModel,
   id: string,
@@ -605,17 +640,8 @@ export const main = async (runtime: MainRuntime = {}) => {
 
   await assertGitRepo(cwd);
 
-  // 1. Load skill prompts
-  const skillsDir = resolve(import.meta.dirname, "..", "skills");
-  const builtInTdd = readFileSync(resolve(skillsDir, "tdd.md"), "utf-8");
-  const builtInReview = readFileSync(resolve(skillsDir, "deep-review.md"), "utf-8");
-  const builtInVerify = readFileSync(resolve(skillsDir, "verify.md"), "utf-8");
+  // 1. Load config (skills loaded after complexity triage determines tier)
   const orchrc = loadAndResolveOrchrConfig(cwd);
-  const tddSkill = resolveSkillValue(orchrc.skills.tdd, builtInTdd);
-  const reviewSkill = resolveSkillValue(orchrc.skills.review, builtInReview);
-  const verifySkill = resolveSkillValue(orchrc.skills.verify, builtInVerify);
-  const gapDisabled = "disabled" in orchrc.skills.gap;
-  const planDisabled = "disabled" in orchrc.skills.plan;
   const orchrcSummary = buildOrchrSummary(orchrc);
   const orchDir = resolve(cwd, ".orch");
 
@@ -648,11 +674,13 @@ export const main = async (runtime: MainRuntime = {}) => {
   let planPath: string;
   let planContent: string | undefined;
   let executionMode: ExecutionMode;
+  let tier: ComplexityTier = COMPLEXITY_TRIAGE_FALLBACK.tier;
   try {
     if (workMode) {
       planPath = resolve(workPath!);
       planContent = readFileSync(planPath, "utf-8");
       executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
+      tier = await resolveComplexityTier({ requestContent: planContent, agentConfig, cwd, log });
       printExecutionModeBanner(log, executionMode);
     } else {
       const inputPath = resolve(inventoryPath!);
@@ -663,15 +691,16 @@ export const main = async (runtime: MainRuntime = {}) => {
         planPath = inputPath;
         planContent = srcContent;
         executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
+        tier = await resolveComplexityTier({ requestContent: srcContent, agentConfig, cwd, log });
         printExecutionModeBanner(log, executionMode);
       } else {
-        executionMode = await resolveInventoryExecutionMode({
-          executionPreference,
-          requestContent: srcContent,
-          agentConfig,
-          cwd,
-          log,
-        });
+        const triageOpts = { requestContent: srcContent, agentConfig, cwd, log };
+        const [resolvedMode, resolvedTier] = await Promise.all([
+          resolveInventoryExecutionMode({ executionPreference, ...triageOpts }),
+          resolveComplexityTier(triageOpts),
+        ]);
+        executionMode = resolvedMode;
+        tier = resolvedTier;
         printExecutionModeBanner(log, executionMode);
         const spawnPlanGenerator = planGeneratorSpawnerFactory({ agentConfig, cwd });
         if (executionMode === "direct") {
@@ -694,7 +723,10 @@ export const main = async (runtime: MainRuntime = {}) => {
     return;
   }
 
-  // 4. Derive per-plan state path
+  // 4. Load tier-appropriate skills
+  const skills: SkillSet = loadTieredSkills(tier, orchrc);
+
+  // 5. Derive per-plan state path
   const activePlanId =
     executionMode === "direct" ? generatePlanId() : ensureCanonicalPlan(planPath, orchDir);
   const registryPlanPath =
@@ -795,11 +827,8 @@ export const main = async (runtime: MainRuntime = {}) => {
         maxReplans: orchrc.config.maxReplans ?? 2,
         stateFile,
         logPath: planLogPath,
-        tddSkill,
-        reviewSkill,
-        verifySkill,
-        gapDisabled,
-        planDisabled: true,
+        tier,
+        skills: { ...skills, plan: null },
         tddRules: orchrc.rules.tdd,
         defaultProvider: provider,
         agentConfig,
@@ -907,11 +936,8 @@ export const main = async (runtime: MainRuntime = {}) => {
       maxReplans: orchrc.config.maxReplans ?? 2,
       stateFile,
       logPath: planLogPath,
-      tddSkill,
-      reviewSkill,
-      verifySkill,
-      gapDisabled,
-      planDisabled,
+      tier,
+      skills,
       tddRules: orchrc.rules.tdd,
       defaultProvider: provider,
       agentConfig,

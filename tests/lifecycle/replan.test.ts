@@ -17,7 +17,7 @@ const makeGroup = (name: string, slices: Slice[]): Group => ({ name, slices });
 describe("Replan lifecycle", () => {
   it("operator rejects plan, new plan generated, then accepted", async () => {
     const { uc, hud, spawner, persistence } = createTestHarness({
-      config: { gapDisabled: true, verifySkill: null, reviewSkill: null },
+      config: { skills: { gap: null, verify: null, review: null } },
     });
 
     // Two plan agents will be spawned (one per plan attempt)
@@ -47,7 +47,7 @@ describe("Replan lifecycle", () => {
 
   it("max replans reached, plan is force-accepted", async () => {
     const { uc, hud, spawner, persistence } = createTestHarness({
-      config: { gapDisabled: true, verifySkill: null, reviewSkill: null, maxReplans: 2 },
+      config: { skills: { gap: null, verify: null, review: null }, maxReplans: 2 },
     });
 
     // Plan agents for each attempt
@@ -75,7 +75,7 @@ describe("Replan lifecycle", () => {
 
   it("operator edits plan with guidance, guidance reaches TDD execute", async () => {
     const { uc, hud, spawner, persistence } = createTestHarness({
-      config: { gapDisabled: true, verifySkill: null, reviewSkill: null },
+      config: { skills: { gap: null, verify: null, review: null } },
     });
 
     spawner.onNextSpawn("plan", okResult({ assistantText: "plan", planText: "the plan" }));

@@ -1218,11 +1218,8 @@ const makeTestConfig = (overrides?: Partial<OrchestratorConfig>): OrchestratorCo
   maxReviewCycles: 3,
   stateFile: "/tmp/state.json",
   logPath: null,
-  tddSkill: "tdd-skill",
-  reviewSkill: "review-skill",
-  verifySkill: "verify-skill",
-  gapDisabled: true,
-  planDisabled: true,
+  tier: "medium",
+  skills: { tdd: "tdd-skill", review: "review-skill", verify: "verify-skill", gap: null, plan: null, completeness: "completeness-skill" },
   maxReplans: 2,
   defaultProvider: "claude",
   agentConfig: AGENT_DEFAULTS,
@@ -1283,8 +1280,17 @@ const runMainWithWorkPlanMocks = async (
       rules: { tdd: undefined, review: undefined },
       agents: {},
     })),
-    resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
     buildOrchrSummary: vi.fn(() => "summary"),
+  }));
+  vi.doMock("#infrastructure/complexity-triage.js", () => ({
+    buildComplexityTriagePrompt: vi.fn(),
+    parseComplexityTriageResult: vi.fn(() => ({ tier: "medium", reason: "test" })),
+  }));
+  vi.doMock("#infrastructure/skill-loader.js", () => ({
+    loadTieredSkills: vi.fn(() => ({
+      tdd: "tdd skill", review: "review skill", verify: "verify skill",
+      gap: null, plan: null, completeness: "completeness skill",
+    })),
   }));
   vi.doMock("#domain/agent-config.js", async () => {
     const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
@@ -1349,6 +1355,19 @@ const runMainWithWorkPlanMocks = async (
       formatPlanSummary: vi.fn(),
     };
   });
+  vi.doMock("#infrastructure/factories.js", async () => {
+    const actual =
+      await vi.importActual<typeof import("#infrastructure/factories.js")>(
+        "#infrastructure/factories.js"
+      );
+    return {
+      ...actual,
+      complexityTriageSpawnerFactory: vi.fn(() => () => ({
+        send: vi.fn(),
+        kill: vi.fn(),
+      })),
+    };
+  });
 
   const exit = vi.fn();
   const previousArgv = process.argv;
@@ -1377,6 +1396,9 @@ const runMainWithWorkPlanMocks = async (
     vi.doUnmock("../src/composition-root.js");
     vi.doUnmock("#infrastructure/git/repo-check.js");
     vi.doUnmock("#infrastructure/config/orchrc.js");
+    vi.doUnmock("#infrastructure/complexity-triage.js");
+    vi.doUnmock("#infrastructure/skill-loader.js");
+    vi.doUnmock("#infrastructure/factories.js");
     vi.doUnmock("#domain/agent-config.js");
     vi.doUnmock("#infrastructure/fingerprint.js");
     vi.doUnmock("#infrastructure/plan/plan-parser.js");
@@ -1481,8 +1503,17 @@ const runMainWithInventoryPlanMocks = async (options?: {
       rules: { tdd: undefined, review: undefined },
       agents: {},
     })),
-    resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
     buildOrchrSummary: vi.fn(() => "summary"),
+  }));
+  vi.doMock("#infrastructure/complexity-triage.js", () => ({
+    buildComplexityTriagePrompt: vi.fn(),
+    parseComplexityTriageResult: vi.fn(() => ({ tier: "medium", reason: "test" })),
+  }));
+  vi.doMock("#infrastructure/skill-loader.js", () => ({
+    loadTieredSkills: vi.fn(() => ({
+      tdd: "tdd skill", review: "review skill", verify: "verify skill",
+      gap: null, plan: "plan skill", completeness: "completeness skill",
+    })),
   }));
   vi.doMock("#domain/agent-config.js", async () => {
     const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
@@ -1518,6 +1549,10 @@ const runMainWithInventoryPlanMocks = async (options?: {
     return {
       ...actual,
       requestTriageSpawnerFactory,
+      complexityTriageSpawnerFactory: vi.fn(() => () => ({
+        send: vi.fn(),
+        kill: vi.fn(),
+      })),
       planGeneratorSpawnerFactory: vi.fn(() => () => ({
         send: vi.fn(),
         kill: vi.fn(),
@@ -1610,6 +1645,8 @@ const runMainWithInventoryPlanMocks = async (options?: {
     vi.doUnmock("../src/composition-root.js");
     vi.doUnmock("#infrastructure/git/repo-check.js");
     vi.doUnmock("#infrastructure/config/orchrc.js");
+    vi.doUnmock("#infrastructure/complexity-triage.js");
+    vi.doUnmock("#infrastructure/skill-loader.js");
     vi.doUnmock("#domain/agent-config.js");
     vi.doUnmock("#infrastructure/fingerprint.js");
     vi.doUnmock("#infrastructure/plan/plan-generator.js");
@@ -1757,7 +1794,7 @@ describe("main execution preference wiring", () => {
         brief: "brief text",
         executionPreference: "quick",
         executionMode: "direct",
-        planDisabled: true,
+        skills: expect.objectContaining({ plan: null }),
       }),
       expect.any(Object),
     );
@@ -2268,8 +2305,17 @@ describe("main log path wiring", () => {
         rules: { tdd: undefined, review: undefined },
         agents: {},
       })),
-      resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
       buildOrchrSummary: vi.fn(() => "summary"),
+    }));
+    vi.doMock("#infrastructure/complexity-triage.js", () => ({
+      buildComplexityTriagePrompt: vi.fn(),
+      parseComplexityTriageResult: vi.fn(() => ({ tier: "medium", reason: "test" })),
+    }));
+    vi.doMock("#infrastructure/skill-loader.js", () => ({
+      loadTieredSkills: vi.fn(() => ({
+        tdd: "tdd skill", review: "review skill", verify: "verify skill",
+        gap: null, plan: null, completeness: "completeness skill",
+      })),
     }));
     vi.doMock("#domain/agent-config.js", async () => {
       const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
@@ -2334,6 +2380,19 @@ describe("main log path wiring", () => {
         formatPlanSummary: vi.fn(),
       };
     });
+    vi.doMock("#infrastructure/factories.js", async () => {
+      const actual =
+        await vi.importActual<typeof import("#infrastructure/factories.js")>(
+          "#infrastructure/factories.js"
+        );
+      return {
+        ...actual,
+        complexityTriageSpawnerFactory: vi.fn(() => () => ({
+          send: vi.fn(),
+          kill: vi.fn(),
+        })),
+      };
+    });
 
     const previousArgv = process.argv;
     const previousCwd = process.cwd();
@@ -2360,6 +2419,9 @@ describe("main log path wiring", () => {
       vi.doUnmock("../src/composition-root.js");
       vi.doUnmock("#infrastructure/git/repo-check.js");
       vi.doUnmock("#infrastructure/config/orchrc.js");
+      vi.doUnmock("#infrastructure/complexity-triage.js");
+      vi.doUnmock("#infrastructure/skill-loader.js");
+      vi.doUnmock("#infrastructure/factories.js");
       vi.doUnmock("#domain/agent-config.js");
       vi.doUnmock("#infrastructure/fingerprint.js");
       vi.doUnmock("#infrastructure/plan/plan-parser.js");
@@ -2411,8 +2473,17 @@ describe("main log path wiring", () => {
         rules: { tdd: undefined, review: undefined },
         agents: {},
       })),
-      resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
       buildOrchrSummary: vi.fn(() => "summary"),
+    }));
+    vi.doMock("#infrastructure/complexity-triage.js", () => ({
+      buildComplexityTriagePrompt: vi.fn(),
+      parseComplexityTriageResult: vi.fn(() => ({ tier: "medium", reason: "test" })),
+    }));
+    vi.doMock("#infrastructure/skill-loader.js", () => ({
+      loadTieredSkills: vi.fn(() => ({
+        tdd: "tdd skill", review: "review skill", verify: "verify skill",
+        gap: null, plan: null, completeness: "completeness skill",
+      })),
     }));
     vi.doMock("#domain/agent-config.js", async () => {
       const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
@@ -2477,6 +2548,19 @@ describe("main log path wiring", () => {
         formatPlanSummary: vi.fn(),
       };
     });
+    vi.doMock("#infrastructure/factories.js", async () => {
+      const actual =
+        await vi.importActual<typeof import("#infrastructure/factories.js")>(
+          "#infrastructure/factories.js"
+        );
+      return {
+        ...actual,
+        complexityTriageSpawnerFactory: vi.fn(() => () => ({
+          send: vi.fn(),
+          kill: vi.fn(),
+        })),
+      };
+    });
 
     const previousArgv = process.argv;
     const previousCwd = process.cwd();
@@ -2503,6 +2587,9 @@ describe("main log path wiring", () => {
       vi.doUnmock("../src/composition-root.js");
       vi.doUnmock("#infrastructure/git/repo-check.js");
       vi.doUnmock("#infrastructure/config/orchrc.js");
+      vi.doUnmock("#infrastructure/complexity-triage.js");
+      vi.doUnmock("#infrastructure/skill-loader.js");
+      vi.doUnmock("#infrastructure/factories.js");
       vi.doUnmock("#domain/agent-config.js");
       vi.doUnmock("#infrastructure/fingerprint.js");
       vi.doUnmock("#infrastructure/plan/plan-parser.js");
@@ -2551,8 +2638,17 @@ describe("main log path wiring", () => {
         rules: { tdd: undefined, review: undefined },
         agents: {},
       })),
-      resolveSkillValue: vi.fn((skill: { value?: string }, builtIn: string) => skill.value ?? builtIn),
       buildOrchrSummary: vi.fn(() => "summary"),
+    }));
+    vi.doMock("#infrastructure/complexity-triage.js", () => ({
+      buildComplexityTriagePrompt: vi.fn(),
+      parseComplexityTriageResult: vi.fn(() => ({ tier: "medium", reason: "test" })),
+    }));
+    vi.doMock("#infrastructure/skill-loader.js", () => ({
+      loadTieredSkills: vi.fn(() => ({
+        tdd: "tdd skill", review: "review skill", verify: "verify skill",
+        gap: null, plan: null, completeness: "completeness skill",
+      })),
     }));
     vi.doMock("#domain/agent-config.js", async () => {
       const actual = await vi.importActual<typeof import("#domain/agent-config.js")>("#domain/agent-config.js");
@@ -2567,6 +2663,19 @@ describe("main log path wiring", () => {
     vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
       parsePlan: vi.fn().mockRejectedValue(new Error("Invalid plan")),
     }));
+    vi.doMock("#infrastructure/factories.js", async () => {
+      const actual =
+        await vi.importActual<typeof import("#infrastructure/factories.js")>(
+          "#infrastructure/factories.js"
+        );
+      return {
+        ...actual,
+        complexityTriageSpawnerFactory: vi.fn(() => () => ({
+          send: vi.fn(),
+          kill: vi.fn(),
+        })),
+      };
+    });
 
     const previousArgv = process.argv;
     const previousCwd = process.cwd();
@@ -2594,6 +2703,9 @@ describe("main log path wiring", () => {
       process.chdir(previousCwd);
       vi.doUnmock("#infrastructure/git/repo-check.js");
       vi.doUnmock("#infrastructure/config/orchrc.js");
+      vi.doUnmock("#infrastructure/complexity-triage.js");
+      vi.doUnmock("#infrastructure/skill-loader.js");
+      vi.doUnmock("#infrastructure/factories.js");
       vi.doUnmock("#domain/agent-config.js");
       vi.doUnmock("#infrastructure/fingerprint.js");
       vi.doUnmock("#infrastructure/plan/plan-parser.js");

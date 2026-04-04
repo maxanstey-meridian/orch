@@ -123,29 +123,6 @@ describe("spawnClaudePlanAgent", () => {
   });
 });
 
-describe("spawnClaudePlanAgentWithSkill", () => {
-  beforeEach(() => {
-    mockedCreateAgent.mockClear();
-  });
-
-  it("spawns a plan agent with plan.md content as system prompt", async () => {
-    const { spawnClaudePlanAgentWithSkill } = await loadModule();
-
-    spawnClaudePlanAgentWithSkill();
-
-    expect(mockedCreateAgent).toHaveBeenCalledOnce();
-    const callArgs = mockedCreateAgent.mock.calls[0][0];
-    const args: string[] = callArgs.args;
-
-    // Should use plan permissions, not dangerously-skip-permissions
-    expect(args).toContain("--permission-mode");
-    // Should pass plan.md content as system prompt
-    expect(args).toContain("--append-system-prompt");
-    const prompt = args[args.indexOf("--append-system-prompt") + 1];
-    expect(prompt.length).toBeGreaterThan(0);
-  });
-});
-
 describe("spawnClaudeAgent resume mode", () => {
   beforeEach(() => {
     mockedCreateAgent.mockClear();

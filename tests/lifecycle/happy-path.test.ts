@@ -63,7 +63,7 @@ ${JSON.stringify({
 describe("Happy path lifecycle", () => {
   it("single slice completes through plan-execute-verify-review", async () => {
     const { uc, hud, spawner, persistence, git } = createTestHarness({
-      config: { gapDisabled: true },
+      config: { skills: { gap: null } },
     });
 
     // Git reports changes so verify/review run
@@ -119,7 +119,7 @@ describe("Happy path lifecycle", () => {
 
   it("two slices in one group both complete with plan disabled", async () => {
     const { uc, spawner, persistence } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
 
@@ -146,8 +146,7 @@ describe("Happy path lifecycle", () => {
     const { uc, spawner, persistence, git } = createTestHarness({
       config: {
         executionMode: "grouped",
-        planDisabled: true,
-        gapDisabled: true,
+        skills: { plan: null, gap: null },
       },
       auto: true,
     });
@@ -184,10 +183,7 @@ describe("Happy path lifecycle", () => {
     const { uc, spawner, persistence, git } = createTestHarness({
       config: {
         executionMode: "grouped",
-        planDisabled: true,
-        verifySkill: null,
-        reviewSkill: null,
-        gapDisabled: false,
+        skills: { plan: null, verify: null, review: null, gap: "test" },
       },
       auto: true,
     });
@@ -235,7 +231,7 @@ describe("Happy path lifecycle", () => {
 
   it("persists slice and phase progress for an active slice without mutating earlier saves", async () => {
     const { uc, spawner, persistence } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
 
@@ -272,7 +268,7 @@ describe("Happy path lifecycle", () => {
 
   it("persists gap and final phases when those passes run", async () => {
     const { uc, spawner, persistence, git, prompts } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: false },
+      config: { skills: { plan: null, verify: null, review: null, gap: "test" } },
       auto: true,
     });
 
@@ -295,7 +291,7 @@ describe("Happy path lifecycle", () => {
 
   it("resumes group finalization when all slices are done but groupDone was never persisted", async () => {
     const { uc, spawner, persistence, git, prompts } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: false },
+      config: { skills: { plan: null, verify: null, review: null, gap: "test" } },
       state: {
         lastCompletedSlice: 1,
         lastSliceImplemented: 1,
@@ -321,7 +317,7 @@ describe("Happy path lifecycle", () => {
 
   it("persists verify and tdd phases when completeness sends fixes back to TDD", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
 
@@ -354,7 +350,7 @@ describe("Happy path lifecycle", () => {
 
   it("auto mode retries completeness findings until they are closed", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true, maxReviewCycles: 3 },
+      config: { skills: { plan: null, verify: null, review: null, gap: null }, maxReviewCycles: 3 },
       auto: true,
     });
 
@@ -381,7 +377,7 @@ describe("Happy path lifecycle", () => {
 
   it("auto mode retries gap findings until the gap pass is clean", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: false, maxReviewCycles: 3 },
+      config: { skills: { plan: null, verify: null, review: null, gap: "test" }, maxReviewCycles: 3 },
       auto: true,
     });
 
@@ -409,7 +405,7 @@ describe("Happy path lifecycle", () => {
 
   it("auto mode retries final-pass findings until the pass is clean", async () => {
     const { uc, spawner, persistence, git, prompts } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: false, maxReviewCycles: 3 },
+      config: { skills: { plan: null, verify: null, review: null, gap: "test" }, maxReviewCycles: 3 },
       auto: true,
     });
 
@@ -439,7 +435,7 @@ describe("Happy path lifecycle", () => {
 
   it("persists tdd phases after gap and final findings trigger fix loops", async () => {
     const { uc, spawner, persistence, git, prompts } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: false },
+      config: { skills: { plan: null, verify: null, review: null, gap: "test" } },
       auto: true,
     });
 
@@ -471,7 +467,7 @@ describe("Happy path lifecycle", () => {
 
   it("does not advance into verify when the initial TDD execute throws immediately", async () => {
     const { uc, hud, spawner, persistence } = createTestHarness({
-      config: { gapDisabled: true },
+      config: { skills: { gap: null } },
     });
 
     spawner.onNextSpawn("plan", okResult({ assistantText: "Here is the plan", planText: "plan text" }));
@@ -491,7 +487,7 @@ describe("Happy path lifecycle", () => {
 
   it("two groups with inter-group confirmation and agent respawn", async () => {
     const { uc, hud, spawner, persistence } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
     });
 
     // First TDD + review (group 1)
@@ -524,7 +520,7 @@ describe("Happy path lifecycle", () => {
 
   it("already-implemented detection skips verify and review", async () => {
     const { uc, spawner, persistence } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true },
+      config: { skills: { plan: null, gap: null } },
       auto: true,
     });
 
@@ -544,7 +540,7 @@ describe("Happy path lifecycle", () => {
 
   it("direct already-implemented detection stamps completion even when no diff exists", async () => {
     const { uc, spawner, persistence } = createTestHarness({
-      config: { executionMode: "direct", gapDisabled: true },
+      config: { executionMode: "direct", skills: { gap: null } },
       auto: true,
     });
 
@@ -567,7 +563,7 @@ describe("Happy path lifecycle", () => {
 
   it("below review threshold skips review", async () => {
     const { uc, spawner, persistence, git } = createTestHarness({
-      config: { planDisabled: true, gapDisabled: true, reviewThreshold: 30 },
+      config: { skills: { plan: null, gap: null }, reviewThreshold: 30 },
       auto: true,
     });
 
@@ -603,7 +599,7 @@ describe("Happy path lifecycle", () => {
     const { uc, hud, spawner, persistence, git } = createTestHarness({
       config: {
         executionMode: "direct",
-        gapDisabled: true,
+        skills: { gap: null },
       },
       auto: true,
     });
@@ -661,9 +657,7 @@ describe("Happy path lifecycle", () => {
     const { uc, spawner, persistence, git } = createTestHarness({
       config: {
         executionMode: "direct",
-        verifySkill: null,
-        reviewSkill: null,
-        gapDisabled: false,
+        skills: { verify: null, review: null, gap: "test" },
       },
       auto: true,
     });
@@ -709,9 +703,7 @@ describe("Happy path lifecycle", () => {
     const { uc, spawner, persistence, git, prompts } = createTestHarness({
       config: {
         executionMode: "direct",
-        verifySkill: null,
-        reviewSkill: null,
-        gapDisabled: true,
+        skills: { verify: null, review: null, gap: null },
       },
       auto: true,
     });

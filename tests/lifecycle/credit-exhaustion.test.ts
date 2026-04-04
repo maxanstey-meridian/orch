@@ -22,7 +22,7 @@ describe("Credit exhaustion lifecycle", () => {
 
   it("non-retryable error, operator quits via HUD", async () => {
     const { uc, hud, spawner, persistence } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
     });
 
     // TDD returns a credit-exhausted result
@@ -52,7 +52,7 @@ describe("Credit exhaustion lifecycle", () => {
 
   it("treats assistantText-only usage-limit warnings as terminal credit exhaustion", async () => {
     const { uc, hud, spawner } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
     });
 
     spawner.onNextSpawn("tdd",
@@ -74,7 +74,7 @@ describe("Credit exhaustion lifecycle", () => {
 
   it("auto mode probes until usage is available again when credit exhaustion is detected", async () => {
     const { uc, hud, spawner, persistence } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
     vi.useFakeTimers();
@@ -109,7 +109,7 @@ describe("Credit exhaustion lifecycle", () => {
 
   it("retryable overloaded error auto-retries without operator prompt", async () => {
     const { uc, hud, spawner, persistence } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
 

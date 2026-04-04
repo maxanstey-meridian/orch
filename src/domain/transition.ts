@@ -126,15 +126,15 @@ export const transition = (current: Phase, event: PhaseEvent): Phase => {
 
 export const canSkip = (
   phase: Phase,
-  config: { gapDisabled: boolean; planDisabled: boolean; verifySkill: string | null },
+  config: { skills: { plan: string | null; verify: string | null; gap: string | null } },
 ): boolean => {
   switch (phase.kind) {
     case "Planning":
-      return config.planDisabled;
+      return config.skills.plan === null;
     case "Verifying":
-      return config.verifySkill === null;
+      return config.skills.verify === null;
     case "GapAnalysis":
-      return config.gapDisabled;
+      return config.skills.gap === null;
     default:
       return false;
   }

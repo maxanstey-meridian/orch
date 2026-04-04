@@ -224,9 +224,8 @@ describe("buildRequestTriagePrompt", () => {
     expect(prompt).toContain("direct");
     expect(prompt).toContain("grouped");
     expect(prompt).toContain("sliced");
-    expect(prompt).toContain("breadth of change");
     expect(prompt).toContain("dependency ordering");
-    expect(prompt).toContain("meaningful intermediate units");
+    expect(prompt).toContain("meaningful intermediate deliverables");
     expect(prompt).toContain("slice-granularity resume value");
   });
 });

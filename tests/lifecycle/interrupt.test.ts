@@ -17,7 +17,7 @@ const makeGroup = (name: string, slices: Slice[]): Group => ({ name, slices });
 describe("Interrupt lifecycle", () => {
   it("guide injects text into TDD agent through full chain", async () => {
     const { uc, hud, spawner } = createTestHarness({
-      config: { planDisabled: true, verifySkill: null, reviewSkill: null, gapDisabled: true },
+      config: { skills: { plan: null, verify: null, review: null, gap: null } },
       auto: true,
     });
 
@@ -43,7 +43,7 @@ describe("Interrupt lifecycle", () => {
   it("hard interrupt kills TDD, respawns, sends guidance", async () => {
     const { uc, hud, spawner } = createTestHarness({
       // Plan ENABLED so the interrupt check in planThenExecute fires
-      config: { gapDisabled: true, verifySkill: null, reviewSkill: null },
+      config: { skills: { gap: null, verify: null, review: null } },
     });
 
     // Plan agent: returns plan, hud accepts
@@ -80,7 +80,7 @@ describe("Interrupt lifecycle", () => {
 
   it("hardInterruptPending is cleared after being consumed", async () => {
     const { uc, hud, spawner } = createTestHarness({
-      config: { gapDisabled: true, verifySkill: null, reviewSkill: null },
+      config: { skills: { gap: null, verify: null, review: null } },
     });
 
     // Plan: trigger interrupt during plan phase (checked at line 327-337)

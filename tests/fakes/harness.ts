@@ -1,5 +1,5 @@
 import { AGENT_DEFAULTS } from "#domain/agent-config.js";
-import type { OrchestratorConfig } from "#domain/config.js";
+import type { OrchestratorConfig, SkillSet } from "#domain/config.js";
 import type { OrchestratorState } from "#domain/state.js";
 import type { AgentResult } from "#domain/agent-types.js";
 import { RunOrchestration } from "#application/run-orchestration.js";
@@ -10,6 +10,10 @@ import { InMemoryStatePersistence } from "./fake-state-persistence.js";
 import { InMemoryGitOps } from "./fake-git-ops.js";
 import { PassthroughPromptBuilder } from "./fake-prompt-builder.js";
 import { FakeLogWriter } from "./fake-log-writer.js";
+
+const DEFAULT_SKILLS: SkillSet = {
+  tdd: "test", review: "test", verify: "test", plan: "test", gap: null, completeness: "test",
+};
 
 const DEFAULT_CONFIG: OrchestratorConfig = {
   cwd: "/tmp/test",
@@ -23,11 +27,8 @@ const DEFAULT_CONFIG: OrchestratorConfig = {
   maxReviewCycles: 3,
   stateFile: "/tmp/state.json",
   logPath: null,
-  tddSkill: "test",
-  reviewSkill: "test",
-  verifySkill: "test",
-  gapDisabled: true,
-  planDisabled: false,
+  tier: "medium",
+  skills: DEFAULT_SKILLS,
   maxReplans: 3,
   defaultProvider: "claude",
   agentConfig: AGENT_DEFAULTS,
@@ -45,8 +46,10 @@ export const okResult = (overrides?: Partial<AgentResult>): AgentResult => ({
 
 export type TestHarness = ReturnType<typeof createTestHarness>;
 
+type TestConfig = Omit<Partial<OrchestratorConfig>, "skills"> & { skills?: Partial<SkillSet> };
+
 export const createTestHarness = (opts?: {
-  config?: Partial<OrchestratorConfig>;
+  config?: TestConfig;
   state?: OrchestratorState;
   auto?: boolean;
 }) => {
@@ -63,9 +66,11 @@ export const createTestHarness = (opts?: {
     ? new SilentOperatorGate(hud)
     : new InkOperatorGate(hud);
 
+  const { skills: skillOverrides, ...configRest } = opts?.config ?? {};
   const config: OrchestratorConfig = {
     ...DEFAULT_CONFIG,
-    ...opts?.config,
+    ...configRest,
+    skills: { ...DEFAULT_SKILLS, ...skillOverrides },
     ...(opts?.auto === undefined ? {} : { auto: opts.auto }),
   };
 

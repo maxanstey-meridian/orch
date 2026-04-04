@@ -19,10 +19,7 @@ describe("Agent config lifecycle", () => {
   it("orchestration completes with per-role agent config overrides", async () => {
     const { uc, spawner, persistence } = createTestHarness({
       config: {
-        planDisabled: true,
-        gapDisabled: true,
-        verifySkill: null,
-        reviewSkill: null,
+        skills: { plan: null, gap: null, verify: null, review: null },
         agentConfig: {
           ...AGENT_DEFAULTS,
           tdd: { provider: "claude", model: "claude-sonnet-4-20250514" },

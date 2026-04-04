@@ -43,10 +43,7 @@ export const agentSpawnerFactory = (
     });
 
   const getClaudeSpawner = () =>
-    (claudeSpawner ??= new ClaudeAgentSpawner(
-      { tdd: config.tddSkill, review: config.reviewSkill, verify: config.verifySkill },
-      config.cwd,
-    ));
+    (claudeSpawner ??= new ClaudeAgentSpawner(config.skills, config.cwd));
 
   const getCodexSpawner = () =>
     (codexSpawner ??= new CodexAgentSpawner(
@@ -176,6 +173,28 @@ export const planGeneratorSpawnerFactory = (opts: {
           kill: () => handle.kill(),
         };
       };
+    default: {
+      const _exhaustive: never = provider;
+      throw new Error(`Unknown provider: ${_exhaustive}`);
+    }
+  }
+};
+
+export const complexityTriageSpawnerFactory = (opts: {
+  agentConfig: Record<AgentRole, ResolvedAgentConfig>;
+  cwd: string;
+}): (() => PromptAgent) => {
+  const { provider, model } = opts.agentConfig.triage;
+  switch (provider) {
+    case "claude":
+      return () => spawnClaudePlanAgent(ROLE_STYLES.triage, undefined, opts.cwd, model);
+    case "codex":
+      return () =>
+        createCodexPromptAgent({
+          cwd: opts.cwd,
+          model,
+          role: "triage",
+        });
     default: {
       const _exhaustive: never = provider;
       throw new Error(`Unknown provider: ${_exhaustive}`);
