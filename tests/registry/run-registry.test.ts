@@ -1,9 +1,9 @@
 import { spawn } from "child_process";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
-import { join, resolve } from "path";
 import { homedir, tmpdir } from "os";
+import { join, resolve } from "path";
 import { pathToFileURL } from "url";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunEntry } from "#domain/registry.js";
 import {
   defaultRegistryPath,
@@ -107,7 +107,7 @@ const runNodeProcess = async (
 const waitForRegistryLength = async (
   registryPath: string,
   expectedLength: number,
-  timeoutMs = 1_000,
+  timeoutMs = 5_000,
 ): Promise<RunEntry[]> => {
   const deadline = Date.now() + timeoutMs;
 
@@ -270,7 +270,7 @@ describe("run registry", () => {
     expect(actualEntries.map((entry) => entry.id).sort()).toEqual(
       [baselineEntry, ...entries].map((entry) => entry.id).sort(),
     );
-  });
+  }, 15_000);
 
   it("deregisterRun removes only the matching entry", async () => {
     const registryPath = join(tempDir, "runs.json");

@@ -10,6 +10,8 @@ import { InMemoryStatePersistence } from "./fake-state-persistence.js";
 import { InMemoryGitOps } from "./fake-git-ops.js";
 import { PassthroughPromptBuilder } from "./fake-prompt-builder.js";
 import { FakeLogWriter } from "./fake-log-writer.js";
+import { FakeRolePromptResolver } from "./fake-role-prompt-resolver.js";
+import { FakeExecutionUnitTriager } from "./fake-execution-unit-triager.js";
 
 const DEFAULT_SKILLS: SkillSet = {
   tdd: "test", review: "test", verify: "test", plan: "test", gap: null, completeness: "test",
@@ -59,6 +61,8 @@ export const createTestHarness = (opts?: {
   const git = new InMemoryGitOps();
   const prompts = new PassthroughPromptBuilder();
   const logWriter = new FakeLogWriter();
+  const rolePromptResolver = new FakeRolePromptResolver();
+  const triager = new FakeExecutionUnitTriager(spawner);
 
   // REAL production code — the full chain from HUD through to orchestration
   const progressSink = new InkProgressSink(hud);
@@ -83,6 +87,8 @@ export const createTestHarness = (opts?: {
     config,
     progressSink,
     logWriter,
+    rolePromptResolver,
+    triager,
   );
   uc.retryDelayMs = 0;
 
@@ -90,5 +96,18 @@ export const createTestHarness = (opts?: {
     persistence.current = opts.state;
   }
 
-  return { uc, hud, spawner, persistence, git, prompts, progressSink, gate, config, logWriter };
+  return {
+    uc,
+    hud,
+    spawner,
+    persistence,
+    git,
+    prompts,
+    progressSink,
+    gate,
+    config,
+    logWriter,
+    rolePromptResolver,
+    triager,
+  };
 };

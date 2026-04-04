@@ -1,13 +1,17 @@
 import type { AgentResult, AgentRole } from "#domain/agent-types.js";
+import type {
+  ExecutionUnitKind,
+  ExecutionUnitTriager,
+} from "#application/ports/execution-unit-triager.port.js";
+import type { RolePromptResolver } from "#application/ports/role-prompt-resolver.port.js";
 import { detectApiError } from "#domain/api-errors.js";
 import type { ApiError } from "#domain/api-errors.js";
-import type { OrchestratorConfig, Provider } from "#domain/config.js";
+import type { OrchestratorConfig, Provider, SkillRole } from "#domain/config.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
 import type { Phase } from "#domain/phase.js";
 import type { Group } from "#domain/plan.js";
 import type { Slice } from "#domain/plan.js";
 import { isCleanReview } from "#domain/review-check.js";
-import { shouldReview } from "#domain/review.js";
 import type {
   OrchestratorState,
   PersistedAgentSession,
@@ -17,10 +21,16 @@ import type {
 import { advanceState } from "#domain/state.js";
 import { isAlreadyImplemented } from "#domain/transition.js";
 import { transition } from "#domain/transition.js";
-import type { TriageResult } from "#domain/triage.js";
-import { FULL_TRIAGE } from "#domain/triage.js";
+import {
+  fullTriageForTier,
+  shouldDeferPass,
+  shouldRunPass,
+  shouldSkipPass,
+  type ComplexityTier,
+  type PassDecision,
+  type TriageResult,
+} from "#domain/triage.js";
 import { isVerifyPassing, parseVerifyResult, type VerifyResult } from "#domain/verify.js";
-import { buildTriagePrompt, parseTriageResult } from "#infrastructure/diff-triage.js";
 import type { AgentSpawner, AgentHandle } from "./ports/agent-spawner.port.js";
 import type { GitOps } from "./ports/git-ops.port.js";
 import type { LogWriter } from "./ports/log-writer.port.js";
@@ -56,6 +66,8 @@ export class RunOrchestration {
     "config",
     "progressSink",
     "logWriter",
+    "rolePromptResolver",
+    "executionUnitTriager",
   ] as const;
 
   state: OrchestratorState = {};
@@ -83,6 +95,8 @@ export class RunOrchestration {
     private readonly config: OrchestratorConfig,
     private readonly progressSink: ProgressSink,
     private readonly logWriter: LogWriter,
+    private readonly rolePromptResolver: RolePromptResolver,
+    private readonly triager: ExecutionUnitTriager,
   ) {}
 
   private sliceUnit(slice: Slice, groupName: string): ExecutionUnit {
@@ -121,6 +135,172 @@ export class RunOrchestration {
       slices: [],
       groupName: "Direct",
     };
+  }
+
+  private currentTier(): ComplexityTier {
+    return this.state.activeTier ?? this.state.tier ?? this.config.tier;
+  }
+
+  private systemPromptForRole(role: AgentRole): string | undefined {
+    const skillRole = this.agentRoleToSkillRole(role);
+    if (skillRole === null) {
+      return undefined;
+    }
+    return this.rolePromptResolver.resolve(skillRole, this.currentTier()) ?? undefined;
+  }
+
+  private agentRoleToSkillRole(role: AgentRole): SkillRole | null {
+    switch (role) {
+      case "tdd":
+      case "review":
+      case "verify":
+      case "plan":
+      case "gap":
+      case "completeness":
+        return role;
+      case "final":
+      case "triage":
+        return null;
+    }
+  }
+
+  private spawnAgent(
+    role: AgentRole,
+    opts?: {
+      readonly resumeSessionId?: string;
+      readonly cwd?: string;
+      readonly planMode?: boolean;
+      readonly model?: string;
+    },
+  ): AgentHandle {
+    return this.agents.spawn(role, {
+      ...opts,
+      systemPrompt: this.systemPromptForRole(role),
+    });
+  }
+
+  private async persistPolicyState(update: {
+    readonly activeTier: ComplexityTier;
+    readonly currentGroupBaseSha?: string;
+    readonly pendingVerifyBaseSha?: string;
+    readonly pendingCompletenessBaseSha?: string;
+    readonly pendingReviewBaseSha?: string;
+    readonly pendingGapBaseSha?: string;
+  }): Promise<void> {
+    await this.persistStateEvent({
+      kind: "policyUpdated",
+      activeTier: update.activeTier,
+      currentGroupBaseSha: update.currentGroupBaseSha,
+      pendingVerifyBaseSha: update.pendingVerifyBaseSha,
+      pendingCompletenessBaseSha: update.pendingCompletenessBaseSha,
+      pendingReviewBaseSha: update.pendingReviewBaseSha,
+      pendingGapBaseSha: update.pendingGapBaseSha,
+    });
+  }
+
+  private async openGroupPolicyWindow(groupName: string, groupBaseSha: string): Promise<void> {
+    const resumingCurrentGroup =
+      this.state.currentGroup === groupName &&
+      this.state.currentGroupBaseSha !== undefined;
+
+    if (resumingCurrentGroup) {
+      return;
+    }
+
+    await this.persistPolicyState({
+      activeTier: this.currentTier(),
+      currentGroupBaseSha: groupBaseSha,
+      pendingVerifyBaseSha: undefined,
+      pendingCompletenessBaseSha: undefined,
+      pendingReviewBaseSha: undefined,
+      pendingGapBaseSha: undefined,
+    });
+  }
+
+  private async clearGroupPolicyWindow(): Promise<void> {
+    await this.persistPolicyState({
+      activeTier: this.currentTier(),
+      currentGroupBaseSha: undefined,
+      pendingVerifyBaseSha: undefined,
+      pendingCompletenessBaseSha: undefined,
+      pendingReviewBaseSha: undefined,
+      pendingGapBaseSha: undefined,
+    });
+  }
+
+  private async setPendingBase(
+    pass: "verify" | "completeness" | "review" | "gap",
+    sha: string | undefined,
+  ): Promise<void> {
+    await this.persistPolicyState({
+      activeTier: this.currentTier(),
+      currentGroupBaseSha: this.state.currentGroupBaseSha,
+      pendingVerifyBaseSha: pass === "verify" ? sha : this.state.pendingVerifyBaseSha,
+      pendingCompletenessBaseSha:
+        pass === "completeness" ? sha : this.state.pendingCompletenessBaseSha,
+      pendingReviewBaseSha: pass === "review" ? sha : this.state.pendingReviewBaseSha,
+      pendingGapBaseSha: pass === "gap" ? sha : this.state.pendingGapBaseSha,
+    });
+  }
+
+  private async applyNextTier(nextTier: ComplexityTier): Promise<void> {
+    const previousTier = this.currentTier();
+    if (nextTier === previousTier) {
+      await this.persistPolicyState({
+        activeTier: nextTier,
+        currentGroupBaseSha: this.state.currentGroupBaseSha,
+        pendingVerifyBaseSha: this.state.pendingVerifyBaseSha,
+        pendingCompletenessBaseSha: this.state.pendingCompletenessBaseSha,
+        pendingReviewBaseSha: this.state.pendingReviewBaseSha,
+        pendingGapBaseSha: this.state.pendingGapBaseSha,
+      });
+      return;
+    }
+
+    await this.persistPolicyState({
+      activeTier: nextTier,
+      currentGroupBaseSha: this.state.currentGroupBaseSha,
+      pendingVerifyBaseSha: this.state.pendingVerifyBaseSha,
+      pendingCompletenessBaseSha: this.state.pendingCompletenessBaseSha,
+      pendingReviewBaseSha: this.state.pendingReviewBaseSha,
+      pendingGapBaseSha: this.state.pendingGapBaseSha,
+    });
+
+    await this.respawnTierSensitiveAgents();
+  }
+
+  private async respawnTierSensitiveAgents(): Promise<void> {
+    if (this.tddAgent) {
+      this.tddAgent.kill();
+    }
+    if (this.reviewAgent) {
+      this.reviewAgent.kill();
+    }
+    if (this.verifyAgent) {
+      this.verifyAgent.kill();
+      this.verifyAgent = null;
+    }
+    this.tddAgent = this.spawnAgent("tdd", { cwd: this.config.cwd });
+    this.reviewAgent = this.spawnAgent("review", { cwd: this.config.cwd });
+    this.pipeToSink(this.tddAgent, "tdd");
+    this.pipeToSink(this.reviewAgent, "review");
+    await Promise.all([
+      this.tddAgent.sendQuiet(this.prompts.rulesReminder("tdd")),
+      this.reviewAgent.sendQuiet(this.prompts.rulesReminder("review")),
+    ]);
+    this.tddIsFirst = true;
+    this.reviewIsFirst = true;
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "tdd",
+      session: this.currentSession("tdd"),
+    });
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "review",
+      session: this.currentSession("review"),
+    });
+    await this.persistence.save(this.state);
   }
 
   private failIncompleteExecutionUnit(unit: ExecutionUnit, reason: string): never {
@@ -446,6 +626,11 @@ Rules:
             lastCompletedGroup: undefined,
             lastSliceImplemented: undefined,
             reviewBaseSha: undefined,
+            currentGroupBaseSha: undefined,
+            pendingVerifyBaseSha: undefined,
+            pendingCompletenessBaseSha: undefined,
+            pendingReviewBaseSha: undefined,
+            pendingGapBaseSha: undefined,
           }
         : this.state;
 
@@ -453,6 +638,8 @@ Rules:
       ...modeAwareState,
       completedAt: undefined,
       executionMode: this.config.executionMode,
+      tier: this.currentTier(),
+      activeTier: this.currentTier(),
     };
     this.state = advanceState(this.state, {
       kind: "agentSpawned",
@@ -467,6 +654,320 @@ Rules:
     await this.persistence.save(this.state);
   }
 
+  private pendingBaseFor(pass: "verify" | "completeness" | "review" | "gap"): string | undefined {
+    switch (pass) {
+      case "verify":
+        return this.state.pendingVerifyBaseSha;
+      case "completeness":
+        return this.state.pendingCompletenessBaseSha;
+      case "review":
+        return this.state.pendingReviewBaseSha;
+      case "gap":
+        return this.state.pendingGapBaseSha;
+    }
+  }
+
+  private normalizeBoundaryDecision(decision: PassDecision, finalBoundary: boolean): PassDecision {
+    if (finalBoundary && shouldDeferPass(decision)) {
+      return "run_now";
+    }
+    return decision;
+  }
+
+  private async triageBoundary(opts: {
+    unitKind: ExecutionUnitKind;
+    baseSha: string;
+    finalBoundary: boolean;
+    moreUnitsInGroup: boolean;
+  }): Promise<TriageResult> {
+    const diff = await this.git.getDiff(opts.baseSha);
+    const diffStats = await this.git.measureDiff(opts.baseSha);
+    const pending = {
+      verify:
+        this.state.pendingVerifyBaseSha !== undefined &&
+        (await this.git.hasChanges(this.state.pendingVerifyBaseSha)),
+      completeness:
+        this.state.pendingCompletenessBaseSha !== undefined &&
+        (await this.git.hasChanges(this.state.pendingCompletenessBaseSha)),
+      review:
+        this.state.pendingReviewBaseSha !== undefined &&
+        (await this.git.hasChanges(this.state.pendingReviewBaseSha)),
+      gap:
+        this.state.pendingGapBaseSha !== undefined &&
+        (await this.git.hasChanges(this.state.pendingGapBaseSha)),
+    };
+
+    const triage = await this.triager.decide({
+      mode: this.config.executionMode,
+      unitKind: opts.unitKind,
+      currentTier: this.currentTier(),
+      diff,
+      diffStats,
+      reviewThreshold: this.config.reviewThreshold,
+      finalBoundary: opts.finalBoundary,
+      moreUnitsInGroup: opts.moreUnitsInGroup,
+      pending,
+    });
+    this.progressSink.logBadge("triage", triage.reason);
+    return triage;
+  }
+
+  private async applyPassDecision(opts: {
+    pass: "verify" | "completeness" | "review" | "gap";
+    decision: PassDecision;
+    defaultBaseSha: string;
+    run: (baseSha: string) => Promise<boolean>;
+  }): Promise<boolean> {
+    const pendingBaseSha = this.pendingBaseFor(opts.pass);
+    const baseSha = pendingBaseSha ?? opts.defaultBaseSha;
+
+    if (shouldDeferPass(opts.decision)) {
+      if (pendingBaseSha === undefined) {
+        await this.setPendingBase(opts.pass, baseSha);
+        return true;
+      }
+
+      const hasDeferredChanges = await this.git.hasChanges(baseSha);
+      if (!hasDeferredChanges) {
+        await this.setPendingBase(opts.pass, undefined);
+        return true;
+      }
+
+      return true;
+    }
+
+    if (shouldSkipPass(opts.decision)) {
+      if (pendingBaseSha !== undefined) {
+        const hasDeferredChanges = await this.git.hasChanges(baseSha);
+        if (!hasDeferredChanges) {
+          await this.setPendingBase(opts.pass, undefined);
+          return true;
+        }
+      }
+      await this.setPendingBase(opts.pass, undefined);
+      return true;
+    }
+
+    if (pendingBaseSha !== undefined) {
+      const hasDeferredChanges = await this.git.hasChanges(baseSha);
+      if (!hasDeferredChanges) {
+        await this.setPendingBase(opts.pass, undefined);
+        return true;
+      }
+    }
+
+    const ok = await opts.run(baseSha);
+    if (!ok) {
+      return false;
+    }
+
+    await this.setPendingBase(opts.pass, undefined);
+    return true;
+  }
+
+  private async applyBoundaryPolicy(opts: {
+    unit: ExecutionUnit;
+    group: Group;
+    triageBaseSha: string;
+    finalBoundary: boolean;
+    moreUnitsInGroup: boolean;
+    sendSummary: boolean;
+    allowGap: boolean;
+    onlyPendingPasses?: boolean;
+    tddText?: string;
+  }): Promise<{ skipped: boolean; triage: TriageResult }> {
+    if (opts.tddText !== undefined) {
+      const noDeferredPasses =
+        this.state.pendingVerifyBaseSha === undefined &&
+        this.state.pendingCompletenessBaseSha === undefined &&
+        this.state.pendingReviewBaseSha === undefined &&
+        this.state.pendingGapBaseSha === undefined;
+      const headAfterExecute = await this.git.captureRef();
+      if (
+        noDeferredPasses &&
+        isAlreadyImplemented(opts.tddText, headAfterExecute, opts.triageBaseSha)
+      ) {
+        if (opts.sendSummary) {
+          await this.tddAgent!.sendQuiet(this.summaryPromptForUnit(opts.unit));
+        }
+        return { skipped: false, triage: fullTriageForTier(this.currentTier()) };
+      }
+    }
+
+    const triage = await this.triageBoundary({
+      unitKind: opts.unit.kind,
+      baseSha: opts.triageBaseSha,
+      finalBoundary: opts.finalBoundary,
+      moreUnitsInGroup: opts.moreUnitsInGroup,
+    });
+
+    const pendingCompleteness = this.state.pendingCompletenessBaseSha !== undefined;
+    const pendingVerify = this.state.pendingVerifyBaseSha !== undefined;
+    const pendingReview = this.state.pendingReviewBaseSha !== undefined;
+    const pendingGap = this.state.pendingGapBaseSha !== undefined;
+
+    const completenessDecision =
+      opts.onlyPendingPasses && !pendingCompleteness
+        ? "skip"
+        : this.config.skills.completeness === null
+          ? "skip"
+          : this.normalizeBoundaryDecision(triage.completeness, opts.finalBoundary);
+    const verifyDecision =
+      opts.onlyPendingPasses && !pendingVerify
+        ? "skip"
+        : this.config.skills.verify === null
+          ? "skip"
+          : this.normalizeBoundaryDecision(triage.verify, opts.finalBoundary);
+    const reviewDecision =
+      opts.onlyPendingPasses && !pendingReview
+        ? "skip"
+        : this.config.skills.review === null
+          ? "skip"
+          : this.normalizeBoundaryDecision(triage.review, opts.finalBoundary);
+    const gapDecision =
+      opts.onlyPendingPasses && !pendingGap
+        ? "skip"
+        : this.config.skills.gap === null
+          ? "skip"
+          : this.normalizeBoundaryDecision(triage.gap, opts.finalBoundary);
+
+    const completenessOk = await this.applyPassDecision({
+      pass: "completeness",
+      decision: completenessDecision,
+      defaultBaseSha: opts.triageBaseSha,
+      run: async (baseSha) => {
+        await this.completenessCheck(opts.unit, baseSha);
+        return true;
+      },
+    });
+    if (!completenessOk) {
+      return { skipped: true, triage };
+    }
+    if (this.sliceSkipFlag) {
+      return { skipped: true, triage };
+    }
+
+    const verifyOk = await this.applyPassDecision({
+      pass: "verify",
+      decision: verifyDecision,
+      defaultBaseSha: opts.triageBaseSha,
+      run: async (baseSha) => this.verify(opts.unit, baseSha),
+    });
+    if (!verifyOk) {
+      return { skipped: true, triage };
+    }
+    if (this.sliceSkipFlag) {
+      return { skipped: true, triage };
+    }
+
+    if (this.phase.kind === "CompletenessCheck") {
+      this.phase = transition(this.phase, { kind: "CompletenessOk" });
+    }
+    if (this.phase.kind === "Verifying") {
+      this.phase = transition(this.phase, { kind: "VerifyPassed" });
+    }
+
+    const reviewOk = await this.applyPassDecision({
+      pass: "review",
+      decision: reviewDecision,
+      defaultBaseSha: opts.triageBaseSha,
+      run: async (baseSha) => {
+        if (this.config.skills.review === null) {
+          return true;
+        }
+        await this.reviewFix(opts.unit, baseSha);
+        return true;
+      },
+    });
+    if (!reviewOk) {
+      return { skipped: true, triage };
+    }
+    if (this.sliceSkipFlag) {
+      return { skipped: true, triage };
+    }
+    if (this.phase.kind === "Reviewing") {
+      this.phase = transition(this.phase, { kind: "ReviewClean" });
+    }
+
+    const canRunGap = opts.allowGap && opts.unit.kind !== "slice";
+    const gapOk = await this.applyPassDecision({
+      pass: "gap",
+      decision: canRunGap ? gapDecision : "defer",
+      defaultBaseSha: opts.triageBaseSha,
+      run: async (baseSha) => {
+        await this.gapAnalysis(opts.group, baseSha);
+        return true;
+      },
+    });
+    if (!gapOk) {
+      return { skipped: true, triage };
+    }
+    if (this.sliceSkipFlag) {
+      return { skipped: true, triage };
+    }
+
+    if (opts.unit.kind !== "direct") {
+      this.state = advanceState(this.state, {
+        kind: "sliceImplemented",
+        sliceNumber: opts.unit.sliceNumber,
+        reviewBaseSha: this.state.pendingReviewBaseSha ?? opts.triageBaseSha,
+        pendingVerifyBaseSha: this.state.pendingVerifyBaseSha,
+        pendingCompletenessBaseSha: this.state.pendingCompletenessBaseSha,
+        pendingGapBaseSha: this.state.pendingGapBaseSha,
+      });
+      await this.persistence.save(this.state);
+    }
+
+    if (opts.sendSummary) {
+      await this.tddAgent!.sendQuiet(this.summaryPromptForUnit(opts.unit));
+    }
+
+    await this.applyNextTier(triage.nextTier);
+    return { skipped: false, triage };
+  }
+
+  private async flushDeferredGroupPasses(
+    group: Group,
+    groupBaseSha: string,
+    forceGroupBoundary = false,
+  ): Promise<void> {
+    const unit = this.groupedUnit(group);
+    const hasPendingPasses =
+      this.state.pendingVerifyBaseSha !== undefined ||
+      this.state.pendingCompletenessBaseSha !== undefined ||
+      this.state.pendingReviewBaseSha !== undefined ||
+      this.state.pendingGapBaseSha !== undefined;
+
+    if (
+      !hasPendingPasses &&
+      !forceGroupBoundary
+    ) {
+      return;
+    }
+
+    if (!hasPendingPasses && forceGroupBoundary) {
+      if (this.config.skills.gap !== null && (await this.git.hasChanges(groupBaseSha))) {
+        await this.gapAnalysis(group, groupBaseSha);
+      }
+      return;
+    }
+
+    const result = await this.applyBoundaryPolicy({
+      unit,
+      group,
+      triageBaseSha: groupBaseSha,
+      finalBoundary: true,
+      moreUnitsInGroup: false,
+      sendSummary: false,
+      allowGap: true,
+      onlyPendingPasses: hasPendingPasses,
+    });
+
+    if (result.skipped) {
+      this.failIncompleteExecutionUnit(unit, "deferred group-end passes did not complete");
+    }
+  }
+
   private async runDirectExecution(group: Group, reviewBase: string): Promise<void> {
     if (group.slices.length === 0) {
       return;
@@ -474,10 +975,17 @@ Rules:
 
     this.sliceSkipFlag = false;
     this.progressSink.clearSkipping();
-    const verifyBaseSha = await this.git.captureRef();
+    await this.persistPolicyState({
+      activeTier: this.currentTier(),
+      currentGroupBaseSha: reviewBase,
+      pendingVerifyBaseSha: undefined,
+      pendingCompletenessBaseSha: undefined,
+      pendingReviewBaseSha: undefined,
+      pendingGapBaseSha: undefined,
+    });
 
     // Execute each slice sequentially — no verification between slices
-    let lastTddResult: Awaited<ReturnType<typeof this.planThenExecute>>["tddResult"] | undefined;
+    let lastTddText: string | undefined;
     for (const slice of group.slices) {
       const unit = this.directUnit(slice.content, slice.number);
       this.phase = transition(this.phase, { kind: "StartPlanning", sliceNumber: unit.sliceNumber });
@@ -515,35 +1023,28 @@ Rules:
       }
 
       await this.commitSweep(unit.label);
-      lastTddResult = tddResult;
+      lastTddText = tddResult.assistantText;
       this.progressSink.logBadge("tdd", `slice ${slice.number} done`);
     }
 
-    // Verify/review once at the end using the full group content as the unit
+    // Run the expensive passes once at the end using the full direct request.
     const lastSlice = group.slices[group.slices.length - 1]!;
     const fullContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
     const unit = this.directUnit(fullContent, lastSlice.number);
-
-    const triage = await this.triageDiff(verifyBaseSha);
-    if (triage.runCompleteness) {
-      await this.completenessCheck(unit, verifyBaseSha);
-    }
-
-    const directResult = await this.runExecutionUnit(
+    const directResult = await this.applyBoundaryPolicy({
       unit,
-      reviewBase,
-      lastTddResult!,
-      verifyBaseSha,
-      triage,
-    );
+      group,
+      triageBaseSha: reviewBase,
+      finalBoundary: true,
+      moreUnitsInGroup: false,
+      sendSummary: true,
+      allowGap: true,
+      tddText: lastTddText,
+    });
     this.phase = { kind: "Idle" };
 
     if (directResult.skipped) {
-      this.failIncompleteExecutionUnit(unit, "verification or review did not complete");
-    }
-
-    if (triage.runGap) {
-      await this.gapAnalysis(group, verifyBaseSha);
+      this.failIncompleteExecutionUnit(unit, "boundary policy did not complete");
     }
   }
 
@@ -630,7 +1131,7 @@ Rules:
     if (this.reviewAgent) {
       this.reviewAgent.kill();
     }
-    this.reviewAgent = this.agents.spawn("review", { cwd: this.config.cwd });
+    this.reviewAgent = this.spawnAgent("review", { cwd: this.config.cwd });
     this.pipeToSink(this.reviewAgent, "review");
     await this.sendRulesReminder("review");
     this.reviewIsFirst = true;
@@ -711,11 +1212,11 @@ Rules:
       }
 
       // Spawn initial agents
-      this.tddAgent = this.agents.spawn("tdd", {
+      this.tddAgent = this.spawnAgent("tdd", {
         resumeSessionId: this.sessionForRole("tdd")?.id,
         cwd: this.config.cwd,
       });
-      this.reviewAgent = this.agents.spawn("review", {
+      this.reviewAgent = this.spawnAgent("review", {
         resumeSessionId: this.sessionForRole("review")?.id,
         cwd: this.config.cwd,
       });
@@ -781,11 +1282,9 @@ Rules:
         if (!directGroup) {
           return;
         }
-        const directSlice = directGroup.slices[0];
-        if (!directSlice) {
-          return;
-        }
-        this.currentDirectRequestContent = directSlice.content;
+        this.currentDirectRequestContent = directGroup.slices
+          .map((slice) => slice.content)
+          .join("\n\n---\n\n");
         try {
           await this.runDirectExecution(directGroup, runBaseSha);
           await this.finalPasses(runBaseSha);
@@ -815,18 +1314,19 @@ Rules:
           groupSliceCount: group.slices.length,
           groupCompleted: 0,
         });
-        const groupBaseSha = await this.git.captureRef();
-        let reviewBase = groupBaseSha;
+        const groupBaseSha = this.state.currentGroupBaseSha ?? (await this.git.captureRef());
+        await this.openGroupPolicyWindow(group.name, groupBaseSha);
         let groupCompleted = 0;
+        let executedAnySliceThisGroup = false;
 
         if (this.config.executionMode === "grouped") {
-          const groupedResult = await this.runGroupedExecutionUnit(group, reviewBase, groupBaseSha);
-          reviewBase = groupedResult.reviewBase;
+          executedAnySliceThisGroup = true;
+          const groupedResult = await this.runGroupedExecutionUnit(group, groupBaseSha);
 
           if (groupedResult.skipped) {
             this.failIncompleteExecutionUnit(
               this.groupedUnit(group),
-              "verification or review did not complete",
+              "boundary policy did not complete",
             );
           }
 
@@ -859,6 +1359,7 @@ Rules:
             }
 
             this.logOrch(`Starting slice ${slice.number} (${group.name})`);
+            executedAnySliceThisGroup = true;
             await this.persistStateEvent({
               kind: "sliceStarted",
               sliceNumber: slice.number,
@@ -872,7 +1373,7 @@ Rules:
 
             this.progressSink.logSliceIntro(slice);
 
-            const verifyBaseSha = await this.git.captureRef();
+            const sliceBaseSha = await this.git.captureRef();
 
             // Plan-then-execute with replan loop
             this.phase = transition(this.phase, {
@@ -922,30 +1423,25 @@ Rules:
             // Commit sweep
             await this.commitSweep(`Slice ${slice.number}`);
 
-            // Triage: classify the diff to decide which pipeline phases to run
-            const triage = await this.triageDiff(verifyBaseSha);
-
-            // Completeness check
-            if (triage.runCompleteness) {
-              await this.completenessCheck(this.sliceUnit(slice, group.name), verifyBaseSha);
-            }
-
-            // Post-TDD pipeline: verify → review → summary
-            const sliceResult = await this.runExecutionUnit(
-              this.sliceUnit(slice, group.name),
-              reviewBase,
-              tddResult,
-              verifyBaseSha,
-              triage,
-            );
-            reviewBase = sliceResult.reviewBase;
+            const unit = this.sliceUnit(slice, group.name);
+            const sliceResult = await this.applyBoundaryPolicy({
+              unit,
+              group,
+              triageBaseSha: sliceBaseSha,
+              finalBoundary: false,
+              moreUnitsInGroup: slice.number !== group.slices[group.slices.length - 1]?.number,
+              sendSummary: true,
+              allowGap: false,
+              tddText: tddResult.assistantText,
+            });
             this.phase = { kind: "Idle" };
 
             if (sliceResult.skipped) {
-              this.failIncompleteSlice(slice, "verification or review did not complete");
+              this.failIncompleteSlice(slice, "boundary policy did not complete");
             }
 
             if (!sliceResult.skipped) {
+              await this.markExecutionUnitComplete(unit);
               groupCompleted++;
               this.progressSink.updateProgress({
                 completedSlices: this.slicesCompleted,
@@ -955,8 +1451,15 @@ Rules:
           }
         }
 
-        // Gap analysis
-        await this.gapAnalysis(group, groupBaseSha);
+        if (this.config.executionMode === "sliced") {
+          await this.flushDeferredGroupPasses(
+            group,
+            groupBaseSha,
+            !executedAnySliceThisGroup &&
+              groupCompleted === group.slices.length &&
+              this.state.lastCompletedGroup !== group.name,
+          );
+        }
 
         // Commit sweep
         await this.commitSweep(group.name);
@@ -964,6 +1467,7 @@ Rules:
         // Mark group complete
         this.state = advanceState(this.state, { kind: "groupDone", groupName: group.name });
         await this.persistence.save(this.state);
+        await this.clearGroupPolicyWindow();
 
         // Inter-group transition
         if (i < groups.length - 1) {
@@ -1075,7 +1579,7 @@ Rules:
 
     // ── Plan phase ──
     const planPrompt = this.prompts.plan(sliceContent, sliceNumber);
-    const planAgent = this.agents.spawn("plan", { cwd: this.config.cwd });
+    const planAgent = this.spawnAgent("plan", { cwd: this.config.cwd });
     this.pipeToSink(planAgent, "plan");
     this.progressSink.logBadge("plan", "planning...");
     await this.enterPhase("plan", sliceNumber);
@@ -1179,15 +1683,14 @@ Rules:
 
   async runGroupedExecutionUnit(
     group: Group,
-    reviewBase: string,
     groupBaseSha: string,
-  ): Promise<{ reviewBase: string; skipped: boolean }> {
+  ): Promise<{ skipped: boolean }> {
     const unit = this.groupedUnit(group);
     this.sliceSkipFlag = false;
     this.progressSink.clearSkipping();
 
     if (this.quitRequested) {
-      return { reviewBase, skipped: true };
+      return { skipped: true };
     }
 
     this.progressSink.updateProgress({
@@ -1216,7 +1719,7 @@ Rules:
     }
 
     if (this.sliceSkipFlag) {
-      return { reviewBase, skipped: true };
+      return { skipped: true };
     }
 
     const testPassPrompt = this.prompts.groupedTestPass(unit.groupName, unit.content);
@@ -1237,84 +1740,23 @@ Rules:
 
     await this.commitSweep(`Group ${unit.groupName}`);
 
-    const triage = await this.triageDiff(groupBaseSha);
-    if (triage.runCompleteness) {
-      await this.completenessCheck(unit, groupBaseSha);
-    }
+    const result = await this.applyBoundaryPolicy({
+      unit,
+      group,
+      triageBaseSha: groupBaseSha,
+      finalBoundary: true,
+      moreUnitsInGroup: false,
+      sendSummary: true,
+      allowGap: true,
+      tddText: executeResult.assistantText,
+    });
 
-    return this.runExecutionUnit(unit, reviewBase, executeResult, groupBaseSha, triage);
-  }
-
-  async runExecutionUnit(
-    unit: ExecutionUnit,
-    reviewBase: string,
-    tddResult: AgentResult,
-    verifyBaseSha: string,
-    triage: TriageResult = FULL_TRIAGE,
-  ): Promise<{ reviewBase: string; skipped: boolean }> {
-    const tddText = tddResult.assistantText ?? "";
-    const headAfterTdd = await this.git.captureRef();
-
-    if (isAlreadyImplemented(tddText, headAfterTdd, reviewBase)) {
-      this.phase = { kind: "Idle" };
+    if (!result.skipped) {
       await this.markExecutionUnitComplete(unit);
-      return { reviewBase, skipped: false };
     }
 
-    // Verify gate
-    if (this.config.skills.verify === null || !triage.runVerify) {
-      // verify disabled or triage skipped it
-    } else {
-      const verified = await this.verify(unit, verifyBaseSha);
-      if (!verified) {
-        return { reviewBase, skipped: true };
-      }
-    }
-
-    if (this.sliceSkipFlag) {
-      return { reviewBase, skipped: true };
-    }
-
-    this.phase = transition(this.phase, { kind: "VerifyPassed" });
-    this.phase = transition(this.phase, { kind: "CompletenessOk" });
-
-    if (unit.kind !== "direct") {
-      this.state = advanceState(this.state, {
-        kind: "sliceImplemented",
-        sliceNumber: unit.sliceNumber,
-        reviewBaseSha: verifyBaseSha,
-      });
-      await this.persistence.save(this.state);
-    }
-
-    // Review-fix loop — gated on minimum diff threshold
-    const diffStats = await this.git.measureDiff(reviewBase);
-    if (!shouldReview(diffStats, this.config.reviewThreshold)) {
-      this.phase = transition(this.phase, { kind: "SliceComplete" });
-      await this.markExecutionUnitComplete(unit);
-      return { reviewBase, skipped: false };
-    }
-
-    if (this.sliceSkipFlag) {
-      return { reviewBase, skipped: true };
-    }
-
-    if (this.config.skills.review !== null && triage.runReview) {
-      await this.reviewFix(unit, reviewBase);
-    }
-    const newReviewBase = await this.git.captureRef();
-
-    if (this.sliceSkipFlag) {
-      return { reviewBase: newReviewBase, skipped: true };
-    }
-
-    this.phase = transition(this.phase, { kind: "ReviewClean" });
-
-    // Slice summary
-    await this.tddAgent!.sendQuiet(this.summaryPromptForUnit(unit));
-
-    await this.markExecutionUnitComplete(unit);
-    return { reviewBase: newReviewBase, skipped: false };
+    this.phase = { kind: "Idle" };
+    return { skipped: result.skipped };
   }
 
   async reviewFix(unit: ExecutionUnit, baseSha: string): Promise<void> {
@@ -1405,9 +1847,9 @@ Rules:
     const prompt = this.completenessPromptForUnit(unit, baseSha);
 
     for (let cycle = 1; cycle <= this.config.maxReviewCycles; cycle++) {
-      const checkAgent = this.agents.spawn("completeness", { cwd: this.config.cwd });
+      const checkAgent = this.spawnAgent("completeness", { cwd: this.config.cwd });
       this.pipeToSink(checkAgent, "completeness");
-      await this.enterPhase("verify", unit.sliceNumber);
+      await this.enterPhase("completeness", unit.sliceNumber);
       const result = await this.withRetry(
         () => checkAgent.send(prompt),
         checkAgent,
@@ -1425,12 +1867,15 @@ Rules:
             ? "DIRECT_COMPLETE"
             : "SLICE_COMPLETE";
       if (text.includes(completionSentinel) && !hasMissing) {
+        if (this.phase.kind === "CompletenessCheck") {
+          this.phase = transition(this.phase, { kind: "CompletenessOk" });
+        }
         return;
       }
 
-      // Phase: Verifying → CompletenessCheck → Executing (issues found)
-      this.phase = transition(this.phase, { kind: "VerifyPassed" });
-      this.phase = transition(this.phase, { kind: "CompletenessIssues" });
+      if (this.phase.kind === "CompletenessCheck") {
+        this.phase = transition(this.phase, { kind: "CompletenessIssues" });
+      }
 
       const fixPrompt =
         unit.kind === "direct"
@@ -1481,8 +1926,12 @@ Rules:
     this.progressSink.updateProgress({ activeAgent: "VFY", activeAgentActivity: "verifying..." });
 
     if (!this.verifyAgent) {
-      this.verifyAgent = this.agents.spawn("verify", { cwd: this.config.cwd });
+      this.verifyAgent = this.spawnAgent("verify", { cwd: this.config.cwd });
       this.pipeToSink(this.verifyAgent, "verify");
+    }
+
+    if (this.phase.kind === "CompletenessCheck") {
+      this.phase = transition(this.phase, { kind: "CompletenessOk" });
     }
 
     const verifyPrompt = this.verifyPromptForUnit(unit, verifyBaseSha);
@@ -1529,7 +1978,7 @@ Rules:
       );
       await this.checkCredit(fixResult, this.tddAgent!, "tdd");
 
-      this.phase = transition(this.phase, { kind: "ExecutionDone" });
+      this.phase = { kind: "Verifying", sliceNumber: unit.sliceNumber };
 
       const tddMadeChanges = await this.git.hasChanges(preFixSha);
 
@@ -1587,6 +2036,10 @@ Rules:
       throw new IncompleteRunError(`${unit.label} verification failed after retry budget`);
     }
 
+    if (this.phase.kind === "Verifying") {
+      this.phase = transition(this.phase, { kind: "VerifyPassed" });
+    }
+
     return true;
   }
 
@@ -1604,7 +2057,7 @@ Rules:
       let passClean = false;
 
       for (let cycle = 1; cycle <= this.config.maxReviewCycles; cycle++) {
-        const finalAgent = this.agents.spawn("final", { cwd: this.config.cwd });
+        const finalAgent = this.spawnAgent("final", { cwd: this.config.cwd });
         this.pipeToSink(finalAgent, "final");
         const finalPrompt = this.prompts.withBrief(pass.prompt);
         this.progressSink.logBadge("final", "finalising...");
@@ -1672,7 +2125,7 @@ Rules:
     const gapPrompt = this.gapPromptForRun(groupContent, groupBaseSha);
 
     for (let cycle = 1; cycle <= this.config.maxReviewCycles; cycle++) {
-      const gapAgent = this.agents.spawn("gap", { cwd: this.config.cwd });
+      const gapAgent = this.spawnAgent("gap", { cwd: this.config.cwd });
       this.pipeToSink(gapAgent, "gap");
       this.progressSink.logBadge("gap", "filling gaps...");
       await this.enterPhase(
@@ -1721,24 +2174,6 @@ Rules:
     }
 
     throw new IncompleteRunError(`${group.name} gap analysis failed after retry budget`);
-  }
-
-  async triageDiff(baseSha: string): Promise<TriageResult> {
-    const diff = await this.git.getDiff(baseSha);
-    if (!diff) {
-      return FULL_TRIAGE;
-    }
-    try {
-      const agent = this.agents.spawn("triage", { cwd: this.config.cwd });
-      const prompt = buildTriagePrompt(diff);
-      const result = await agent.send(prompt);
-      agent.kill();
-      const triage = parseTriageResult(result.assistantText ?? "");
-      this.progressSink.logBadge("triage", triage.reason);
-      return triage;
-    } catch {
-      return FULL_TRIAGE;
-    }
   }
 
   async commitSweep(label: string): Promise<void> {
@@ -1858,7 +2293,7 @@ Rules:
       await this.persistence.save(this.state);
       await new Promise((resolvePromise) => setTimeout(resolvePromise, waitMs));
 
-      const probe = this.agents.spawn(role, { cwd: this.config.cwd });
+      const probe = this.spawnAgent(role, { cwd: this.config.cwd });
       try {
         const probeResult = await probe.send("Reply with exactly OK.");
         const probeError = detectApiError(probeResult, probe.stderr);
@@ -1906,7 +2341,7 @@ Rules:
     if (this.tddAgent) {
       this.tddAgent.kill();
     }
-    this.tddAgent = this.agents.spawn("tdd", { cwd: this.config.cwd });
+    this.tddAgent = this.spawnAgent("tdd", { cwd: this.config.cwd });
     this.pipeToSink(this.tddAgent, "tdd");
     await this.tddAgent.sendQuiet(this.prompts.rulesReminder("tdd"));
     this.tddIsFirst = true;
@@ -1919,36 +2354,6 @@ Rules:
   }
 
   async respawnBoth(): Promise<void> {
-    if (this.tddAgent) {
-      this.tddAgent.kill();
-    }
-    if (this.reviewAgent) {
-      this.reviewAgent.kill();
-    }
-    if (this.verifyAgent) {
-      this.verifyAgent.kill();
-      this.verifyAgent = null;
-    }
-    this.tddAgent = this.agents.spawn("tdd", { cwd: this.config.cwd });
-    this.reviewAgent = this.agents.spawn("review", { cwd: this.config.cwd });
-    this.pipeToSink(this.tddAgent, "tdd");
-    this.pipeToSink(this.reviewAgent, "review");
-    await Promise.all([
-      this.tddAgent.sendQuiet(this.prompts.rulesReminder("tdd")),
-      this.reviewAgent.sendQuiet(this.prompts.rulesReminder("review")),
-    ]);
-    this.tddIsFirst = true;
-    this.reviewIsFirst = true;
-    this.state = advanceState(this.state, {
-      kind: "agentSpawned",
-      role: "tdd",
-      session: this.currentSession("tdd"),
-    });
-    this.state = advanceState(this.state, {
-      kind: "agentSpawned",
-      role: "review",
-      session: this.currentSession("review"),
-    });
-    await this.persistence.save(this.state);
+    await this.respawnTierSensitiveAgents();
   }
 }

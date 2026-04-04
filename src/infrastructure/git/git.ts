@@ -8,18 +8,17 @@ export const git = async (args: string[], cwd: string): Promise<string> => {
   return stdout.trim();
 };
 
-export const captureRef = async (cwd: string): Promise<string> => {
-  return git(["rev-parse", "HEAD"], cwd);
-};
+const resolveHeadRef = async (cwd: string): Promise<string> => git(["rev-parse", "HEAD"], cwd);
+
+export const captureRef = async (cwd: string): Promise<string> => resolveHeadRef(cwd);
 
 export const hasChanges = async (cwd: string, since: string): Promise<boolean> => {
-  const currentRef = await captureRef(cwd);
-  if (currentRef !== since) {
+  const head = await resolveHeadRef(cwd);
+  if (head !== since) {
     return true;
   }
 
-  const status = await git(["status", "--porcelain"], cwd);
-  return status.length > 0;
+  return hasDirtyTree(cwd);
 };
 
 export const getStatus = async (cwd: string): Promise<string> => {
@@ -27,7 +26,8 @@ export const getStatus = async (cwd: string): Promise<string> => {
 };
 
 export const getDiff = async (cwd: string, since: string): Promise<string> => {
-  return git(["diff", `${since}..HEAD`], cwd);
+  const head = await resolveHeadRef(cwd);
+  return head === since ? git(["diff", since], cwd) : git(["diff", `${since}..HEAD`], cwd);
 };
 
 export const hasDirtyTree = async (cwd: string): Promise<boolean> => {

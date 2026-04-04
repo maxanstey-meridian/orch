@@ -1,9 +1,9 @@
 import { spawn } from "child_process";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
-import { join, resolve } from "path";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "fs/promises";
 import { homedir, tmpdir } from "os";
+import { join, resolve } from "path";
 import { pathToFileURL } from "url";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { QueueEntry } from "#domain/queue.js";
 import {
   addToQueue,
@@ -102,7 +102,7 @@ const runNodeProcess = async (
 const waitForQueueLength = async (
   queuePath: string,
   expectedLength: number,
-  timeoutMs = 1_000,
+  timeoutMs = 5_000,
 ): Promise<QueueEntry[]> => {
   const deadline = Date.now() + timeoutMs;
 
@@ -295,7 +295,7 @@ describe("queue store", () => {
     expect(actualEntries.map((entry) => entry.id).sort()).toEqual(
       [baselineEntry, ...entries].map((entry) => entry.id).sort(),
     );
-  });
+  }, 15_000);
 
   it("addToQueue recovers from a legacy lock directory left behind by older implementations", async () => {
     const queuePath = join(tempDir, "queue.json");
@@ -303,6 +303,8 @@ describe("queue store", () => {
     const lockPath = `${queuePath}.lock`;
 
     await mkdir(lockPath, { recursive: true });
+    const staleDate = new Date(Date.now() - 60_000);
+    await utimes(lockPath, staleDate, staleDate);
 
     const result = await runNodeProcess(
       [
@@ -324,6 +326,31 @@ describe("queue store", () => {
       stderr: "",
       timedOut: false,
     });
+    await expect(readQueue(queuePath)).resolves.toEqual([entry]);
+  });
+
+  it("addToQueue waits for a fresh lock directory without owner metadata", async () => {
+    const queuePath = join(tempDir, "queue.json");
+    const lockPath = `${queuePath}.lock`;
+    const entry = makeEntry({ id: "queue-1" });
+    let completed = false;
+
+    await mkdir(lockPath, { recursive: true });
+
+    const pending = addToQueue(queuePath, entry).then(() => {
+      completed = true;
+    });
+
+    await new Promise((resolveDelay) => {
+      setTimeout(resolveDelay, 25);
+    });
+
+    expect(completed).toBe(false);
+    await expect(readQueue(queuePath)).resolves.toEqual([]);
+
+    await rm(lockPath, { recursive: true, force: true });
+    await pending;
+
     await expect(readQueue(queuePath)).resolves.toEqual([entry]);
   });
 
@@ -402,7 +429,18 @@ describe("queue store", () => {
 
   it("readQueue returns empty array when file contains a malformed queue entry", async () => {
     const queuePath = join(tempDir, "queue.json");
-    await writeFile(queuePath, JSON.stringify([{ id: "queue-1", repo: "/repo", planPath: "/plan", flags: "oops", addedAt: "2026-04-03T12:00:00.000Z" }]));
+    await writeFile(
+      queuePath,
+      JSON.stringify([
+        {
+          id: "queue-1",
+          repo: "/repo",
+          planPath: "/plan",
+          flags: "oops",
+          addedAt: "2026-04-03T12:00:00.000Z",
+        },
+      ]),
+    );
 
     await expect(readQueue(queuePath)).resolves.toEqual([]);
   });

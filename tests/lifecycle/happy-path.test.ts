@@ -343,7 +343,7 @@ describe("Happy path lifecycle", () => {
     expect(
       hasPhaseSubsequence(
         persistence.saveHistory.map((state) => state.currentPhase),
-        ["verify", "tdd"],
+        ["completeness", "tdd"],
       ),
     ).toBe(true);
   });
@@ -371,7 +371,7 @@ describe("Happy path lifecycle", () => {
 
     expect(persistence.current.lastCompletedSlice).toBe(1);
     expect(
-      persistence.saveHistory.filter((state) => state.currentPhase === "verify").length,
+      persistence.saveHistory.filter((state) => state.currentPhase === "completeness").length,
     ).toBeGreaterThanOrEqual(3);
   });
 

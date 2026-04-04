@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   resolvePlanId: vi.fn(),
   resolveAllAgentConfigs: vi.fn(),
   loadTieredSkills: vi.fn(),
+  buildSkillOverrides: vi.fn(),
   resolveWorktree: vi.fn(),
   runFingerprint: vi.fn(),
   saveState: vi.fn(),
@@ -53,6 +54,7 @@ vi.mock("#infrastructure/complexity-triage.js", () => ({
 }));
 
 vi.mock("#infrastructure/skill-loader.js", () => ({
+  buildSkillOverrides: mocks.buildSkillOverrides,
   loadTieredSkills: mocks.loadTieredSkills,
 }));
 
@@ -211,6 +213,7 @@ beforeEach(async () => {
     tdd: "tdd-skill", review: "review-skill", verify: "verify-skill",
     gap: "gap-skill", plan: "plan-skill", completeness: "completeness-skill",
   });
+  mocks.buildSkillOverrides.mockReturnValue({});
   mocks.buildOrchrSummary.mockReturnValue(undefined);
   mocks.runFingerprint.mockResolvedValue({ brief: "brief" });
   mocks.parseProviderFlag.mockReturnValue("claude");

@@ -18,23 +18,8 @@ const parseDiffStat = (output: string): DiffStats => {
 
 export const measureDiff = async (cwd: string, since: string): Promise<DiffStats> => {
   try {
-    const [committed, uncommitted] = await Promise.all([
-      run("git", ["diff", "--stat", `${since}..HEAD`], { cwd })
-        .then((r) => r.stdout)
-        .catch(() => ""),
-      run("git", ["diff", "HEAD", "--stat"], { cwd })
-        .then((r) => r.stdout)
-        .catch(() => ""),
-    ]);
-
-    const c = parseDiffStat(committed);
-    const u = parseDiffStat(uncommitted);
-
-    return {
-      linesAdded: c.linesAdded + u.linesAdded,
-      linesRemoved: c.linesRemoved + u.linesRemoved,
-      total: c.total + u.total,
-    };
+    const output = await run("git", ["diff", "--stat", since], { cwd }).then((r) => r.stdout);
+    return parseDiffStat(output);
   } catch {
     return ZERO_STATS;
   }

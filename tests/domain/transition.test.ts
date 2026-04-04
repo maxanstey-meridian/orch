@@ -77,20 +77,20 @@ describe("transition", () => {
     expect(result).toEqual({ kind: "Planning", sliceNumber: 1, attempt: 2 });
   });
 
-  it("Executing + ExecutionDone → Verifying", () => {
+  it("Executing + ExecutionDone → CompletenessCheck", () => {
     const result = transition(
       { kind: "Executing", sliceNumber: 1, planText: "plan" },
       { kind: "ExecutionDone" },
     );
-    expect(result).toEqual({ kind: "Verifying", sliceNumber: 1 });
+    expect(result).toEqual({ kind: "CompletenessCheck", sliceNumber: 1 });
   });
 
-  it("Verifying + VerifyPassed → CompletenessCheck", () => {
+  it("Verifying + VerifyPassed → Reviewing", () => {
     const result = transition(
       { kind: "Verifying", sliceNumber: 1 },
       { kind: "VerifyPassed" },
     );
-    expect(result).toEqual({ kind: "CompletenessCheck", sliceNumber: 1 });
+    expect(result).toEqual({ kind: "Reviewing", sliceNumber: 1, cycle: 1 });
   });
 
   it("Verifying + VerifyFailed → Executing with null planText", () => {
@@ -101,12 +101,12 @@ describe("transition", () => {
     expect(result).toEqual({ kind: "Executing", sliceNumber: 1, planText: null });
   });
 
-  it("CompletenessCheck + CompletenessOk → Reviewing", () => {
+  it("CompletenessCheck + CompletenessOk → Verifying", () => {
     const result = transition(
       { kind: "CompletenessCheck", sliceNumber: 1 },
       { kind: "CompletenessOk" },
     );
-    expect(result).toEqual({ kind: "Reviewing", sliceNumber: 1, cycle: 1 });
+    expect(result).toEqual({ kind: "Verifying", sliceNumber: 1 });
   });
 
   it("CompletenessCheck + CompletenessIssues → Executing", () => {

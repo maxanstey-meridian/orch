@@ -9,17 +9,41 @@ import {
 describe("FULL_TRIAGE", () => {
   it("enables every pipeline stage with the default reason", () => {
     expect(FULL_TRIAGE).toEqual({
-      runCompleteness: true,
-      runVerify: true,
-      runReview: true,
-      runGap: true,
+      nextTier: "medium",
+      completeness: "run_now",
+      verify: "run_now",
+      review: "run_now",
+      gap: "run_now",
       reason: "full pipeline",
     });
   });
 });
 
 describe("parseTriageResult", () => {
-  it("maps triage JSON fields into the domain result shape", () => {
+  it("maps tri-state triage JSON fields into the domain result shape", () => {
+    expect(
+      parseTriageResult(
+        JSON.stringify({
+          nextTier: "large",
+          completeness: "run_now",
+          verify: "defer",
+          review: "skip",
+          gap: "run_now",
+          reason: "mixed pipeline",
+        }),
+        "medium",
+      ),
+    ).toEqual({
+      nextTier: "large",
+      completeness: "run_now",
+      verify: "defer",
+      review: "skip",
+      gap: "run_now",
+      reason: "mixed pipeline",
+    });
+  });
+
+  it("maps legacy boolean triage fields into the tri-state domain result shape", () => {
     expect(
       parseTriageResult(
         JSON.stringify({
@@ -27,15 +51,17 @@ describe("parseTriageResult", () => {
           verify: false,
           review: true,
           gap: false,
-          reason: "mixed pipeline",
+          reason: "legacy pipeline",
         }),
+        "small",
       ),
     ).toEqual({
-      runCompleteness: true,
-      runVerify: false,
-      runReview: true,
-      runGap: false,
-      reason: "mixed pipeline",
+      nextTier: "small",
+      completeness: "run_now",
+      verify: "skip",
+      review: "run_now",
+      gap: "skip",
+      reason: "legacy pipeline",
     });
   });
 
@@ -44,17 +70,19 @@ describe("parseTriageResult", () => {
       parseTriageResult(`Here is the classifier result:
 
 {
-  "completeness": false,
-  "verify": true,
-  "review": false,
-  "gap": true,
+  "nextTier": "trivial",
+  "completeness": "skip",
+  "verify": "run_now",
+  "review": "defer",
+  "gap": "skip",
   "reason": "targeted review"
-}`),
+}`, "medium"),
     ).toEqual({
-      runCompleteness: false,
-      runVerify: true,
-      runReview: false,
-      runGap: true,
+      nextTier: "trivial",
+      completeness: "skip",
+      verify: "run_now",
+      review: "defer",
+      gap: "skip",
       reason: "targeted review",
     });
   });
@@ -63,75 +91,107 @@ describe("parseTriageResult", () => {
     expect(
       parseTriageResult(`\`\`\`json
 {
-  "completeness": true,
-  "verify": true,
-  "review": false,
-  "gap": false,
+  "nextTier": "medium",
+  "completeness": "run_now",
+  "verify": "run_now",
+  "review": "skip",
+  "gap": "defer",
   "reason": "verify only"
 }
-\`\`\``),
+\`\`\``, "small"),
     ).toEqual({
-      runCompleteness: true,
-      runVerify: true,
-      runReview: false,
-      runGap: false,
+      nextTier: "medium",
+      completeness: "run_now",
+      verify: "run_now",
+      review: "skip",
+      gap: "defer",
       reason: "verify only",
     });
   });
 
   it("returns FULL_TRIAGE when the input is garbage text", () => {
-    expect(parseTriageResult("definitely not JSON")).toEqual(FULL_TRIAGE);
+    expect(parseTriageResult("definitely not JSON", "medium")).toEqual(FULL_TRIAGE);
   });
 
   it("returns FULL_TRIAGE when the JSON is malformed", () => {
     expect(
       parseTriageResult(`\`\`\`json
 {"completeness": true,
-\`\`\``),
-    ).toEqual(FULL_TRIAGE);
+\`\`\``, "large"),
+    ).toEqual({
+      ...FULL_TRIAGE,
+      nextTier: "large",
+    });
   });
 
   it("returns FULL_TRIAGE when required fields are missing", () => {
     expect(
       parseTriageResult(
         JSON.stringify({
-          completeness: true,
-          verify: false,
-          review: true,
+          nextTier: "small",
+          completeness: "run_now",
+          verify: "skip",
+          review: "run_now",
           reason: "partial",
         }),
+        "trivial",
       ),
-    ).toEqual(FULL_TRIAGE);
+    ).toEqual({
+      ...FULL_TRIAGE,
+      nextTier: "trivial",
+    });
   });
 
   it("returns FULL_TRIAGE when fields have the wrong primitive types", () => {
     expect(
       parseTriageResult(
         JSON.stringify({
-          completeness: true,
-          verify: "false",
-          review: true,
-          gap: false,
+          nextTier: "medium",
+          completeness: "run_now",
+          verify: false,
+          review: "run_now",
+          gap: "skip",
           reason: "typed wrong",
         }),
+        "small",
       ),
-    ).toEqual(FULL_TRIAGE);
+    ).toEqual({
+      ...FULL_TRIAGE,
+      nextTier: "small",
+    });
   });
 });
 
 describe("buildTriagePrompt", () => {
+  const input = {
+    mode: "sliced" as const,
+    unitKind: "slice" as const,
+    currentTier: "medium" as const,
+    diffStats: { added: 10, removed: 2, total: 12 },
+    reviewThreshold: 150,
+    finalBoundary: false,
+    moreUnitsInGroup: true,
+    pending: {
+      verify: false,
+      completeness: true,
+      review: false,
+      gap: true,
+    },
+  };
+
   it("includes the diff text and asks the model to classify the change", () => {
     const diff = `diff --git a/src/foo.ts b/src/foo.ts
 +const changed = true;`;
-    const prompt = buildTriagePrompt(diff);
+    const prompt = buildTriagePrompt({ ...input, diff });
 
     expect(prompt).toContain(diff);
     expect(prompt.toLowerCase()).toMatch(/classif(y|ier)/);
   });
 
   it("lists the required JSON output keys", () => {
-    const prompt = buildTriagePrompt("diff --git a/file.ts b/file.ts");
+    const prompt = buildTriagePrompt({ ...input, diff: "diff --git a/file.ts b/file.ts" });
 
+    expect(prompt).toContain("nextTier");
     expect(prompt).toContain("completeness");
     expect(prompt).toContain("verify");
     expect(prompt).toContain("review");
@@ -140,7 +200,7 @@ describe("buildTriagePrompt", () => {
   });
 
   it("requires raw JSON output without commentary or code fences", () => {
-    const prompt = buildTriagePrompt("diff --git a/file.ts b/file.ts");
+    const prompt = buildTriagePrompt({ ...input, diff: "diff --git a/file.ts b/file.ts" });
 
     expect(prompt).toContain("Output ONLY the raw JSON object");
     expect(prompt).toContain("No markdown code fences");
@@ -148,15 +208,17 @@ describe("buildTriagePrompt", () => {
   });
 
   it("includes the classifier dimensions and stage-decision guidance", () => {
-    const prompt = buildTriagePrompt("diff --git a/file.ts b/file.ts");
+    const prompt = buildTriagePrompt({ ...input, diff: "diff --git a/file.ts b/file.ts" });
 
     expect(prompt).toContain("file count");
     expect(prompt).toContain("scope of the change");
     expect(prompt).toContain("nature of the change");
     expect(prompt).toContain("cascade risk across adjacent code paths");
     expect(prompt).toContain(
-      "Decide whether the pipeline should run completeness, verify, review, and gap analysis",
+      "which expensive passes should run now",
     );
+    expect(prompt).toContain("deferred");
+    expect(prompt).toContain("NEXT execution unit");
   });
 });
 

@@ -1,7 +1,14 @@
 import type { Provider, ExecutionMode } from "./config.js";
 import type { ComplexityTier } from "./triage.js";
 
-export type PersistedPhase = "tdd" | "review" | "verify" | "gap" | "final" | "plan";
+export type PersistedPhase =
+  | "tdd"
+  | "review"
+  | "verify"
+  | "completeness"
+  | "gap"
+  | "final"
+  | "plan";
 
 export type PersistedAgentSession = {
   readonly provider: Provider;
@@ -13,9 +20,11 @@ export type OrchestratorState = {
   readonly completedAt?: string;
   readonly executionMode?: ExecutionMode;
   readonly tier?: ComplexityTier;
+  readonly activeTier?: ComplexityTier;
   readonly currentPhase?: PersistedPhase;
   readonly currentSlice?: number;
   readonly currentGroup?: string;
+  readonly currentGroupBaseSha?: string;
   readonly sliceTimings?: ReadonlyArray<{
     readonly number: number;
     readonly startedAt: string;
@@ -25,6 +34,10 @@ export type OrchestratorState = {
   readonly lastCompletedGroup?: string;
   readonly lastSliceImplemented?: number;
   readonly reviewBaseSha?: string;
+  readonly pendingVerifyBaseSha?: string;
+  readonly pendingCompletenessBaseSha?: string;
+  readonly pendingReviewBaseSha?: string;
+  readonly pendingGapBaseSha?: string;
   readonly tddSession?: PersistedAgentSession;
   readonly reviewSession?: PersistedAgentSession;
   readonly worktree?: {
@@ -48,6 +61,18 @@ export type StateEvent =
       readonly kind: "sliceImplemented";
       readonly sliceNumber: number;
       readonly reviewBaseSha: string;
+      readonly pendingVerifyBaseSha?: string;
+      readonly pendingCompletenessBaseSha?: string;
+      readonly pendingGapBaseSha?: string;
+    }
+  | {
+      readonly kind: "policyUpdated";
+      readonly activeTier: ComplexityTier;
+      readonly currentGroupBaseSha?: string;
+      readonly pendingVerifyBaseSha?: string;
+      readonly pendingCompletenessBaseSha?: string;
+      readonly pendingReviewBaseSha?: string;
+      readonly pendingGapBaseSha?: string;
     };
 
 export const advanceState = (state: OrchestratorState, event: StateEvent): OrchestratorState => {
@@ -94,6 +119,21 @@ export const advanceState = (state: OrchestratorState, event: StateEvent): Orche
         ...state,
         lastSliceImplemented: event.sliceNumber,
         reviewBaseSha: event.reviewBaseSha,
+        pendingVerifyBaseSha: event.pendingVerifyBaseSha ?? state.pendingVerifyBaseSha,
+        pendingCompletenessBaseSha:
+          event.pendingCompletenessBaseSha ?? state.pendingCompletenessBaseSha,
+        pendingGapBaseSha: event.pendingGapBaseSha ?? state.pendingGapBaseSha,
+      };
+    case "policyUpdated":
+      return {
+        ...state,
+        tier: event.activeTier,
+        activeTier: event.activeTier,
+        currentGroupBaseSha: event.currentGroupBaseSha,
+        pendingVerifyBaseSha: event.pendingVerifyBaseSha,
+        pendingCompletenessBaseSha: event.pendingCompletenessBaseSha,
+        pendingReviewBaseSha: event.pendingReviewBaseSha,
+        pendingGapBaseSha: event.pendingGapBaseSha,
       };
   }
 };

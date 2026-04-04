@@ -10,6 +10,7 @@ export const DEFAULT_EXECUTION_PREFERENCE: ExecutionPreference = "auto";
 
 export type SkillRole = "tdd" | "review" | "verify" | "plan" | "gap" | "completeness";
 export type SkillSet = Readonly<Record<SkillRole, string | null>>;
+export type SkillOverrideSet = Readonly<Partial<Record<SkillRole, string | null>>>;
 
 export type OrchestratorConfig = {
   readonly cwd: string;
@@ -25,6 +26,7 @@ export type OrchestratorConfig = {
   readonly logPath: string | null;
   readonly tier: ComplexityTier;
   readonly skills: SkillSet;
+  readonly skillOverrides?: SkillOverrideSet;
   readonly maxReplans: number;
   readonly defaultProvider: Provider;
   readonly agentConfig: Record<AgentRole, ResolvedAgentConfig>;

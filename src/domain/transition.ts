@@ -77,22 +77,22 @@ export const transition = (current: Phase, event: PhaseEvent): Phase => {
     case "Executing":
       switch (event.kind) {
         case "ExecutionDone":
-          return { kind: "Verifying", sliceNumber: current.sliceNumber };
-      }
-      break;
-    case "Verifying":
-      switch (event.kind) {
-        case "VerifyPassed":
           return { kind: "CompletenessCheck", sliceNumber: current.sliceNumber };
-        case "VerifyFailed":
-          return { kind: "Executing", sliceNumber: current.sliceNumber, planText: null };
       }
       break;
     case "CompletenessCheck":
       switch (event.kind) {
         case "CompletenessOk":
-          return { kind: "Reviewing", sliceNumber: current.sliceNumber, cycle: 1 };
+          return { kind: "Verifying", sliceNumber: current.sliceNumber };
         case "CompletenessIssues":
+          return { kind: "Executing", sliceNumber: current.sliceNumber, planText: null };
+      }
+      break;
+    case "Verifying":
+      switch (event.kind) {
+        case "VerifyPassed":
+          return { kind: "Reviewing", sliceNumber: current.sliceNumber, cycle: 1 };
+        case "VerifyFailed":
           return { kind: "Executing", sliceNumber: current.sliceNumber, planText: null };
       }
       break;

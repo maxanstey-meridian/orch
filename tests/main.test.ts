@@ -1287,6 +1287,7 @@ const runMainWithWorkPlanMocks = async (
     parseComplexityTriageResult: vi.fn(() => ({ tier: "medium", reason: "test" })),
   }));
   vi.doMock("#infrastructure/skill-loader.js", () => ({
+    buildSkillOverrides: vi.fn(() => ({})),
     loadTieredSkills: vi.fn(() => ({
       tdd: "tdd skill", review: "review skill", verify: "verify skill",
       gap: null, plan: null, completeness: "completeness skill",
@@ -1510,6 +1511,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     parseComplexityTriageResult: vi.fn(() => ({ tier: "medium", reason: "test" })),
   }));
   vi.doMock("#infrastructure/skill-loader.js", () => ({
+    buildSkillOverrides: vi.fn(() => ({})),
     loadTieredSkills: vi.fn(() => ({
       tdd: "tdd skill", review: "review skill", verify: "verify skill",
       gap: null, plan: "plan skill", completeness: "completeness skill",
@@ -2312,6 +2314,7 @@ describe("main log path wiring", () => {
       parseComplexityTriageResult: vi.fn(() => ({ tier: "medium", reason: "test" })),
     }));
     vi.doMock("#infrastructure/skill-loader.js", () => ({
+      buildSkillOverrides: vi.fn(() => ({})),
       loadTieredSkills: vi.fn(() => ({
         tdd: "tdd skill", review: "review skill", verify: "verify skill",
         gap: null, plan: null, completeness: "completeness skill",
@@ -2480,6 +2483,7 @@ describe("main log path wiring", () => {
       parseComplexityTriageResult: vi.fn(() => ({ tier: "medium", reason: "test" })),
     }));
     vi.doMock("#infrastructure/skill-loader.js", () => ({
+      buildSkillOverrides: vi.fn(() => ({})),
       loadTieredSkills: vi.fn(() => ({
         tdd: "tdd skill", review: "review skill", verify: "verify skill",
         gap: null, plan: null, completeness: "completeness skill",
@@ -2645,6 +2649,7 @@ describe("main log path wiring", () => {
       parseComplexityTriageResult: vi.fn(() => ({ tier: "medium", reason: "test" })),
     }));
     vi.doMock("#infrastructure/skill-loader.js", () => ({
+      buildSkillOverrides: vi.fn(() => ({})),
       loadTieredSkills: vi.fn(() => ({
         tdd: "tdd skill", review: "review skill", verify: "verify skill",
         gap: null, plan: null, completeness: "completeness skill",

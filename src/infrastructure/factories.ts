@@ -4,7 +4,9 @@ import { resolve } from "node:path";
 import { type AgentSpawner, type PromptAgent } from "#application/ports/agent-spawner.port.js";
 import type { OperatorGate } from "#application/ports/operator-gate.port.js";
 import type { ProgressSink } from "#application/ports/progress-sink.port.js";
+import type { ExecutionUnitTriager } from "#application/ports/execution-unit-triager.port.js";
 import type { RuntimeInteractionGate } from "#application/ports/runtime-interaction.port.js";
+import type { RolePromptResolver } from "#application/ports/role-prompt-resolver.port.js";
 import type { ResolvedAgentConfig } from "#domain/agent-config.js";
 import type { AgentRole } from "#domain/agent-types.js";
 import type { OrchestratorConfig } from "#domain/config.js";
@@ -24,7 +26,9 @@ import {
 import { CodexAgentSpawner } from "./codex/codex-agent-spawner.js";
 import { DefaultPromptBuilder } from "./default-prompt-builder.js";
 import { FsStatePersistence } from "./fs-state-persistence.js";
+import { AgentExecutionUnitTriager } from "./execution-unit-triager.js";
 import { FsLogWriter, NullLogWriter } from "./log/log-writer.js";
+import { FileSystemRolePromptResolver } from "./skill-loader.js";
 
 const CODEX_CHEAP_MODEL = "gpt-5.4-mini";
 const CODEX_CHEAP_ROLES: ReadonlySet<string> = new Set(["triage", "verify"]);
@@ -117,6 +121,16 @@ export const runtimeInteractionGateFactory = (
 ): RuntimeInteractionGate =>
   config.auto ? new SilentRuntimeInteractionGate() : new InkRuntimeInteractionGate(hud);
 runtimeInteractionGateFactory.inject = ["config", "hud"] as const;
+
+export const rolePromptResolverFactory = (config: OrchestratorConfig): RolePromptResolver =>
+  new FileSystemRolePromptResolver(config.skillOverrides);
+rolePromptResolverFactory.inject = ["config"] as const;
+
+export const executionUnitTriagerFactory = (
+  agentSpawner: AgentSpawner,
+  config: OrchestratorConfig,
+): ExecutionUnitTriager => new AgentExecutionUnitTriager(agentSpawner, config);
+executionUnitTriagerFactory.inject = ["agentSpawner", "config"] as const;
 
 const createCodexPromptAgent = (opts: {
   cwd: string;

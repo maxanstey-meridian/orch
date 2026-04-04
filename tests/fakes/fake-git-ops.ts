@@ -49,7 +49,7 @@ export class InMemoryGitOps extends GitOps {
     this.onHasChanges?.();
     if (this.hasChangesQueue.length > 0) {
       return this.hasChangesQueue.shift()!;
-    };
+    }
     return this.changesExist;
   }
 

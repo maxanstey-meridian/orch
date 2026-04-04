@@ -34,7 +34,7 @@ import {
 } from "#infrastructure/factories.js";
 import { runFingerprint } from "#infrastructure/fingerprint.js";
 import { getStatus, stashBackup } from "#infrastructure/git/git.js";
-import { loadTieredSkills } from "#infrastructure/skill-loader.js";
+import { buildSkillOverrides, loadTieredSkills } from "#infrastructure/skill-loader.js";
 import { assertGitRepo } from "#infrastructure/git/repo-check.js";
 import { resolveWorktree } from "#infrastructure/git/worktree-setup.js";
 import { checkWorktreeResume, runCleanup } from "#infrastructure/git/worktree.js";
@@ -673,21 +673,25 @@ export const main = async (runtime: MainRuntime = {}) => {
   const agentConfig = resolveAllAgentConfigs(orchrc.agents, provider);
   let planPath: string;
   let planContent: string | undefined;
+  let complexityTriageContent: string | undefined;
   let executionMode: ExecutionMode;
   try {
     if (workMode) {
       planPath = resolve(workPath!);
       planContent = readFileSync(planPath, "utf-8");
+      complexityTriageContent = planContent;
       executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
       printExecutionModeBanner(log, executionMode);
     } else {
       const inputPath = resolve(inventoryPath!);
       const srcContent = readFileSync(inputPath, "utf-8");
+      complexityTriageContent = srcContent;
 
       if (isPlanFormat(srcContent)) {
         log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
         planPath = inputPath;
         planContent = srcContent;
+        complexityTriageContent = srcContent;
         executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
         printExecutionModeBanner(log, executionMode);
       } else {
@@ -703,6 +707,7 @@ export const main = async (runtime: MainRuntime = {}) => {
         if (executionMode === "direct") {
           planPath = inputPath;
           planContent = srcContent;
+          complexityTriageContent = srcContent;
         } else {
           planPath = await doGeneratePlan(
             inputPath,
@@ -712,6 +717,8 @@ export const main = async (runtime: MainRuntime = {}) => {
             spawnPlanGenerator,
             executionMode,
           );
+          planContent = readFileSync(planPath, "utf-8");
+          complexityTriageContent = planContent;
         }
       }
     }
@@ -765,18 +772,20 @@ export const main = async (runtime: MainRuntime = {}) => {
 
   // 5. Complexity triage + tier-appropriate skills (after early exits to avoid spending credits)
   const existingState = await loadState(stateFile);
-  const tier = existingState.tier ?? await resolveComplexityTier({
-    requestContent: planContent ?? "",
+  const tier = existingState.activeTier ?? existingState.tier ?? await resolveComplexityTier({
+    requestContent: complexityTriageContent ?? planContent ?? "",
     agentConfig,
     cwd,
     log,
   });
+  const skillOverrides = buildSkillOverrides(orchrc);
   const skills: SkillSet = loadTieredSkills(tier, orchrc);
 
   const runId = randomUUID();
   await saveState(stateFile, {
     ...existingState,
     tier,
+    activeTier: tier,
     startedAt: new Date().toISOString(),
     currentPhase: "plan",
   });
@@ -837,6 +846,7 @@ export const main = async (runtime: MainRuntime = {}) => {
         logPath: planLogPath,
         tier,
         skills: { ...skills, plan: null },
+        skillOverrides,
         tddRules: orchrc.rules.tdd,
         defaultProvider: provider,
         agentConfig,
@@ -946,6 +956,7 @@ export const main = async (runtime: MainRuntime = {}) => {
       logPath: planLogPath,
       tier,
       skills,
+      skillOverrides,
       tddRules: orchrc.rules.tdd,
       defaultProvider: provider,
       agentConfig,

@@ -5,7 +5,8 @@ import { z } from "zod";
 export type { OrchestratorState } from "#domain/state.js";
 import type { OrchestratorState } from "#domain/state.js";
 
-const persistedPhases = ["tdd", "review", "verify", "gap", "final", "plan"] as const;
+const persistedPhases = ["tdd", "review", "verify", "completeness", "gap", "final", "plan"] as const;
+const tiers = ["trivial", "small", "medium", "large"] as const;
 const providers = ["claude", "codex"] as const;
 const executionModes = ["direct", "grouped", "sliced"] as const;
 
@@ -19,9 +20,12 @@ const stateSchema = z
     startedAt: z.string().optional(),
     completedAt: z.string().optional(),
     executionMode: z.enum(executionModes).optional(),
+    tier: z.enum(tiers).optional(),
+    activeTier: z.enum(tiers).optional(),
     currentPhase: z.enum(persistedPhases).optional(),
     currentSlice: z.number().int().nonnegative().optional(),
     currentGroup: z.string().min(1).optional(),
+    currentGroupBaseSha: z.string().min(1).optional(),
     sliceTimings: z
       .array(
         z.object({
@@ -35,6 +39,10 @@ const stateSchema = z
     lastCompletedGroup: z.string().min(1).optional(),
     lastSliceImplemented: z.number().int().nonnegative().optional(),
     reviewBaseSha: z.string().min(1).optional(),
+    pendingVerifyBaseSha: z.string().min(1).optional(),
+    pendingCompletenessBaseSha: z.string().min(1).optional(),
+    pendingReviewBaseSha: z.string().min(1).optional(),
+    pendingGapBaseSha: z.string().min(1).optional(),
     tddSession: persistedAgentSessionSchema.optional(),
     reviewSession: persistedAgentSessionSchema.optional(),
     tddSessionId: z.string().min(1).optional(),
