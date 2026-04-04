@@ -2,11 +2,12 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type AgentSpawner, type PromptAgent } from "#application/ports/agent-spawner.port.js";
+import type { ExecutionUnitTierSelector } from "#application/ports/execution-unit-tier-selector.port.js";
+import type { ExecutionUnitTriager } from "#application/ports/execution-unit-triager.port.js";
 import type { OperatorGate } from "#application/ports/operator-gate.port.js";
 import type { ProgressSink } from "#application/ports/progress-sink.port.js";
-import type { ExecutionUnitTriager } from "#application/ports/execution-unit-triager.port.js";
-import type { RuntimeInteractionGate } from "#application/ports/runtime-interaction.port.js";
 import type { RolePromptResolver } from "#application/ports/role-prompt-resolver.port.js";
+import type { RuntimeInteractionGate } from "#application/ports/runtime-interaction.port.js";
 import type { ResolvedAgentConfig } from "#domain/agent-config.js";
 import type { AgentRole } from "#domain/agent-types.js";
 import type { OrchestratorConfig } from "#domain/config.js";
@@ -25,8 +26,9 @@ import {
 } from "./claude/claude-agent-factory.js";
 import { CodexAgentSpawner } from "./codex/codex-agent-spawner.js";
 import { DefaultPromptBuilder } from "./default-prompt-builder.js";
-import { FsStatePersistence } from "./fs-state-persistence.js";
+import { AgentExecutionUnitTierSelector } from "./execution-unit-tier-selector.js";
 import { AgentExecutionUnitTriager } from "./execution-unit-triager.js";
+import { FsStatePersistence } from "./fs-state-persistence.js";
 import { FsLogWriter, NullLogWriter } from "./log/log-writer.js";
 import { FileSystemRolePromptResolver } from "./skill-loader.js";
 
@@ -131,6 +133,12 @@ export const executionUnitTriagerFactory = (
   config: OrchestratorConfig,
 ): ExecutionUnitTriager => new AgentExecutionUnitTriager(agentSpawner, config);
 executionUnitTriagerFactory.inject = ["agentSpawner", "config"] as const;
+
+export const executionUnitTierSelectorFactory = (
+  agentSpawner: AgentSpawner,
+  config: OrchestratorConfig,
+): ExecutionUnitTierSelector => new AgentExecutionUnitTierSelector(agentSpawner, config);
+executionUnitTierSelectorFactory.inject = ["agentSpawner", "config"] as const;
 
 const createCodexPromptAgent = (opts: {
   cwd: string;

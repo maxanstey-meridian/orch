@@ -5,7 +5,15 @@ import { z } from "zod";
 export type { OrchestratorState } from "#domain/state.js";
 import type { OrchestratorState } from "#domain/state.js";
 
-const persistedPhases = ["tdd", "review", "verify", "completeness", "gap", "final", "plan"] as const;
+const persistedPhases = [
+  "tdd",
+  "review",
+  "verify",
+  "completeness",
+  "gap",
+  "final",
+  "plan",
+] as const;
 const tiers = ["trivial", "small", "medium", "large"] as const;
 const providers = ["claude", "codex"] as const;
 const executionModes = ["direct", "grouped", "sliced"] as const;

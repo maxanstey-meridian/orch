@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 const describe = _describe;
 const describeIntegration = process.env.INTEGRATION ? _describe : _describe.skip;
 import { mkdir, mkdtemp, rm, writeFile, readFile } from "fs/promises";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { tmpdir } from "os";
 import { execSync, spawnSync } from "child_process";
 import { parseExecutionPreference } from "#infrastructure/cli/cli-args.js";
@@ -1249,15 +1249,28 @@ const makeTestAgent = (): AgentHandle => ({
 
 const runMainWithWorkPlanMocks = async (
   args: string[],
-  options?: { planContent?: string },
+  options?: {
+    planContent?: string;
+    preloadedState?: Record<string, unknown>;
+  },
 ) => {
   const planPath = join(tempDir, "plan.md");
   await writeFile(planPath, options?.planContent ?? MINIMAL_PLAN);
+  const orchDir = join(tempDir, ".orch");
+  const stateFile = statePathForPlan(orchDir, resolvePlanId(planPath));
+  if (options?.preloadedState !== undefined) {
+    await mkdir(dirname(stateFile), { recursive: true });
+    await writeFile(stateFile, JSON.stringify(options.preloadedState, null, 2));
+  }
   const createContainer = vi.fn(() => ({
     resolve: vi.fn(() => ({
       execute: vi.fn().mockResolvedValue(undefined),
       dispose: vi.fn(),
     })),
+  }));
+  const complexityTriageSpawnerFactory = vi.fn(() => () => ({
+    send: vi.fn(),
+    kill: vi.fn(),
   }));
 
   vi.resetModules();
@@ -1363,10 +1376,7 @@ const runMainWithWorkPlanMocks = async (
       );
     return {
       ...actual,
-      complexityTriageSpawnerFactory: vi.fn(() => () => ({
-        send: vi.fn(),
-        kill: vi.fn(),
-      })),
+      complexityTriageSpawnerFactory,
     };
   });
 
@@ -1411,7 +1421,7 @@ const runMainWithWorkPlanMocks = async (
     vi.resetModules();
   }
 
-  return { createContainer, exit, planPath };
+  return { createContainer, exit, planPath, stateFile, complexityTriageSpawnerFactory };
 };
 
 const runMainWithInventoryPlanMocks = async (options?: {
@@ -1721,6 +1731,38 @@ describe("main execution preference wiring", () => {
       expect.objectContaining({
         executionPreference: "auto",
         executionMode: "grouped",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("seeds the startup tier from the static default and does not invoke complexity triage", async () => {
+    const { createContainer, complexityTriageSpawnerFactory } = await runMainWithWorkPlanMocks([]);
+
+    expect(complexityTriageSpawnerFactory).not.toHaveBeenCalled();
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tier: "medium",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("reuses the persisted active tier for startup config without invoking complexity triage", async () => {
+    const { createContainer, complexityTriageSpawnerFactory } = await runMainWithWorkPlanMocks(
+      [],
+      {
+        preloadedState: {
+          activeTier: "large",
+          tier: "large",
+        },
+      },
+    );
+
+    expect(complexityTriageSpawnerFactory).not.toHaveBeenCalled();
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tier: "large",
       }),
       expect.any(Object),
     );

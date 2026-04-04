@@ -4,13 +4,17 @@ import { existsSync, readFileSync, mkdirSync, watch, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { basename, dirname, resolve } from "path";
 import { resolveAllAgentConfigs } from "#domain/agent-config.js";
-import type { ExecutionMode, ExecutionPreference, OrchestratorConfig, SkillSet } from "#domain/config.js";
+import type {
+  ExecutionMode,
+  ExecutionPreference,
+  OrchestratorConfig,
+  SkillSet,
+} from "#domain/config.js";
 import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
 import type { Group } from "#domain/plan.js";
 import type { QueueEntry } from "#domain/queue.js";
 import {
-  COMPLEXITY_TRIAGE_FALLBACK,
   REQUEST_TRIAGE_FALLBACK,
   formatRequestTriageSummary,
   type ComplexityTier,
@@ -24,17 +28,11 @@ import { parseSubcommand } from "#infrastructure/cli/subcommands.js";
 import { loadAndResolveOrchrConfig, buildOrchrSummary } from "#infrastructure/config/orchrc.js";
 import { aggregateDashboard } from "#infrastructure/dashboard/data-aggregator.js";
 import {
-  buildComplexityTriagePrompt,
-  parseComplexityTriageResult,
-} from "#infrastructure/complexity-triage.js";
-import {
-  complexityTriageSpawnerFactory,
   planGeneratorSpawnerFactory,
   requestTriageSpawnerFactory,
 } from "#infrastructure/factories.js";
 import { runFingerprint } from "#infrastructure/fingerprint.js";
 import { getStatus, stashBackup } from "#infrastructure/git/git.js";
-import { buildSkillOverrides, loadTieredSkills } from "#infrastructure/skill-loader.js";
 import { assertGitRepo } from "#infrastructure/git/repo-check.js";
 import { resolveWorktree } from "#infrastructure/git/worktree-setup.js";
 import { checkWorktreeResume, runCleanup } from "#infrastructure/git/worktree.js";
@@ -63,6 +61,7 @@ import {
   buildRequestTriagePrompt,
   parseRequestTriageResult,
 } from "#infrastructure/request-triage.js";
+import { buildSkillOverrides, loadTieredSkills } from "#infrastructure/skill-loader.js";
 import {
   loadState,
   saveState,
@@ -352,33 +351,8 @@ const resolveInventoryExecutionMode = async (opts: {
   }
 };
 
-const resolveComplexityTier = async (opts: {
-  requestContent: string;
-  agentConfig: ReturnType<typeof resolveAllAgentConfigs>;
-  cwd: string;
-  log: (...args: unknown[]) => void;
-}): Promise<ComplexityTier> => {
-  const triageAgent = complexityTriageSpawnerFactory({
-    agentConfig: opts.agentConfig,
-    cwd: opts.cwd,
-  })();
-
-  try {
-    const prompt = buildComplexityTriagePrompt(opts.requestContent);
-    const result = await triageAgent.send(prompt);
-    const assistantText = result.assistantText.trim();
-    const resultText = result.resultText.trim();
-    const triageText = assistantText.length > 0 ? assistantText : resultText;
-    const triage = parseComplexityTriageResult(triageText);
-    opts.log(`tier=${triage.tier} (${triage.reason})`);
-    return triage.tier;
-  } catch {
-    opts.log(`tier=${COMPLEXITY_TRIAGE_FALLBACK.tier} (fallback)`);
-    return COMPLEXITY_TRIAGE_FALLBACK.tier;
-  } finally {
-    triageAgent.kill();
-  }
-};
+const resolveStartupTier = (state: OrchestratorState): ComplexityTier =>
+  state.activeTier ?? state.tier ?? "medium";
 
 const findDashboardEntry = (
   model: DashboardModel,
@@ -640,7 +614,7 @@ export const main = async (runtime: MainRuntime = {}) => {
 
   await assertGitRepo(cwd);
 
-  // 1. Load config (skills loaded after complexity triage determines tier)
+  // 1. Load config
   const orchrc = loadAndResolveOrchrConfig(cwd);
   const orchrcSummary = buildOrchrSummary(orchrc);
   const orchDir = resolve(cwd, ".orch");
@@ -673,25 +647,21 @@ export const main = async (runtime: MainRuntime = {}) => {
   const agentConfig = resolveAllAgentConfigs(orchrc.agents, provider);
   let planPath: string;
   let planContent: string | undefined;
-  let complexityTriageContent: string | undefined;
   let executionMode: ExecutionMode;
   try {
     if (workMode) {
       planPath = resolve(workPath!);
       planContent = readFileSync(planPath, "utf-8");
-      complexityTriageContent = planContent;
       executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
       printExecutionModeBanner(log, executionMode);
     } else {
       const inputPath = resolve(inventoryPath!);
       const srcContent = readFileSync(inputPath, "utf-8");
-      complexityTriageContent = srcContent;
 
       if (isPlanFormat(srcContent)) {
         log(`${a.dim}Input is already a plan — using directly.${a.reset}`);
         planPath = inputPath;
         planContent = srcContent;
-        complexityTriageContent = srcContent;
         executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
         printExecutionModeBanner(log, executionMode);
       } else {
@@ -707,7 +677,6 @@ export const main = async (runtime: MainRuntime = {}) => {
         if (executionMode === "direct") {
           planPath = inputPath;
           planContent = srcContent;
-          complexityTriageContent = srcContent;
         } else {
           planPath = await doGeneratePlan(
             inputPath,
@@ -718,7 +687,6 @@ export const main = async (runtime: MainRuntime = {}) => {
             executionMode,
           );
           planContent = readFileSync(planPath, "utf-8");
-          complexityTriageContent = planContent;
         }
       }
     }
@@ -770,14 +738,9 @@ export const main = async (runtime: MainRuntime = {}) => {
     return;
   }
 
-  // 5. Complexity triage + tier-appropriate skills (after early exits to avoid spending credits)
+  // 5. Seed startup tier from persisted state or the static default.
   const existingState = await loadState(stateFile);
-  const tier = existingState.activeTier ?? existingState.tier ?? await resolveComplexityTier({
-    requestContent: complexityTriageContent ?? planContent ?? "",
-    agentConfig,
-    cwd,
-    log,
-  });
+  const tier = resolveStartupTier(existingState);
   const skillOverrides = buildSkillOverrides(orchrc);
   const skills: SkillSet = loadTieredSkills(tier, orchrc);
 

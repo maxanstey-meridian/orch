@@ -4,8 +4,7 @@ export type ComplexityTier = "trivial" | "small" | "medium" | "large";
 
 export type PassDecision = "run_now" | "defer" | "skip";
 
-export type TriageResult = {
-  readonly nextTier: ComplexityTier;
+export type BoundaryTriageResult = {
   readonly completeness: PassDecision;
   readonly verify: PassDecision;
   readonly review: PassDecision;
@@ -18,19 +17,13 @@ export type RequestTriageResult = {
   readonly reason: string;
 };
 
-export const FULL_TRIAGE: TriageResult = {
-  nextTier: "medium",
+export const FULL_TRIAGE: BoundaryTriageResult = {
   completeness: "run_now",
   verify: "run_now",
   review: "run_now",
   gap: "run_now",
   reason: "full pipeline",
 };
-
-export const fullTriageForTier = (tier: ComplexityTier): TriageResult => ({
-  ...FULL_TRIAGE,
-  nextTier: tier,
-});
 
 export const REQUEST_TRIAGE_FALLBACK: RequestTriageResult = {
   mode: "sliced",

@@ -1,24 +1,18 @@
 import { z } from "zod";
 import type { ExecutionUnitTriageInput } from "#application/ports/execution-unit-triager.port.js";
-import {
-  fullTriageForTier,
-  type ComplexityTier,
-  type PassDecision,
-  type TriageResult,
-} from "#domain/triage.js";
+import { FULL_TRIAGE, type BoundaryTriageResult, type PassDecision } from "#domain/triage.js";
 
 const passDecisionSchema = z.enum(["run_now", "defer", "skip"]);
 
 const triageSchema = z
   .object({
-    nextTier: z.enum(["trivial", "small", "medium", "large"]),
     completeness: passDecisionSchema,
     verify: passDecisionSchema,
     review: passDecisionSchema,
     gap: passDecisionSchema,
     reason: z.string().trim().min(1),
   })
-  .strict();
+  .passthrough();
 
 const legacySchema = z
   .object({
@@ -28,7 +22,7 @@ const legacySchema = z
     gap: z.boolean(),
     reason: z.string().trim().min(1),
   })
-  .strict();
+  .passthrough();
 
 const extractJsonObject = (text: string): string | null => {
   const start = text.indexOf("{");
@@ -54,7 +48,6 @@ The orchestrator has just finished one execution boundary and needs you to decid
 - which expensive passes should run now
 - which should be deferred to a later boundary
 - which should be skipped for the changes accumulated so far
-- what complexity tier the NEXT execution unit should use
 
 Classify the completed unit using:
 - file count
@@ -68,7 +61,6 @@ Classify the completed unit using:
 Current context:
 - mode: ${input.mode}
 - unit kind: ${input.unitKind}
-- current tier: ${input.currentTier}
 - unit diff stats: +${input.diffStats.added} / -${input.diffStats.removed} / total ${input.diffStats.total}
 - review threshold hint: ${input.reviewThreshold}
 - final boundary: ${input.finalBoundary ? "yes" : "no"}
@@ -76,7 +68,6 @@ Current context:
 - pending pass windows: ${describePendingPasses(input)}
 
 Return a JSON object with exactly these keys:
-- nextTier
 - completeness
 - verify
 - review
@@ -84,7 +75,6 @@ Return a JSON object with exactly these keys:
 - reason
 
 Use:
-- one of "trivial" | "small" | "medium" | "large" for nextTier
 - one of "run_now" | "defer" | "skip" for completeness / verify / review / gap
 - a short concrete string for reason
 
@@ -100,11 +90,11 @@ ${input.diff}`;
 
 const mapLegacyDecision = (value: boolean): PassDecision => (value ? "run_now" : "skip");
 
-export const parseTriageResult = (text: string, currentTier: ComplexityTier): TriageResult => {
+export const parseTriageResult = (text: string): BoundaryTriageResult => {
   try {
     const json = extractJsonObject(text);
     if (json === null) {
-      return fullTriageForTier(currentTier);
+      return FULL_TRIAGE;
     }
 
     const parsed = JSON.parse(json) as unknown;
@@ -115,11 +105,10 @@ export const parseTriageResult = (text: string, currentTier: ComplexityTier): Tr
 
     const legacy = legacySchema.safeParse(parsed);
     if (!legacy.success) {
-      return fullTriageForTier(currentTier);
+      return FULL_TRIAGE;
     }
 
     return {
-      nextTier: currentTier,
       completeness: mapLegacyDecision(legacy.data.completeness),
       verify: mapLegacyDecision(legacy.data.verify),
       review: mapLegacyDecision(legacy.data.review),
@@ -127,6 +116,6 @@ export const parseTriageResult = (text: string, currentTier: ComplexityTier): Tr
       reason: legacy.data.reason,
     };
   } catch {
-    return fullTriageForTier(currentTier);
+    return FULL_TRIAGE;
   }
 };

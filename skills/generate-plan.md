@@ -4,7 +4,7 @@
 execution plans.**
 
 Your input is a feature inventory (a markdown document describing what to build). Your output is a JSON plan that an
-orchestrator will execute slice-by-slice using TDD agents.
+orchestrator will execute slice-by-slice using other agents.
 
 ## Process
 
@@ -48,8 +48,8 @@ The JSON must match this schema:
             "Binary acceptance check 1",
             "Binary acceptance check 2"
           ],
-          "details": "Concrete implementation details. What to build, how it connects to existing code, what interfaces to use. Be specific — the TDD agent will follow this literally.",
-          "tests": "What to test. Describe the test cases, which file they go in, key assertions. Be specific enough that the TDD agent can write the tests without guessing."
+          "details": "Concrete implementation details. What to build, how it connects to existing code, what interfaces to use. Be specific — the agent will follow this literally.",
+          "tests": "What to test. Describe the test cases, which file they go in, key assertions. Be specific enough that the agent can write the tests without guessing."
         }
       ]
     }
@@ -67,7 +67,7 @@ The JSON must match this schema:
 - Every slice must include a non-empty `criteria` array of binary acceptance checks that a downstream evaluator can verify mechanically
 - All string fields must be non-empty
 - `details` must be concrete and specific — not vague descriptions. Name the functions, types, patterns. Reference
-  existing code by path. The TDD agent has no context beyond what you write here.
+  existing code by path. The agent has no context beyond what you write here.
 - `tests` must describe actual test cases, not just "add tests". Name the test, describe what it asserts.
 
 ## Planning Rules

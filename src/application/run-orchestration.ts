@@ -1,9 +1,10 @@
-import type { AgentResult, AgentRole } from "#domain/agent-types.js";
+import type { ExecutionUnitTierSelector } from "#application/ports/execution-unit-tier-selector.port.js";
 import type {
   ExecutionUnitKind,
   ExecutionUnitTriager,
 } from "#application/ports/execution-unit-triager.port.js";
 import type { RolePromptResolver } from "#application/ports/role-prompt-resolver.port.js";
+import type { AgentResult, AgentRole } from "#domain/agent-types.js";
 import { detectApiError } from "#domain/api-errors.js";
 import type { ApiError } from "#domain/api-errors.js";
 import type { OrchestratorConfig, Provider, SkillRole } from "#domain/config.js";
@@ -22,13 +23,12 @@ import { advanceState } from "#domain/state.js";
 import { isAlreadyImplemented } from "#domain/transition.js";
 import { transition } from "#domain/transition.js";
 import {
-  fullTriageForTier,
+  FULL_TRIAGE,
   shouldDeferPass,
-  shouldRunPass,
   shouldSkipPass,
+  type BoundaryTriageResult,
   type ComplexityTier,
   type PassDecision,
-  type TriageResult,
 } from "#domain/triage.js";
 import { isVerifyPassing, parseVerifyResult, type VerifyResult } from "#domain/verify.js";
 import type { AgentSpawner, AgentHandle } from "./ports/agent-spawner.port.js";
@@ -67,6 +67,7 @@ export class RunOrchestration {
     "progressSink",
     "logWriter",
     "rolePromptResolver",
+    "executionUnitTierSelector",
     "executionUnitTriager",
   ] as const;
 
@@ -96,6 +97,7 @@ export class RunOrchestration {
     private readonly progressSink: ProgressSink,
     private readonly logWriter: LogWriter,
     private readonly rolePromptResolver: RolePromptResolver,
+    private readonly tierSelector: ExecutionUnitTierSelector,
     private readonly triager: ExecutionUnitTriager,
   ) {}
 
@@ -200,8 +202,7 @@ export class RunOrchestration {
 
   private async openGroupPolicyWindow(groupName: string, groupBaseSha: string): Promise<void> {
     const resumingCurrentGroup =
-      this.state.currentGroup === groupName &&
-      this.state.currentGroupBaseSha !== undefined;
+      this.state.currentGroup === groupName && this.state.currentGroupBaseSha !== undefined;
 
     if (resumingCurrentGroup) {
       return;
@@ -243,42 +244,12 @@ export class RunOrchestration {
     });
   }
 
-  private async applyNextTier(nextTier: ComplexityTier): Promise<void> {
-    const previousTier = this.currentTier();
-    if (nextTier === previousTier) {
-      await this.persistPolicyState({
-        activeTier: nextTier,
-        currentGroupBaseSha: this.state.currentGroupBaseSha,
-        pendingVerifyBaseSha: this.state.pendingVerifyBaseSha,
-        pendingCompletenessBaseSha: this.state.pendingCompletenessBaseSha,
-        pendingReviewBaseSha: this.state.pendingReviewBaseSha,
-        pendingGapBaseSha: this.state.pendingGapBaseSha,
-      });
-      return;
-    }
-
-    await this.persistPolicyState({
-      activeTier: nextTier,
-      currentGroupBaseSha: this.state.currentGroupBaseSha,
-      pendingVerifyBaseSha: this.state.pendingVerifyBaseSha,
-      pendingCompletenessBaseSha: this.state.pendingCompletenessBaseSha,
-      pendingReviewBaseSha: this.state.pendingReviewBaseSha,
-      pendingGapBaseSha: this.state.pendingGapBaseSha,
-    });
-
-    await this.respawnTierSensitiveAgents();
-  }
-
   private async respawnTierSensitiveAgents(): Promise<void> {
     if (this.tddAgent) {
       this.tddAgent.kill();
     }
     if (this.reviewAgent) {
       this.reviewAgent.kill();
-    }
-    if (this.verifyAgent) {
-      this.verifyAgent.kill();
-      this.verifyAgent = null;
     }
     this.tddAgent = this.spawnAgent("tdd", { cwd: this.config.cwd });
     this.reviewAgent = this.spawnAgent("review", { cwd: this.config.cwd });
@@ -301,6 +272,60 @@ export class RunOrchestration {
       session: this.currentSession("review"),
     });
     await this.persistence.save(this.state);
+  }
+
+  private async prepareTierForUnit(
+    unit: ExecutionUnit,
+    options?: { readonly preserveCurrentUnitTier?: boolean },
+  ): Promise<void> {
+    if (options?.preserveCurrentUnitTier) {
+      return;
+    }
+
+    const selectedTier = await this.tierSelector.select({
+      mode: this.config.executionMode,
+      unitKind: unit.kind,
+      content: unit.content,
+    });
+    this.progressSink.logBadge("triage", `tier=${selectedTier.tier} (${selectedTier.reason})`);
+
+    const previousTier = this.currentTier();
+    await this.persistPolicyState({
+      activeTier: selectedTier.tier,
+      currentGroupBaseSha: this.state.currentGroupBaseSha,
+      pendingVerifyBaseSha: this.state.pendingVerifyBaseSha,
+      pendingCompletenessBaseSha: this.state.pendingCompletenessBaseSha,
+      pendingReviewBaseSha: this.state.pendingReviewBaseSha,
+      pendingGapBaseSha: this.state.pendingGapBaseSha,
+    });
+
+    if (selectedTier.tier !== previousTier) {
+      await this.respawnTierSensitiveAgents();
+    }
+  }
+
+  private isResumingSliceUnit(unit: ExecutionUnit): boolean {
+    return (
+      unit.kind === "slice" &&
+      this.state.currentPhase !== undefined &&
+      this.state.currentSlice === unit.sliceNumber &&
+      this.state.currentGroup === unit.groupName &&
+      this.state.lastCompletedSlice !== unit.sliceNumber
+    );
+  }
+
+  private isResumingGroupedUnit(unit: ExecutionUnit): boolean {
+    return (
+      unit.kind === "group" &&
+      this.state.currentPhase !== undefined &&
+      this.state.currentGroup === unit.groupName &&
+      this.state.currentSlice === unit.sliceNumber &&
+      this.state.lastCompletedGroup !== unit.groupName
+    );
+  }
+
+  private isResumingDirectUnit(): boolean {
+    return this.config.executionMode === "direct" && this.state.currentPhase !== undefined;
   }
 
   private failIncompleteExecutionUnit(unit: ExecutionUnit, reason: string): never {
@@ -679,7 +704,7 @@ Rules:
     baseSha: string;
     finalBoundary: boolean;
     moreUnitsInGroup: boolean;
-  }): Promise<TriageResult> {
+  }): Promise<BoundaryTriageResult> {
     const diff = await this.git.getDiff(opts.baseSha);
     const diffStats = await this.git.measureDiff(opts.baseSha);
     const pending = {
@@ -700,7 +725,6 @@ Rules:
     const triage = await this.triager.decide({
       mode: this.config.executionMode,
       unitKind: opts.unitKind,
-      currentTier: this.currentTier(),
       diff,
       diffStats,
       reviewThreshold: this.config.reviewThreshold,
@@ -775,7 +799,7 @@ Rules:
     allowGap: boolean;
     onlyPendingPasses?: boolean;
     tddText?: string;
-  }): Promise<{ skipped: boolean; triage: TriageResult }> {
+  }): Promise<{ skipped: boolean; triage: BoundaryTriageResult }> {
     if (opts.tddText !== undefined) {
       const noDeferredPasses =
         this.state.pendingVerifyBaseSha === undefined &&
@@ -790,7 +814,7 @@ Rules:
         if (opts.sendSummary) {
           await this.tddAgent!.sendQuiet(this.summaryPromptForUnit(opts.unit));
         }
-        return { skipped: false, triage: fullTriageForTier(this.currentTier()) };
+        return { skipped: false, triage: FULL_TRIAGE };
       }
     }
 
@@ -921,8 +945,6 @@ Rules:
     if (opts.sendSummary) {
       await this.tddAgent!.sendQuiet(this.summaryPromptForUnit(opts.unit));
     }
-
-    await this.applyNextTier(triage.nextTier);
     return { skipped: false, triage };
   }
 
@@ -938,10 +960,7 @@ Rules:
       this.state.pendingReviewBaseSha !== undefined ||
       this.state.pendingGapBaseSha !== undefined;
 
-    if (
-      !hasPendingPasses &&
-      !forceGroupBoundary
-    ) {
+    if (!hasPendingPasses && !forceGroupBoundary) {
       return;
     }
 
@@ -972,6 +991,13 @@ Rules:
     if (group.slices.length === 0) {
       return;
     }
+
+    const fullContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
+    const lastSlice = group.slices[group.slices.length - 1]!;
+    const directUnit = this.directUnit(fullContent, lastSlice.number);
+    await this.prepareTierForUnit(directUnit, {
+      preserveCurrentUnitTier: this.isResumingDirectUnit(),
+    });
 
     this.sliceSkipFlag = false;
     this.progressSink.clearSkipping();
@@ -1028,11 +1054,8 @@ Rules:
     }
 
     // Run the expensive passes once at the end using the full direct request.
-    const lastSlice = group.slices[group.slices.length - 1]!;
-    const fullContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
-    const unit = this.directUnit(fullContent, lastSlice.number);
     const directResult = await this.applyBoundaryPolicy({
-      unit,
+      unit: directUnit,
       group,
       triageBaseSha: reviewBase,
       finalBoundary: true,
@@ -1044,7 +1067,7 @@ Rules:
     this.phase = { kind: "Idle" };
 
     if (directResult.skipped) {
-      this.failIncompleteExecutionUnit(unit, "boundary policy did not complete");
+      this.failIncompleteExecutionUnit(directUnit, "boundary policy did not complete");
     }
   }
 
@@ -1358,6 +1381,11 @@ Rules:
               continue;
             }
 
+            const unit = this.sliceUnit(slice, group.name);
+            await this.prepareTierForUnit(unit, {
+              preserveCurrentUnitTier: this.isResumingSliceUnit(unit),
+            });
+
             this.logOrch(`Starting slice ${slice.number} (${group.name})`);
             executedAnySliceThisGroup = true;
             await this.persistStateEvent({
@@ -1423,7 +1451,6 @@ Rules:
             // Commit sweep
             await this.commitSweep(`Slice ${slice.number}`);
 
-            const unit = this.sliceUnit(slice, group.name);
             const sliceResult = await this.applyBoundaryPolicy({
               unit,
               group,
@@ -1681,17 +1708,23 @@ Rules:
     return { tddResult, skipped: false, planText: plan };
   }
 
-  async runGroupedExecutionUnit(
-    group: Group,
-    groupBaseSha: string,
-  ): Promise<{ skipped: boolean }> {
+  async runGroupedExecutionUnit(group: Group, groupBaseSha: string): Promise<{ skipped: boolean }> {
     const unit = this.groupedUnit(group);
+    await this.prepareTierForUnit(unit, {
+      preserveCurrentUnitTier: this.isResumingGroupedUnit(unit),
+    });
     this.sliceSkipFlag = false;
     this.progressSink.clearSkipping();
 
     if (this.quitRequested) {
       return { skipped: true };
     }
+
+    await this.persistStateEvent({
+      kind: "groupStarted",
+      groupName: unit.groupName,
+      sliceNumber: unit.sliceNumber,
+    });
 
     this.progressSink.updateProgress({
       currentSlice: { number: unit.sliceNumber },

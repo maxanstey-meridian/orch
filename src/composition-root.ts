@@ -11,6 +11,7 @@ import {
   progressSinkFactory,
   runtimeInteractionGateFactory,
   rolePromptResolverFactory,
+  executionUnitTierSelectorFactory,
   executionUnitTriagerFactory,
 } from "#infrastructure/factories.js";
 import type { Hud } from "#ui/hud.js";
@@ -28,5 +29,6 @@ export const createContainer = (config: OrchestratorConfig, hud: Hud) =>
     .provideFactory("operatorGate", operatorGateFactory)
     .provideFactory("progressSink", progressSinkFactory)
     .provideFactory("rolePromptResolver", rolePromptResolverFactory)
+    .provideFactory("executionUnitTierSelector", executionUnitTierSelectorFactory)
     .provideFactory("executionUnitTriager", executionUnitTriagerFactory)
     .provideClass("runOrchestration", RunOrchestration);

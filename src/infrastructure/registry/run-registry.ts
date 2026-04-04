@@ -212,7 +212,7 @@ export const withRegistryLock = async <T>(
       await writeRegistryLockOwner(lockPath);
       break;
     } catch (error) {
-      if (hasCode(error) && error.code === "EEXIST") {
+      if (hasCode(error) && (error.code === "EEXIST" || error.code === "ENOENT")) {
         if (await removeStaleRegistryLock(lockPath)) {
           continue;
         }

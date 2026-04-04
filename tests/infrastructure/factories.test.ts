@@ -176,6 +176,20 @@ describe("progressSinkFactory", () => {
   });
 });
 
+describe("executionUnitTierSelectorFactory", () => {
+  it("creates AgentExecutionUnitTierSelector from config and agent spawner", async () => {
+    const { executionUnitTierSelectorFactory } = await import("../../src/infrastructure/factories.js");
+    const { AgentExecutionUnitTierSelector } = await import(
+      "../../src/infrastructure/execution-unit-tier-selector.js"
+    );
+    const spawner = { spawn: vi.fn() } as any;
+    const result = executionUnitTierSelectorFactory(spawner, makeConfig());
+
+    expect(result).toBeInstanceOf(AgentExecutionUnitTierSelector);
+    expect(executionUnitTierSelectorFactory.inject).toEqual(["agentSpawner", "config"]);
+  });
+});
+
 describe("planGeneratorSpawnerFactory", () => {
   it("returns a spawner function for claude provider", async () => {
     const { planGeneratorSpawnerFactory } = await import("../../src/infrastructure/factories.js");

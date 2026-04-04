@@ -48,6 +48,7 @@ export type OrchestratorState = {
 };
 
 export type StateEvent =
+  | { readonly kind: "groupStarted"; readonly groupName: string; readonly sliceNumber: number }
   | { readonly kind: "sliceStarted"; readonly sliceNumber: number; readonly groupName: string }
   | { readonly kind: "phaseEntered"; readonly phase: PersistedPhase; readonly sliceNumber: number }
   | { readonly kind: "sliceDone"; readonly sliceNumber: number }
@@ -77,6 +78,15 @@ export type StateEvent =
 
 export const advanceState = (state: OrchestratorState, event: StateEvent): OrchestratorState => {
   switch (event.kind) {
+    case "groupStarted": {
+      const startedAt = state.startedAt ?? new Date().toISOString();
+      return {
+        ...state,
+        startedAt,
+        currentGroup: event.groupName,
+        currentSlice: event.sliceNumber,
+      };
+    }
     case "sliceStarted": {
       const eventStartedAt = new Date().toISOString();
       const startedAt = state.startedAt ?? eventStartedAt;

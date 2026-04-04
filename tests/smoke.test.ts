@@ -14,6 +14,7 @@ import { loadTieredSkills } from "#infrastructure/skill-loader.js";
 import { InkProgressSink, SilentOperatorGate } from "#ui/ink-operator-gate.js";
 import { FakeAgentSpawner } from "./fakes/fake-agent-spawner.js";
 import { FakeExecutionUnitTriager } from "./fakes/fake-execution-unit-triager.js";
+import { FakeExecutionUnitTierSelector } from "./fakes/fake-execution-unit-tier-selector.js";
 import { FakeHud } from "./fakes/fake-hud.js";
 import { FakeLogWriter } from "./fakes/fake-log-writer.js";
 import { PassthroughPromptBuilder } from "./fakes/fake-prompt-builder.js";
@@ -227,6 +228,7 @@ it("runs the direct smoke request against a temp repo with real file edits and g
   const prompts = new PassthroughPromptBuilder();
   const logWriter = new FakeLogWriter();
   const rolePromptResolver = new FakeRolePromptResolver();
+  const tierSelector = new FakeExecutionUnitTierSelector();
   const triager = new FakeExecutionUnitTriager();
   const config: OrchestratorConfig = {
     cwd: repoDir,
@@ -256,11 +258,15 @@ it("runs the direct smoke request against a temp repo with real file edits and g
     new InkProgressSink(hud),
     logWriter,
     rolePromptResolver,
+    tierSelector,
     triager,
   );
   uc.retryDelayMs = 0;
+  tierSelector.queueResult({
+    tier: "medium",
+    reason: "smoke execution-unit tier",
+  });
   triager.queueResult({
-    nextTier: "medium",
     completeness: "run_now",
     verify: "skip",
     review: "skip",

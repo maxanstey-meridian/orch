@@ -11,6 +11,7 @@ import { InMemoryGitOps } from "./fake-git-ops.js";
 import { PassthroughPromptBuilder } from "./fake-prompt-builder.js";
 import { FakeLogWriter } from "./fake-log-writer.js";
 import { FakeRolePromptResolver } from "./fake-role-prompt-resolver.js";
+import { FakeExecutionUnitTierSelector } from "./fake-execution-unit-tier-selector.js";
 import { FakeExecutionUnitTriager } from "./fake-execution-unit-triager.js";
 
 const DEFAULT_SKILLS: SkillSet = {
@@ -62,6 +63,7 @@ export const createTestHarness = (opts?: {
   const prompts = new PassthroughPromptBuilder();
   const logWriter = new FakeLogWriter();
   const rolePromptResolver = new FakeRolePromptResolver();
+  const tierSelector = new FakeExecutionUnitTierSelector();
   const triager = new FakeExecutionUnitTriager(spawner);
 
   // REAL production code — the full chain from HUD through to orchestration
@@ -88,6 +90,7 @@ export const createTestHarness = (opts?: {
     progressSink,
     logWriter,
     rolePromptResolver,
+    tierSelector,
     triager,
   );
   uc.retryDelayMs = 0;
@@ -108,6 +111,7 @@ export const createTestHarness = (opts?: {
     config,
     logWriter,
     rolePromptResolver,
+    tierSelector,
     triager,
   };
 };

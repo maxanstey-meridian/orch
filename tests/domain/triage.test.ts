@@ -9,7 +9,6 @@ import {
 describe("FULL_TRIAGE", () => {
   it("enables every pipeline stage with the default reason", () => {
     expect(FULL_TRIAGE).toEqual({
-      nextTier: "medium",
       completeness: "run_now",
       verify: "run_now",
       review: "run_now",
@@ -24,17 +23,14 @@ describe("parseTriageResult", () => {
     expect(
       parseTriageResult(
         JSON.stringify({
-          nextTier: "large",
           completeness: "run_now",
           verify: "defer",
           review: "skip",
           gap: "run_now",
           reason: "mixed pipeline",
         }),
-        "medium",
       ),
     ).toEqual({
-      nextTier: "large",
       completeness: "run_now",
       verify: "defer",
       review: "skip",
@@ -53,10 +49,8 @@ describe("parseTriageResult", () => {
           gap: false,
           reason: "legacy pipeline",
         }),
-        "small",
       ),
     ).toEqual({
-      nextTier: "small",
       completeness: "run_now",
       verify: "skip",
       review: "run_now",
@@ -70,15 +64,13 @@ describe("parseTriageResult", () => {
       parseTriageResult(`Here is the classifier result:
 
 {
-  "nextTier": "trivial",
   "completeness": "skip",
   "verify": "run_now",
   "review": "defer",
   "gap": "skip",
   "reason": "targeted review"
-}`, "medium"),
+}`),
     ).toEqual({
-      nextTier: "trivial",
       completeness: "skip",
       verify: "run_now",
       review: "defer",
@@ -91,16 +83,14 @@ describe("parseTriageResult", () => {
     expect(
       parseTriageResult(`\`\`\`json
 {
-  "nextTier": "medium",
   "completeness": "run_now",
   "verify": "run_now",
   "review": "skip",
   "gap": "defer",
   "reason": "verify only"
 }
-\`\`\``, "small"),
+\`\`\``),
     ).toEqual({
-      nextTier: "medium",
       completeness: "run_now",
       verify: "run_now",
       review: "skip",
@@ -110,55 +100,42 @@ describe("parseTriageResult", () => {
   });
 
   it("returns FULL_TRIAGE when the input is garbage text", () => {
-    expect(parseTriageResult("definitely not JSON", "medium")).toEqual(FULL_TRIAGE);
+    expect(parseTriageResult("definitely not JSON")).toEqual(FULL_TRIAGE);
   });
 
   it("returns FULL_TRIAGE when the JSON is malformed", () => {
     expect(
       parseTriageResult(`\`\`\`json
 {"completeness": true,
-\`\`\``, "large"),
-    ).toEqual({
-      ...FULL_TRIAGE,
-      nextTier: "large",
-    });
+\`\`\``),
+    ).toEqual(FULL_TRIAGE);
   });
 
   it("returns FULL_TRIAGE when required fields are missing", () => {
     expect(
       parseTriageResult(
         JSON.stringify({
-          nextTier: "small",
           completeness: "run_now",
           verify: "skip",
           review: "run_now",
           reason: "partial",
         }),
-        "trivial",
       ),
-    ).toEqual({
-      ...FULL_TRIAGE,
-      nextTier: "trivial",
-    });
+    ).toEqual(FULL_TRIAGE);
   });
 
   it("returns FULL_TRIAGE when fields have the wrong primitive types", () => {
     expect(
       parseTriageResult(
         JSON.stringify({
-          nextTier: "medium",
           completeness: "run_now",
           verify: false,
           review: "run_now",
           gap: "skip",
           reason: "typed wrong",
         }),
-        "small",
       ),
-    ).toEqual({
-      ...FULL_TRIAGE,
-      nextTier: "small",
-    });
+    ).toEqual(FULL_TRIAGE);
   });
 });
 
@@ -166,7 +143,6 @@ describe("buildTriagePrompt", () => {
   const input = {
     mode: "sliced" as const,
     unitKind: "slice" as const,
-    currentTier: "medium" as const,
     diffStats: { added: 10, removed: 2, total: 12 },
     reviewThreshold: 150,
     finalBoundary: false,
@@ -191,7 +167,6 @@ describe("buildTriagePrompt", () => {
   it("lists the required JSON output keys", () => {
     const prompt = buildTriagePrompt({ ...input, diff: "diff --git a/file.ts b/file.ts" });
 
-    expect(prompt).toContain("nextTier");
     expect(prompt).toContain("completeness");
     expect(prompt).toContain("verify");
     expect(prompt).toContain("review");
@@ -218,7 +193,7 @@ describe("buildTriagePrompt", () => {
       "which expensive passes should run now",
     );
     expect(prompt).toContain("deferred");
-    expect(prompt).toContain("NEXT execution unit");
+    expect(prompt).not.toContain("NEXT execution unit");
   });
 });
 
