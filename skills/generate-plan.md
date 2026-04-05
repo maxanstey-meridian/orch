@@ -30,6 +30,10 @@ The JSON must match this schema:
 ```
 {
   "executionMode": "grouped|sliced",
+  "contextUpdates": {
+    "architecture": "<updated architecture insight discovered during planning>",
+    "keyFiles": { "src/new.ts": "<why this newly-discovered file matters>" }
+  },
   "groups": [
     {
       "name": "Group Name",
@@ -65,6 +69,7 @@ The JSON must match this schema:
   duplicates cause slices to be skipped.
 - `files` must have at least one entry per slice
 - Every slice must include a non-empty `criteria` array of binary acceptance checks that a downstream evaluator can verify mechanically
+- `contextUpdates` is optional. Use it to return repo-wide facts you discovered during planning that should be merged back into canonical repo context. Same shape as `context` (`architecture`, `keyFiles`, `concepts`, `conventions`). Only include genuinely new or corrected knowledge — do not echo back what was already provided.
 - All string fields must be non-empty
 - `details` must be concrete and specific — not vague descriptions. Name the functions, types, patterns. Reference
   existing code by path. The agent has no context beyond what you write here.

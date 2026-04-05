@@ -63,10 +63,7 @@ export const repoContextArtifactSchema = z
   })
   .strict();
 
-export const parseRepoContextArtifact = (
-  raw: string,
-  source = "<json>",
-): RepoContextArtifact => {
+export const parseRepoContextArtifact = (raw: string, source = "<json>"): RepoContextArtifact => {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -76,7 +73,9 @@ export const parseRepoContextArtifact = (
 
   const result = repoContextArtifactSchema.safeParse(parsed);
   if (!result.success) {
-    const issues = result.error.issues.map((issue) => `  ${issue.path.join(".")}: ${issue.message}`);
+    const issues = result.error.issues.map(
+      (issue) => `  ${issue.path.join(".")}: ${issue.message}`,
+    );
     throw new Error(`Invalid repo context (${source}):\n${issues.join("\n")}`);
   }
 

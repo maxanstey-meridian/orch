@@ -12,18 +12,14 @@ import {
   type RepoContextLayer,
   type RepoContextLayerName,
 } from "#domain/context.js";
+import { parseProfileMarkdown } from "#ui/init.js";
 import { renderBriefFromContext } from "./context/context-brief.js";
 import {
   computeFreshnessSignature,
   isContextFresh,
   markStaleProvenanceEntries,
 } from "./context/context-freshness.js";
-import {
-  loadRepoContext,
-  saveRepoContext,
-  tryLoadRepoContext,
-} from "./context/context-store.js";
-import { parseProfileMarkdown } from "#ui/init.js";
+import { loadRepoContext, saveRepoContext, tryLoadRepoContext } from "./context/context-store.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

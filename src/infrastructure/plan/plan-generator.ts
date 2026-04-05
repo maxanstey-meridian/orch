@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
 import type { PromptAgent } from "#application/ports/agent-spawner.port.js";
 import type { ExecutionMode } from "#domain/config.js";
+import type { RepoContextData } from "#domain/context.js";
 import { a, type LogFn } from "#ui/display.js";
 import type { Group } from "./plan-parser.js";
 import { PlanSchema, parsePlanJson } from "./plan-schema.js";
@@ -130,6 +131,7 @@ export const generatePlan = async (
   agent: PromptAgent,
   outputDir: string,
   targetExecutionMode: Exclude<ExecutionMode, "direct"> = "sliced",
+  repoContext?: RepoContextData,
 ): Promise<GeneratePlanResult> => {
   const inventory = readFileSync(inventoryPath, "utf-8");
 
@@ -138,7 +140,7 @@ export const generatePlan = async (
     parts.push("## Codebase context\n\n" + briefContent);
   }
   parts.push("## Feature inventory\n\n" + inventory);
-  parts.push(buildPlanGenerationPrompt(targetExecutionMode));
+  parts.push(buildPlanGenerationPrompt(targetExecutionMode, repoContext));
 
   const prompt = parts.join("\n\n---\n\n");
   const result = await agent.send(prompt);
@@ -207,6 +209,7 @@ export const doGeneratePlan = async (
   log: LogFn,
   spawnPlanAgent: () => PromptAgent,
   targetExecutionMode: Exclude<ExecutionMode, "direct"> = "sliced",
+  repoContext?: RepoContextData,
 ): Promise<string> => {
   log(`${a.bold}Generating plan from inventory...${a.reset}`);
   const planAgent = spawnPlanAgent();
@@ -217,6 +220,7 @@ export const doGeneratePlan = async (
       planAgent,
       outputDir,
       targetExecutionMode,
+      repoContext,
     );
     log(`${a.green}Plan written to ${planPath}${a.reset}`);
     for (const line of planSummaryLines(groups)) {

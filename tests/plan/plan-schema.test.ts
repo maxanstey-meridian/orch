@@ -37,6 +37,20 @@ describe("PlanSchema", () => {
     }
   });
 
+  it("accepts optional contextUpdates alongside context", () => {
+    const input = {
+      executionMode: "sliced",
+      context: { architecture: "Clean Arch" },
+      contextUpdates: { keyFiles: { "src/new.ts": "Newly discovered" } },
+      groups: [validGroup("Core", [validSlice(1)])],
+    };
+    const result = PlanSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.contextUpdates?.keyFiles?.["src/new.ts"]).toBe("Newly discovered");
+    }
+  });
+
   it("accepts non-empty criteria when present on a slice", () => {
     const input = {
       groups: [validGroup("Core", [{
@@ -425,5 +439,44 @@ describe("parsePlanDocumentJson", () => {
     const reparsed = parsePlanDocumentJson(reserialized);
 
     expect(reparsed.context).toEqual(PLAN_CONTEXT);
+  });
+
+  it("preserves contextUpdates when present", () => {
+    const updates = {
+      architecture: "Discovered: hexagonal with event sourcing",
+      keyFiles: { "src/events.ts": "Event bus entrypoint" },
+    };
+    const input = {
+      executionMode: "sliced",
+      context: PLAN_CONTEXT,
+      contextUpdates: updates,
+      groups: [validGroup("Core", [validSlice(1)])],
+    };
+    const doc = parsePlanDocumentJson(makeJson(input));
+
+    expect(doc.contextUpdates).toEqual(updates);
+    expect(doc.context).toEqual(PLAN_CONTEXT);
+  });
+
+  it("returns undefined contextUpdates when absent", () => {
+    const input = {
+      executionMode: "sliced",
+      context: PLAN_CONTEXT,
+      groups: [validGroup("Core", [validSlice(1)])],
+    };
+    const doc = parsePlanDocumentJson(makeJson(input));
+
+    expect(doc.contextUpdates).toBeUndefined();
+  });
+
+  it("accepts plan with contextUpdates but no context", () => {
+    const input = {
+      contextUpdates: { concepts: { newConcept: "Discovered during planning" } },
+      groups: [validGroup("Core", [validSlice(1)])],
+    };
+    const doc = parsePlanDocumentJson(makeJson(input));
+
+    expect(doc.contextUpdates?.concepts?.newConcept).toBe("Discovered during planning");
+    expect(doc.context).toBeUndefined();
   });
 });

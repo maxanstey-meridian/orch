@@ -323,6 +323,33 @@ describe("buildPlanGenerationPrompt", () => {
     expect(result).toContain("larger internal change sets");
     expect(result).toContain("Reject micro-slice churn");
   });
+
+  it("includes canonical repo context when provided", () => {
+    const repoContext = {
+      architecture: "Clean Architecture orchestrator",
+      keyFiles: { "src/main.ts": "Startup bootstrap" },
+      concepts: { planContext: "Plan-local structured knowledge" },
+    };
+    const result = buildPlanGenerationPrompt("sliced", repoContext);
+
+    expect(result).toContain("## Canonical repo context");
+    expect(result).toContain("**Architecture:** Clean Architecture orchestrator");
+    expect(result).toContain("**src/main.ts:** Startup bootstrap");
+    expect(result).toContain("**planContext:** Plan-local structured knowledge");
+  });
+
+  it("omits canonical repo context section when not provided", () => {
+    const result = buildPlanGenerationPrompt("sliced");
+
+    expect(result).not.toContain("## Canonical repo context");
+  });
+
+  it("documents contextUpdates in the output schema", () => {
+    const result = buildPlanGenerationPrompt("sliced");
+
+    expect(result).toContain('"contextUpdates"');
+    expect(result).toContain("genuinely new or corrected knowledge");
+  });
 });
 
 describe("buildCommitSweepPrompt", () => {

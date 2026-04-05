@@ -1,4 +1,6 @@
+import type { RepoContextData } from "#domain/context.js";
 import type { PlannedExecutionMode } from "#domain/plan.js";
+import { renderRepoContextForPrompt } from "../context/context-brief.js";
 import { wrapBrief } from "../fingerprint.js";
 
 export const withBrief = (prompt: string, brief: string): string => {
@@ -33,6 +35,10 @@ Output valid JSON matching this schema:
       "testingBias": "<important implementation or testing convention>"
     }
   },
+  "contextUpdates": {
+    "architecture": "<updated architecture insight discovered during planning>",
+    "keyFiles": { "src/new.ts": "<why this newly-discovered file matters>" }
+  },
   "groups": [
     {
       "name": "<group name>",
@@ -66,6 +72,7 @@ Output valid JSON matching this schema:
 - All string fields (\`"name"\`, \`"title"\`, \`"why"\`, \`"details"\`, \`"tests"\`) must be non-empty.
 - Top-level \`"context"\` is optional, but include it when you can infer useful repo-wide guidance that will reduce re-exploration for implementing agents.
 - Within \`"context"\`, \`"architecture"\` is an optional string and \`"keyFiles"\`, \`"concepts"\`, and \`"conventions"\` are optional string-to-string maps.
+- Top-level \`"contextUpdates"\` is optional. Use it to return repo-wide facts you discovered during planning that should be merged back into the canonical repo context. Same shape as \`"context"\`. Only include genuinely new or corrected knowledge — do not echo back what was already provided in the canonical repo context.
 
 ## Rules
 
@@ -91,15 +98,21 @@ const buildSlicedPlanGenerationRules = (): string => `## Sliced mode requirement
 - Use finer-grained groups and slices where dependency ordering benefits from tighter review/verify cadence.
 - Target 2-3 slices per group, max 4. Respect dependency ordering.`;
 
-export const buildPlanGenerationPrompt = (targetExecutionMode: PlannedExecutionMode): string => {
+export const buildPlanGenerationPrompt = (
+  targetExecutionMode: PlannedExecutionMode,
+  repoContext?: RepoContextData,
+): string => {
   const modeRules =
     targetExecutionMode === "grouped"
       ? buildGroupedPlanGenerationRules()
       : buildSlicedPlanGenerationRules();
 
+  const repoContextSection =
+    repoContext !== undefined ? `\n\n${renderRepoContextForPrompt(repoContext)}` : "";
+
   return `${PLAN_GENERATION_SHARED_INSTRUCTIONS}
 
-${modeRules}`;
+${modeRules}${repoContextSection}`;
 };
 
 export const buildPlanPrompt = (

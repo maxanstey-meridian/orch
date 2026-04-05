@@ -128,6 +128,33 @@ const VALID_GENERATED_PLAN_WITH_CONTEXT = JSON.stringify({
   ],
 });
 
+const VALID_GENERATED_PLAN_WITH_CONTEXT_UPDATES = JSON.stringify({
+  executionMode: "sliced",
+  context: {
+    architecture: "Vue frontend with generated API client.",
+  },
+  contextUpdates: {
+    keyFiles: { "src/events.ts": "Event bus entrypoint discovered during planning" },
+    concepts: { eventSourcing: "Events are the source of truth for state transitions" },
+  },
+  groups: [
+    {
+      name: "Auth",
+      slices: [
+        {
+          number: 1,
+          title: "User login",
+          why: "Users need to log in.",
+          files: [{ path: "src/auth.ts", action: "new" }],
+          criteria: ["Login contract is explicit"],
+          details: "Implement login flow.",
+          tests: "Login works.",
+        },
+      ],
+    },
+  ],
+});
+
 const VALID_PLAN_WITH_CRITERIA = JSON.stringify({
   executionMode: "sliced",
   groups: [
@@ -645,6 +672,66 @@ describe("generatePlan", () => {
     expect(doc.context?.concepts?.runtimeComposition).toContain("host only supplies config");
     expect(doc.context?.conventions?.testingBias).toContain("seam-level tests");
     expect(doc.groups).toHaveLength(1);
+  });
+
+  it("passes repoContext into the prompt when provided", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    let capturedPrompt = "";
+    const agent: PromptAgent = {
+      ...mockAgent(VALID_GENERATED_PLAN),
+      send: async (prompt: string) => {
+        capturedPrompt = prompt;
+        return {
+          exitCode: 0,
+          assistantText: VALID_GENERATED_PLAN,
+          resultText: "",
+          needsInput: false,
+          sessionId: "mock",
+        };
+      },
+    };
+
+    await generatePlan(inventoryPath, "", agent, outputDir, "sliced", {
+      architecture: "Clean Arch orchestrator",
+      keyFiles: { "src/main.ts": "Bootstrap entrypoint" },
+    });
+
+    expect(capturedPrompt).toContain("## Canonical repo context");
+    expect(capturedPrompt).toContain("**Architecture:** Clean Arch orchestrator");
+    expect(capturedPrompt).toContain("**src/main.ts:** Bootstrap entrypoint");
+  });
+
+  it("persists contextUpdates to disk when returned by agent", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_GENERATED_PLAN_WITH_CONTEXT_UPDATES);
+
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
+
+    const written = readFileSync(planPath, "utf-8");
+    const parsed = PlanSchema.parse(JSON.parse(written));
+    expect(parsed.contextUpdates?.keyFiles?.["src/events.ts"]).toBe("Event bus entrypoint discovered during planning");
+    expect(parsed.contextUpdates?.concepts?.eventSourcing).toContain("source of truth");
+  });
+
+  it("round-trips contextUpdates through parsePlanDocumentJson", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_GENERATED_PLAN_WITH_CONTEXT_UPDATES);
+
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
+
+    const written = readFileSync(planPath, "utf-8");
+    const doc = parsePlanDocumentJson(written, planPath);
+    expect(doc.contextUpdates?.keyFiles?.["src/events.ts"]).toBe("Event bus entrypoint discovered during planning");
+    expect(doc.context?.architecture).toBe("Vue frontend with generated API client.");
   });
 
   it("prefers planText from ExitPlanMode over assistantText", async () => {

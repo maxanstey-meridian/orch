@@ -2271,6 +2271,7 @@ describe("main execution preference wiring", () => {
         expect.any(Function),
         expect.any(Function),
         executionMode,
+        expect.objectContaining({}),
       );
       expect(createContainer).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2361,6 +2362,7 @@ describe("main execution preference wiring", () => {
       expect.any(Function),
       expect.any(Function),
       "grouped",
+      expect.objectContaining({}),
     );
     expect(config.stateFile).toBe(expectedStateFile);
     expect(config.logPath).toBe(logPathForPlan(expectedOrchDir, resolvePlanId(join(tempDir, ".orch", "plan-generated.json"))));
@@ -2418,6 +2420,7 @@ describe("main execution preference wiring", () => {
       expect.any(Function),
       expect.any(Function),
       "sliced",
+      expect.objectContaining({}),
     );
     expect(createContainer).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2459,6 +2462,7 @@ describe("main execution preference wiring", () => {
         expect.any(Function),
         expect.any(Function),
         executionMode,
+        expect.objectContaining({}),
       );
       expect(createContainer).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2513,6 +2517,7 @@ describe("main execution preference wiring", () => {
         expect.any(Function),
         expect.any(Function),
         executionMode,
+        expect.objectContaining({}),
       );
       expect(String(config.stateFile)).toContain(`${expectedOrchDir}/state/`);
       expect(String(config.logPath)).toContain(`${expectedOrchDir}/logs/`);

@@ -1,5 +1,5 @@
-import { createHash } from "crypto";
 import { execSync } from "child_process";
+import { createHash } from "crypto";
 import { existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import {
@@ -32,7 +32,11 @@ const collectManifestCandidates = (cwd: string): string[] => {
   // tsconfig.*.json variants in root
   try {
     for (const entry of readdirSync(cwd)) {
-      if (entry !== "tsconfig.json" && /^tsconfig\..*\.json$/.test(entry) && existsSync(join(cwd, entry))) {
+      if (
+        entry !== "tsconfig.json" &&
+        /^tsconfig\..*\.json$/.test(entry) &&
+        existsSync(join(cwd, entry))
+      ) {
         candidates.push(entry);
       }
     }
@@ -118,8 +122,10 @@ export const isContextFresh = (artifact: RepoContextArtifact, cwd: string): bool
     return false;
   }
 
-  return artifact.freshness.head === current.head &&
-    artifact.freshness.manifestHash === current.manifestHash;
+  return (
+    artifact.freshness.head === current.head &&
+    artifact.freshness.manifestHash === current.manifestHash
+  );
 };
 
 // ─── Provenance staleness ──────────────────────────────────────────────────

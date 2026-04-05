@@ -40,6 +40,20 @@ const renderContextSections = (context: RepoContextData): string[] => {
 export const renderBriefFromContext = (artifact: RepoContextArtifact): string =>
   renderContextSections(artifact.effective.context).join("\n").trimEnd() + "\n";
 
+export const renderRepoContextForPrompt = (context: RepoContextData): string => {
+  const lines: string[] = ["## Canonical repo context", ""];
+
+  if (context.architecture !== undefined) {
+    lines.push(`**Architecture:** ${context.architecture}`, "");
+  }
+
+  lines.push(...renderDictionarySection("Key Files", context.keyFiles));
+  lines.push(...renderDictionarySection("Concepts", context.concepts));
+  lines.push(...renderDictionarySection("Conventions", context.conventions));
+
+  return lines.join("\n").trimEnd();
+};
+
 export const renderPlanContextBlock = (context: PlanContext): string => {
   const lines: string[] = ["## Plan Context", ""];
 

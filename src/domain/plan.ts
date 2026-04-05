@@ -5,6 +5,7 @@ export type PlannedExecutionMode = Exclude<ExecutionMode, "direct">;
 export type PlanDocument = {
   readonly executionMode?: PlannedExecutionMode;
   readonly context?: PlanContext;
+  readonly contextUpdates?: PlanContext;
   readonly groups: readonly Group[];
 };
 

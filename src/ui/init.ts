@@ -162,7 +162,7 @@ export const parseProfileMarkdown = (markdown: string): InitProfile | null => {
     return null;
   }
 
-  const parsed: Partial<InitProfile> = {};
+  const parsed: { -readonly [K in keyof InitProfile]?: InitProfile[K] } = {};
 
   for (const line of lines.slice(1)) {
     const field = parseProfileFieldLine(line);

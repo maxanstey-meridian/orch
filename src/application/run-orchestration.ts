@@ -1732,6 +1732,13 @@ Rules:
   async reviewFix(unit: ExecutionUnit, baseSha: string): Promise<void> {
     let reviewSha = baseSha;
 
+    if (this.phase.kind !== "Reviewing") {
+      this.phase = transition(this.phase, {
+        kind: "StartReview",
+        sliceNumber: unit.sliceNumber,
+      });
+    }
+
     for (let cycle = 1; cycle <= this.config.maxReviewCycles; cycle++) {
       if (this.sliceSkipFlag) {
         break;

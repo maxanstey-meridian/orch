@@ -4,13 +4,13 @@ import { existsSync, readFileSync, mkdirSync, watch, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { basename, dirname, resolve } from "path";
 import { resolveAllAgentConfigs } from "#domain/agent-config.js";
-import { hasRepoContextArtifact } from "#domain/context.js";
 import type {
   ExecutionMode,
   ExecutionPreference,
   OrchestratorConfig,
   SkillSet,
 } from "#domain/config.js";
+import { hasRepoContextArtifact } from "#domain/context.js";
 import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
 import type { Group, PlanContext } from "#domain/plan.js";
@@ -28,6 +28,8 @@ import {
 } from "#infrastructure/cli/cli-args.js";
 import { parseSubcommand } from "#infrastructure/cli/subcommands.js";
 import { loadAndResolveOrchrConfig, buildOrchrSummary } from "#infrastructure/config/orchrc.js";
+import { mergePlannerContextUpdates } from "#infrastructure/context/context-merge.js";
+import { saveRepoContext } from "#infrastructure/context/context-store.js";
 import { aggregateDashboard } from "#infrastructure/dashboard/data-aggregator.js";
 import {
   planGeneratorSpawnerFactory,
@@ -778,8 +780,22 @@ export const main = async (runtime: MainRuntime = {}) => {
             log,
             spawnPlanGenerator,
             executionMode,
+            context?.effective.context,
           );
           planContent = readFileSync(planPath, "utf-8");
+
+          // Merge planner-discovered context updates into canonical context
+          if (context !== null && context !== undefined) {
+            try {
+              const generatedDoc = parsePlanDocumentJson(planContent, planPath);
+              if (generatedDoc.contextUpdates !== undefined) {
+                const merged = mergePlannerContextUpdates(context, generatedDoc.contextUpdates);
+                saveRepoContext(orchDir, merged);
+              }
+            } catch {
+              // Context merge is best-effort — don't block planning
+            }
+          }
         }
       }
     }

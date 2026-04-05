@@ -15,6 +15,7 @@ export type SliceComplete = { readonly kind: "SliceComplete" };
 export type StartGap = { readonly kind: "StartGap"; readonly groupName: string };
 export type GapDone = { readonly kind: "GapDone" };
 export type StartFinalPasses = { readonly kind: "StartFinalPasses" };
+export type StartReview = { readonly kind: "StartReview"; readonly sliceNumber: number };
 export type AllPassesDone = { readonly kind: "AllPassesDone" };
 
 export type PhaseEvent =
@@ -33,6 +34,7 @@ export type PhaseEvent =
   | StartGap
   | GapDone
   | StartFinalPasses
+  | StartReview
   | AllPassesDone;
 
 export const transition = (current: Phase, event: PhaseEvent): Phase => {
@@ -45,6 +47,8 @@ export const transition = (current: Phase, event: PhaseEvent): Phase => {
           return { kind: "GapAnalysis", groupName: event.groupName };
         case "StartFinalPasses":
           return { kind: "FinalPasses", passIndex: 0 };
+        case "StartReview":
+          return { kind: "Reviewing", sliceNumber: event.sliceNumber, cycle: 1 };
       }
       break;
     case "Planning":

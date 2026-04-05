@@ -72,9 +72,7 @@ export class DefaultPromptBuilder extends PromptBuilder {
     operatorGuidance?: string,
   ): string {
     const planContextSection =
-      firstSlice && this.planContextBlock !== undefined
-        ? `${this.planContextBlock}\n\n`
-        : "";
+      firstSlice && this.planContextBlock !== undefined ? `${this.planContextBlock}\n\n` : "";
     const firstSliceContext = firstSlice
       ? `${planContextSection}## Full Plan Context\nYou are implementing Slice ${sliceNumber}. Here is the full plan — do NOT implement other slices.\n\n${this.planContent}\n\n---\n\n`
       : "";
@@ -91,9 +89,7 @@ export class DefaultPromptBuilder extends PromptBuilder {
     operatorGuidance?: string,
   ): string {
     const planContextSection =
-      firstGroup && this.planContextBlock !== undefined
-        ? `${this.planContextBlock}\n\n`
-        : "";
+      firstGroup && this.planContextBlock !== undefined ? `${this.planContextBlock}\n\n` : "";
     const firstGroupContext = firstGroup
       ? `${planContextSection}## Full Plan Context\nYou are implementing Group ${groupName}. Here is the full plan — do NOT implement other groups.\n\n${this.planContent}\n\n---\n\n`
       : "";

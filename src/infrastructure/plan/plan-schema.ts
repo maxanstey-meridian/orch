@@ -47,6 +47,7 @@ export const PlanSchema = z
   .object({
     executionMode: z.enum(["grouped", "sliced"]).optional(),
     context: PlanContextSchema.optional(),
+    contextUpdates: PlanContextSchema.optional(),
     groups: z.array(PlanGroupSchema).min(1),
   })
   .superRefine((plan, ctx) => {
@@ -95,10 +96,12 @@ export const parsePlanDocumentJson = (json: string, source = "<json>"): PlanDocu
   }
 
   const context: PlanContext | undefined = result.data.context;
+  const contextUpdates: PlanContext | undefined = result.data.contextUpdates;
 
   return {
     executionMode: result.data.executionMode,
     ...(context !== undefined ? { context } : {}),
+    ...(contextUpdates !== undefined ? { contextUpdates } : {}),
     groups: result.data.groups.map((g) => ({
       name: g.name,
       description: g.description,
