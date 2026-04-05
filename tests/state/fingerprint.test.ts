@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile, mkdir, readFile } from "fs/promises";
+import { execSync } from "child_process";
 import { join } from "path";
 import { tmpdir } from "os";
 import { loadRepoContext } from "#infrastructure/context/context-store.js";
@@ -17,6 +18,13 @@ import {
   wrapBrief,
   generateBrief,
 } from "#infrastructure/fingerprint.js";
+
+const initGitRepo = (dir: string): void => {
+  execSync("git init", { cwd: dir, stdio: "ignore" });
+  execSync("git config user.email test@test.com", { cwd: dir, stdio: "ignore" });
+  execSync("git config user.name Test", { cwd: dir, stdio: "ignore" });
+  execSync("git commit --allow-empty -m init", { cwd: dir, stdio: "ignore" });
+};
 
 let tempDir: string;
 
@@ -400,7 +408,7 @@ describe("runFingerprint", () => {
     expect(result.context.effective.context).toEqual({});
   });
 
-  it("returns cached brief and context on second call without regenerating", async () => {
+  it("returns cached context on second call when repo signature is unchanged", async () => {
     await writeFile(
       join(tempDir, "package.json"),
       JSON.stringify({
@@ -408,6 +416,7 @@ describe("runFingerprint", () => {
         devDependencies: { typescript: "^5.0.0" },
       }),
     );
+    initGitRepo(tempDir);
 
     const outputDir = join(tempDir, ".orch");
     const first = await runFingerprint({ cwd: tempDir, outputDir });
@@ -417,7 +426,7 @@ describe("runFingerprint", () => {
     expect(second.context).toEqual(first.context);
   });
 
-  it("forceRefresh regenerates a fresh context artifact instead of returning cache", async () => {
+  it("forceRefresh regenerates even when repo signature matches", async () => {
     await writeFile(
       join(tempDir, "package.json"),
       JSON.stringify({
@@ -425,24 +434,52 @@ describe("runFingerprint", () => {
         devDependencies: { typescript: "^5.0.0" },
       }),
     );
+    initGitRepo(tempDir);
 
     const outputDir = join(tempDir, ".orch");
 
-    // First call generates the artifact
+    // First call generates the artifact with freshness signature
     const first = await runFingerprint({ cwd: tempDir, outputDir });
+    expect(first.context.freshness).toBeDefined();
     expect(first.context.layers.detected.context.concepts?.stack).toContain("TypeScript");
 
-    // Tamper with the cached brief to detect if it is re-read from disk.
-    await writeFile(join(outputDir, "brief.md"), "STALE CACHE");
-
-    // Without forceRefresh — returns cached (stale) content
+    // Without forceRefresh — returns cached context (repo hasn't changed)
     const cached = await runFingerprint({ cwd: tempDir, outputDir });
-    expect(cached.brief).toBe("STALE CACHE");
+    expect(cached.context).toEqual(first.context);
 
-    // With forceRefresh — regenerates from context and overwrites stale cache
+    // With forceRefresh — regenerates with a new generatedAt timestamp
     const forced = await runFingerprint({ cwd: tempDir, outputDir, forceRefresh: true });
     expect(forced.context.layers.detected.context.concepts?.stack).toContain("TypeScript");
-    expect(forced.brief).not.toContain("STALE CACHE");
+    expect(forced.context.repo.generatedAt).not.toBe(first.context.repo.generatedAt);
+  });
+
+  it("regenerates when manifest changes between calls", async () => {
+    await writeFile(
+      join(tempDir, "package.json"),
+      JSON.stringify({
+        dependencies: {},
+        devDependencies: { typescript: "^5.0.0" },
+      }),
+    );
+    initGitRepo(tempDir);
+
+    const outputDir = join(tempDir, ".orch");
+    const first = await runFingerprint({ cwd: tempDir, outputDir });
+    expect(first.context.freshness).toBeDefined();
+
+    // Modify package.json — changes the manifest signature
+    await writeFile(
+      join(tempDir, "package.json"),
+      JSON.stringify({
+        dependencies: { express: "^4.0.0" },
+        devDependencies: { typescript: "^5.0.0" },
+      }),
+    );
+
+    const second = await runFingerprint({ cwd: tempDir, outputDir });
+    expect(second.context.layers.detected.context.concepts?.stack).toContain("TypeScript");
+    // Should have regenerated — new generatedAt
+    expect(second.context.repo.generatedAt).not.toBe(first.context.repo.generatedAt);
   });
 
   it("skip takes priority over forceRefresh — returns defaults", async () => {

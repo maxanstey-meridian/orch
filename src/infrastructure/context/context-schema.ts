@@ -34,6 +34,13 @@ export const repoContextLayerSchema = z
   })
   .strict();
 
+export const freshnessSignatureSchema = z
+  .object({
+    head: z.string().min(1),
+    manifestHash: z.string().min(1),
+  })
+  .strict();
+
 export const repoContextArtifactSchema = z
   .object({
     version: z.literal(1),
@@ -44,6 +51,7 @@ export const repoContextArtifactSchema = z
         generatedAt: z.string().min(1),
       })
       .strict(),
+    freshness: freshnessSignatureSchema.optional(),
     layers: z
       .object({
         operator: repoContextLayerSchema,

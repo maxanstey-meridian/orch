@@ -1,5 +1,10 @@
 export type RepoContextDictionary = Readonly<Record<string, string>>;
 
+export type RepoFreshnessSignature = {
+  readonly head: string;
+  readonly manifestHash: string;
+};
+
 export type RepoContextData = {
   readonly architecture?: string;
   readonly keyFiles?: RepoContextDictionary;
@@ -36,6 +41,7 @@ export type RepoContextArtifact = {
     readonly repoName: string;
     readonly generatedAt: string;
   };
+  readonly freshness?: RepoFreshnessSignature;
   readonly layers: RepoContextLayers;
   readonly effective: RepoContextLayer;
 };

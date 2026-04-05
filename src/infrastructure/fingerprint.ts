@@ -1,5 +1,5 @@
 import { execSync } from "child_process";
-import { readFileSync, existsSync, readdirSync, writeFileSync, statSync } from "fs";
+import { readFileSync, existsSync, readdirSync, writeFileSync } from "fs";
 import { join, relative } from "path";
 import {
   createEmptyRepoContextArtifact,
@@ -14,7 +14,11 @@ import {
 } from "#domain/context.js";
 import { renderBriefFromContext } from "./context/context-brief.js";
 import {
-  contextFilePath,
+  computeFreshnessSignature,
+  isContextFresh,
+  markStaleProvenanceEntries,
+} from "./context/context-freshness.js";
+import {
   loadRepoContext,
   saveRepoContext,
   tryLoadRepoContext,
@@ -562,8 +566,6 @@ const DEFAULTS = (cwd: string): FingerprintResult => ({
   context: createEmptyRepoContextArtifact({ rootPath: cwd }),
 });
 
-const ONE_HOUR_MS = 60 * 60 * 1000;
-
 export const runFingerprint = async (opts: FingerprintOptions): Promise<FingerprintResult> => {
   if (opts.skip) {
     return DEFAULTS(opts.cwd);
@@ -571,35 +573,27 @@ export const runFingerprint = async (opts: FingerprintOptions): Promise<Fingerpr
 
   const initProfilePath = join(opts.outputDir, "init-profile.md");
   const initProfileMarkdown = fileExists(initProfilePath) ? tryRead(initProfilePath).trim() : "";
-
-  // Check freshness — skip if context exists and is <1h old
-  // forceRefresh bypasses cache (e.g. after --init rewrites init-profile.md)
   const briefPath = join(opts.outputDir, "brief.md");
-  const cachedContextPath = contextFilePath(opts.outputDir);
-  if (!opts.forceRefresh) {
-    try {
-      const stat = statSync(cachedContextPath);
-      if (Date.now() - stat.mtimeMs < ONE_HOUR_MS) {
-        const context = tryLoadRepoContext(opts.outputDir);
-        if (context !== null) {
-          const cachedBrief = tryRead(briefPath).trim();
-          if (cachedBrief) {
-            return { brief: cachedBrief, context };
-          }
 
-          const renderedBrief = renderBriefFromContext(context);
-          writeFileSync(briefPath, renderedBrief);
-          return { brief: renderedBrief, context };
-        }
+  // Check repo-aware freshness — reuse cached context when HEAD and manifests match
+  // forceRefresh bypasses cache (e.g. after --init rewrites init-profile.md)
+  if (!opts.forceRefresh) {
+    const cached = tryLoadRepoContext(opts.outputDir);
+    if (cached !== null && isContextFresh(cached, opts.cwd)) {
+      const checked = markStaleProvenanceEntries(cached, opts.cwd);
+      if (checked !== cached) {
+        saveRepoContext(opts.outputDir, checked);
       }
-    } catch {
-      /* context doesn't exist yet, generate it */
+      const brief = renderBriefFromContext(checked);
+      writeFileSync(briefPath, brief);
+      return { brief, context: checked };
     }
   }
 
   const stack = detectStack(opts.cwd);
   const testStyle = detectTestStyle(opts.cwd);
   const generatedAt = new Date().toISOString();
+  const freshness = computeFreshnessSignature(opts.cwd);
   const operator = buildLayerProvenance({
     source: "operator",
     context: buildOperatorContextData(initProfileMarkdown),
@@ -616,6 +610,7 @@ export const runFingerprint = async (opts: FingerprintOptions): Promise<Fingerpr
   });
   const artifact: RepoContextArtifact = {
     ...createEmptyRepoContextArtifact({ rootPath: opts.cwd, generatedAt }),
+    ...(freshness !== undefined ? { freshness } : {}),
     layers: {
       operator,
       detected,
@@ -636,7 +631,7 @@ export const runFingerprint = async (opts: FingerprintOptions): Promise<Fingerpr
   saveRepoContext(opts.outputDir, artifact);
   const storedContext = loadRepoContext(opts.outputDir);
   if (storedContext === null) {
-    throw new Error(`Repo context was not persisted to ${cachedContextPath}`);
+    throw new Error(`Repo context was not persisted to ${join(opts.outputDir, "context.json")}`);
   }
   const brief = renderBriefFromContext(storedContext);
   writeFileSync(briefPath, brief);

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "fs/promises";
+import { execSync } from "child_process";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { writeFileSync, mkdirSync } from "fs";
@@ -294,12 +295,18 @@ describe("init profile + fingerprint integration", () => {
     const orchDir = join(tmpDir, ".orch");
     mkdirSync(orchDir, { recursive: true });
 
+    // Git repo is needed for repo-aware cache to engage
+    execSync("git init", { cwd: tmpDir, stdio: "ignore" });
+    execSync("git config user.email test@test.com", { cwd: tmpDir, stdio: "ignore" });
+    execSync("git config user.name Test", { cwd: tmpDir, stdio: "ignore" });
+    execSync("git commit --allow-empty -m init", { cwd: tmpDir, stdio: "ignore" });
+
     // First run — write init profile with "Express"
     writeFileSync(join(orchDir, "init-profile.md"), profileToMarkdown({ language: "TypeScript", framework: "Express" }));
     const first = await runFingerprint({ cwd: tmpDir, outputDir: orchDir });
     expect(first.context.layers.operator.context.concepts?.framework).toBe("Express");
 
-    // Update init profile to "NestJS" — without forceRefresh, cache returns stale brief
+    // Update init profile to "NestJS" — without forceRefresh, cache returns stale operator context
     writeFileSync(join(orchDir, "init-profile.md"), profileToMarkdown({ language: "TypeScript", framework: "NestJS" }));
     const cached = await runFingerprint({ cwd: tmpDir, outputDir: orchDir });
     expect(cached.context.layers.operator.context.concepts?.framework).toBe("Express");
