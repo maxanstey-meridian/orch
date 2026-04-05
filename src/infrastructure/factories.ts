@@ -106,7 +106,13 @@ export const gitOpsFactory = (config: OrchestratorConfig) => new ChildProcessGit
 gitOpsFactory.inject = ["config"] as const;
 
 export const promptBuilderFactory = (config: OrchestratorConfig) =>
-  new DefaultPromptBuilder(config.brief, config.planContent, config.tddRules, config.reviewRules);
+  new DefaultPromptBuilder(
+    config.brief,
+    config.planContent,
+    config.tddRules,
+    config.reviewRules,
+    config.planContext,
+  );
 promptBuilderFactory.inject = ["config"] as const;
 
 export const operatorGateFactory = (config: OrchestratorConfig, hud: Hud): OperatorGate =>

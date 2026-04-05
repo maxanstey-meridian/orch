@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { writeFile, mkdtemp, rm } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { parsePlan } from "#infrastructure/plan/plan-parser.js";
+import { parsePlan, parsePlanDocument } from "#infrastructure/plan/plan-parser.js";
 
 const withTempFile = async (content: string, fn: (path: string) => Promise<void>) => {
   const dir = await mkdtemp(join(tmpdir(), "orch-test-"));
@@ -87,5 +87,56 @@ describe("parsePlan", () => {
 
   it("throws on missing file", async () => {
     await expect(parsePlan("/nonexistent/plan.json")).rejects.toThrow();
+  });
+});
+
+describe("parsePlanDocument", () => {
+  const PLAN_CONTEXT = {
+    architecture: "Clean Architecture",
+    keyFiles: { "src/main.ts": "Bootstrap entrypoint" },
+    concepts: { planContext: "Structured plan-local knowledge" },
+    conventions: { testingBias: "Seam-level tests" },
+  };
+
+  it("returns full document with context when present", async () => {
+    const plan = {
+      executionMode: "sliced",
+      context: PLAN_CONTEXT,
+      groups: [{ name: "Core", slices: [validSlice(1)] }],
+    };
+    await withTempFile(JSON.stringify(plan), async (path) => {
+      const doc = await parsePlanDocument(path);
+
+      expect(doc.executionMode).toBe("sliced");
+      expect(doc.context).toEqual(PLAN_CONTEXT);
+      expect(doc.groups).toHaveLength(1);
+      expect(doc.groups[0].slices[0].number).toBe(1);
+    });
+  });
+
+  it("returns undefined context when plan has none", async () => {
+    await withTempFile(JSON.stringify(validPlan()), async (path) => {
+      const doc = await parsePlanDocument(path);
+
+      expect(doc.context).toBeUndefined();
+      expect(doc.groups).toHaveLength(1);
+    });
+  });
+
+  it("parsePlan still returns groups only (backward compat)", async () => {
+    const plan = {
+      executionMode: "sliced",
+      context: PLAN_CONTEXT,
+      groups: [{ name: "Core", slices: [validSlice(1)] }],
+    };
+    await withTempFile(JSON.stringify(plan), async (path) => {
+      const groups = await parsePlan(path);
+
+      // parsePlan returns Group[], not PlanDocument
+      expect(groups).toHaveLength(1);
+      expect(groups[0].name).toBe("Core");
+      // No context property on groups array
+      expect((groups as unknown as Record<string, unknown>).context).toBeUndefined();
+    });
   });
 });

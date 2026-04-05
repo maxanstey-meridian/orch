@@ -2,6 +2,12 @@ import type { ExecutionMode } from "./config.js";
 
 export type PlannedExecutionMode = Exclude<ExecutionMode, "direct">;
 
+export type PlanDocument = {
+  readonly executionMode?: PlannedExecutionMode;
+  readonly context?: PlanContext;
+  readonly groups: readonly Group[];
+};
+
 export type FileAction = {
   readonly path: string;
   readonly action: "new" | "edit" | "delete";

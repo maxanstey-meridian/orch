@@ -13,7 +13,7 @@ import type {
 } from "#domain/config.js";
 import type { DashboardModel, DashboardRun } from "#domain/dashboard.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
-import type { Group } from "#domain/plan.js";
+import type { Group, PlanContext } from "#domain/plan.js";
 import type { QueueEntry } from "#domain/queue.js";
 import {
   REQUEST_TRIAGE_FALLBACK,
@@ -48,6 +48,7 @@ import {
   resolvePlanId,
 } from "#infrastructure/plan/plan-generator.js";
 import { parsePlan } from "#infrastructure/plan/plan-parser.js";
+import { parsePlanDocumentJson } from "#infrastructure/plan/plan-schema.js";
 import {
   defaultQueuePath,
   addToQueue,
@@ -736,6 +737,7 @@ export const main = async (runtime: MainRuntime = {}) => {
   const agentConfig = resolveAllAgentConfigs(orchrc.agents, provider);
   let planPath: string;
   let planContent: string | undefined;
+  let planContext: PlanContext | undefined;
   let executionMode: ExecutionMode;
   try {
     if (workMode) {
@@ -784,6 +786,16 @@ export const main = async (runtime: MainRuntime = {}) => {
   } catch (error) {
     exitWithError(error instanceof Error ? error.message : String(error));
     return;
+  }
+
+  // Extract plan context from plan-format JSON content
+  if (planContent !== undefined && executionMode !== "direct") {
+    try {
+      const doc = parsePlanDocumentJson(planContent, planPath);
+      planContext = doc.context;
+    } catch {
+      // Not valid plan JSON — no plan context available
+    }
   }
 
   // 4. Derive per-plan state path
@@ -955,6 +967,7 @@ export const main = async (runtime: MainRuntime = {}) => {
         cwd: effectiveCwd,
         planPath: orchestratorPlanPath,
         planContent: planContent ?? "",
+        planContext,
         brief,
         executionMode,
         executionPreference,
@@ -1055,6 +1068,7 @@ export const main = async (runtime: MainRuntime = {}) => {
       cwd: effectiveCwd,
       planPath,
       planContent,
+      planContext,
       brief,
       executionMode,
       executionPreference,

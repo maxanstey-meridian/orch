@@ -1,9 +1,11 @@
 import { PromptBuilder, type FinalPass } from "#application/ports/prompt-builder.port.js";
+import type { PlanContext } from "#domain/plan.js";
 import {
   TDD_RULES_REMINDER,
   REVIEW_RULES_REMINDER,
   buildRulesReminder,
 } from "./claude/claude-agent-factory.js";
+import { renderPlanContextBlock } from "./context/context-brief.js";
 import {
   withBrief as _withBrief,
   buildPlanPrompt,
@@ -25,13 +27,18 @@ import {
 } from "./plan/prompts.js";
 
 export class DefaultPromptBuilder extends PromptBuilder {
+  private readonly planContextBlock: string | undefined;
+
   constructor(
     private readonly brief: string,
     private readonly planContent: string,
     private readonly tddRules?: string,
     private readonly reviewRules?: string,
+    planContext?: PlanContext,
   ) {
     super();
+    this.planContextBlock =
+      planContext !== undefined ? renderPlanContextBlock(planContext) : undefined;
   }
 
   private buildSliceTddPrompt(
@@ -64,8 +71,12 @@ export class DefaultPromptBuilder extends PromptBuilder {
     firstSlice: boolean,
     operatorGuidance?: string,
   ): string {
+    const planContextSection =
+      firstSlice && this.planContextBlock !== undefined
+        ? `${this.planContextBlock}\n\n`
+        : "";
     const firstSliceContext = firstSlice
-      ? `## Full Plan Context\nYou are implementing Slice ${sliceNumber}. Here is the full plan — do NOT implement other slices.\n\n${this.planContent}\n\n---\n\n`
+      ? `${planContextSection}## Full Plan Context\nYou are implementing Slice ${sliceNumber}. Here is the full plan — do NOT implement other slices.\n\n${this.planContent}\n\n---\n\n`
       : "";
     const raw = operatorGuidance
       ? `${firstSliceContext}Operator guidance: ${operatorGuidance}\n\nExecute this plan for Slice ${sliceNumber}:\n\n${planText}`
@@ -79,8 +90,12 @@ export class DefaultPromptBuilder extends PromptBuilder {
     firstGroup: boolean,
     operatorGuidance?: string,
   ): string {
+    const planContextSection =
+      firstGroup && this.planContextBlock !== undefined
+        ? `${this.planContextBlock}\n\n`
+        : "";
     const firstGroupContext = firstGroup
-      ? `## Full Plan Context\nYou are implementing Group ${groupName}. Here is the full plan — do NOT implement other groups.\n\n${this.planContent}\n\n---\n\n`
+      ? `${planContextSection}## Full Plan Context\nYou are implementing Group ${groupName}. Here is the full plan — do NOT implement other groups.\n\n${this.planContent}\n\n---\n\n`
       : "";
     const raw = operatorGuidance
       ? `${firstGroupContext}Operator guidance: ${operatorGuidance}\n\nExecute this plan for Group ${groupName} as one bounded increment:\n\n${groupContent}`

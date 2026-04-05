@@ -2090,6 +2090,55 @@ describe("main execution preference wiring", () => {
     );
   });
 
+  it("threads planContext from plan JSON into createContainer config", async () => {
+    const planWithContext = JSON.stringify({
+      executionMode: "sliced",
+      context: {
+        architecture: "Clean Architecture orchestrator",
+        keyFiles: { "src/main.ts": "Startup bootstrap" },
+        concepts: { repoContext: "Canonical cross-run memory" },
+      },
+      groups: [
+        {
+          name: "Test",
+          slices: [
+            {
+              number: 1,
+              title: "Slice 1",
+              why: "why",
+              files: [{ path: "src/s1.ts", action: "new" }],
+              details: "details",
+              tests: "tests",
+            },
+          ],
+        },
+      ],
+    });
+    const { createContainer, exit } = await runMainWithWorkPlanMocks([], {
+      planContent: planWithContext,
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        planContext: {
+          architecture: "Clean Architecture orchestrator",
+          keyFiles: { "src/main.ts": "Startup bootstrap" },
+          concepts: { repoContext: "Canonical cross-run memory" },
+        },
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("sets planContext to undefined when plan has no top-level context", async () => {
+    const { createContainer, exit } = await runMainWithWorkPlanMocks([]);
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+    const config = getCreateContainerConfig(createContainer);
+    expect(config.planContext).toBeUndefined();
+  });
+
   it("fails fast for mutually exclusive work execution mode flags", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const exit = vi.fn();

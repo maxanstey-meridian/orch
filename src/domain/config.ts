@@ -1,5 +1,6 @@
 import type { ResolvedAgentConfig } from "./agent-config.js";
 import type { AgentRole } from "./agent-types.js";
+import type { PlanContext } from "./plan.js";
 import type { ComplexityTier } from "./triage.js";
 
 export type Provider = "claude" | "codex";
@@ -16,6 +17,7 @@ export type OrchestratorConfig = {
   readonly cwd: string;
   readonly planPath: string;
   readonly planContent: string;
+  readonly planContext?: PlanContext;
   readonly brief: string;
   readonly executionMode: ExecutionMode;
   readonly executionPreference: ExecutionPreference;

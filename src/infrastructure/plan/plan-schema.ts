@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Group, PlannedExecutionMode, Slice } from "#domain/plan.js";
+import type { Group, PlanDocument, PlanContext, Slice } from "#domain/plan.js";
 import { buildContent } from "#domain/plan.js";
 
 export type { FileAction } from "#domain/plan.js";
@@ -79,10 +79,6 @@ export const PlanSchema = z
 export type PlanSliceJson = z.infer<typeof PlanSliceSchema>;
 export type PlanGroupJson = z.infer<typeof PlanGroupSchema>;
 export type PlanJson = z.infer<typeof PlanSchema>;
-export type PlanDocument = {
-  readonly executionMode?: PlannedExecutionMode;
-  readonly groups: readonly Group[];
-};
 
 export const parsePlanDocumentJson = (json: string, source = "<json>"): PlanDocument => {
   let raw: unknown;
@@ -98,8 +94,11 @@ export const parsePlanDocumentJson = (json: string, source = "<json>"): PlanDocu
     throw new Error(`Invalid plan (${source}):\n${issues}`);
   }
 
+  const context: PlanContext | undefined = result.data.context;
+
   return {
     executionMode: result.data.executionMode,
+    ...(context !== undefined ? { context } : {}),
     groups: result.data.groups.map((g) => ({
       name: g.name,
       description: g.description,

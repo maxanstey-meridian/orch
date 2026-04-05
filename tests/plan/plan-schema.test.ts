@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PlanSchema, parsePlanJson } from "#infrastructure/plan/plan-schema.js";
+import { PlanSchema, parsePlanJson, parsePlanDocumentJson } from "#infrastructure/plan/plan-schema.js";
 
 describe("PlanSchema", () => {
   const validSlice = (number: number) => ({
@@ -334,5 +334,96 @@ describe("parsePlanJson", () => {
       ],
     };
     expect(() => parsePlanJson(makeJson(input))).toThrow(/sequential/i);
+  });
+});
+
+describe("parsePlanDocumentJson", () => {
+  const makeJson = (obj: unknown) => JSON.stringify(obj);
+
+  const validSlice = (number: number) => ({
+    number,
+    title: `Slice ${number}`,
+    why: "Needed for feature X",
+    files: [{ path: "src/foo.ts", action: "new" as const }],
+    details: "Implement the thing",
+    tests: "Test the thing",
+  });
+
+  const validGroup = (name: string, slices: Record<string, unknown>[]) => ({
+    name,
+    slices,
+  });
+
+  const PLAN_CONTEXT = {
+    architecture: "Clean Architecture with ports and adapters",
+    keyFiles: { "src/main.ts": "Startup bootstrap" },
+    concepts: { repoContext: "Canonical cross-run memory" },
+    conventions: { testingBias: "Prefer seam-level tests" },
+  };
+
+  it("preserves top-level context when present", () => {
+    const input = {
+      executionMode: "sliced",
+      context: PLAN_CONTEXT,
+      groups: [validGroup("Core", [validSlice(1)])],
+    };
+    const doc = parsePlanDocumentJson(makeJson(input));
+
+    expect(doc.context).toEqual(PLAN_CONTEXT);
+    expect(doc.context?.architecture).toBe("Clean Architecture with ports and adapters");
+    expect(doc.context?.keyFiles?.["src/main.ts"]).toBe("Startup bootstrap");
+    expect(doc.context?.concepts?.repoContext).toBe("Canonical cross-run memory");
+    expect(doc.context?.conventions?.testingBias).toBe("Prefer seam-level tests");
+  });
+
+  it("returns undefined context when plan has no top-level context", () => {
+    const input = {
+      groups: [validGroup("Core", [validSlice(1)])],
+    };
+    const doc = parsePlanDocumentJson(makeJson(input));
+
+    expect(doc.context).toBeUndefined();
+  });
+
+  it("preserves both executionMode and groups alongside context", () => {
+    const input = {
+      executionMode: "grouped",
+      context: { architecture: "Monolith" },
+      groups: [validGroup("A", [validSlice(1)]), validGroup("B", [validSlice(2)])],
+    };
+    const doc = parsePlanDocumentJson(makeJson(input));
+
+    expect(doc.executionMode).toBe("grouped");
+    expect(doc.context?.architecture).toBe("Monolith");
+    expect(doc.groups).toHaveLength(2);
+    expect(doc.groups[0].slices[0].number).toBe(1);
+  });
+
+  it("round-trips context through JSON serialize and re-parse", () => {
+    const input = {
+      executionMode: "sliced",
+      context: PLAN_CONTEXT,
+      groups: [validGroup("Core", [validSlice(1)])],
+    };
+    const doc = parsePlanDocumentJson(makeJson(input));
+    // Re-serialize the validated plan doc and re-parse
+    const reserialized = JSON.stringify({
+      executionMode: doc.executionMode,
+      context: doc.context,
+      groups: doc.groups.map((g) => ({
+        name: g.name,
+        slices: g.slices.map((s) => ({
+          number: s.number,
+          title: s.title,
+          why: s.why,
+          files: s.files,
+          details: s.details,
+          tests: s.tests,
+        })),
+      })),
+    });
+    const reparsed = parsePlanDocumentJson(reserialized);
+
+    expect(reparsed.context).toEqual(PLAN_CONTEXT);
   });
 });

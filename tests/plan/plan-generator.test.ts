@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { extractJson, planSummaryLines, generatePlan, isPlanFormat, planFileName, planIdFromPath, generatePlanId, resolvePlanId, ensureCanonicalPlan, doGeneratePlan } from "#infrastructure/plan/plan-generator.js";
-import { PlanSchema, parsePlanJson } from "#infrastructure/plan/plan-schema.js";
+import { PlanSchema, parsePlanJson, parsePlanDocumentJson } from "#infrastructure/plan/plan-schema.js";
 import type { PromptAgent } from "#application/ports/agent-spawner.port.js";
 import type { AgentResult } from "#domain/agent-types.js";
 
@@ -627,6 +627,24 @@ describe("generatePlan", () => {
     expect(parsed.context?.keyFiles?.["src/embed/config.ts"]).toBe("Embed contract and runtime config.");
     expect(parsed.context?.concepts?.runtimeComposition).toContain("host only supplies config");
     expect(parsed.context?.conventions?.testingBias).toContain("seam-level tests");
+  });
+
+  it("written file round-trips context through parsePlanDocumentJson", async () => {
+    const inventoryPath = join(tmpDir, "inventory.md");
+    writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
+
+    const outputDir = join(tmpDir, ".orch");
+    const agent = mockAgent(VALID_GENERATED_PLAN_WITH_CONTEXT);
+
+    const { planPath } = await generatePlan(inventoryPath, "", agent, outputDir);
+
+    const written = readFileSync(planPath, "utf-8");
+    const doc = parsePlanDocumentJson(written, planPath);
+    expect(doc.context?.architecture).toContain("generated API client");
+    expect(doc.context?.keyFiles?.["src/embed/config.ts"]).toBe("Embed contract and runtime config.");
+    expect(doc.context?.concepts?.runtimeComposition).toContain("host only supplies config");
+    expect(doc.context?.conventions?.testingBias).toContain("seam-level tests");
+    expect(doc.groups).toHaveLength(1);
   });
 
   it("prefers planText from ExitPlanMode over assistantText", async () => {

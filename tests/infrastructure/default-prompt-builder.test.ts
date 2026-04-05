@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { DefaultPromptBuilder } from "#infrastructure/default-prompt-builder.js";
 import { PromptBuilder } from "#application/ports/prompt-builder.port.js";
+import type { PlanContext } from "#domain/plan.js";
 import { withBrief, buildPlanPrompt, buildTddPrompt, buildDirectExecutePrompt, buildDirectTestPassPrompt, buildDirectVerifyPrompt, buildDirectReviewPrompt, buildDirectCompletenessPrompt, buildDirectGapPrompt, buildVerifyPrompt, buildReviewPrompt, buildCompletenessPrompt, buildGroupedCompletenessPrompt, buildCommitSweepPrompt, buildGapPrompt, buildFinalPasses, buildDirectFinalPasses } from "#infrastructure/plan/prompts.js";
 import { TDD_RULES_REMINDER, REVIEW_RULES_REMINDER, buildRulesReminder } from "#infrastructure/claude/claude-agent-factory.js";
 
@@ -304,6 +305,72 @@ describe("DefaultPromptBuilder", () => {
       const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
       expect(builder.rulesReminder("tdd")).toBe(TDD_RULES_REMINDER);
       expect(builder.rulesReminder("review")).toBe(REVIEW_RULES_REMINDER);
+    });
+  });
+
+  describe("planContext rendering", () => {
+    const PLAN_CTX: PlanContext = {
+      architecture: "Clean Architecture orchestrator",
+      keyFiles: { "src/main.ts": "Startup bootstrap" },
+      concepts: { repoContext: "Canonical cross-run memory" },
+      conventions: { testingBias: "Prefer seam-level tests" },
+    };
+
+    it("tddExecute with firstSlice=true includes rendered plan context block when planContext is provided", () => {
+      const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT, undefined, undefined, PLAN_CTX);
+      const result = builder.tddExecute("the plan", 1, true);
+
+      expect(result).toContain("## Plan Context");
+      expect(result).toContain("**Architecture:** Clean Architecture orchestrator");
+      expect(result).toContain("**src/main.ts:** Startup bootstrap");
+      expect(result).toContain("**repoContext:** Canonical cross-run memory");
+      expect(result).toContain("**testingBias:** Prefer seam-level tests");
+      // Plan context appears before Full Plan Context
+      const planCtxIdx = result.indexOf("## Plan Context");
+      const fullPlanIdx = result.indexOf("## Full Plan Context");
+      expect(planCtxIdx).toBeLessThan(fullPlanIdx);
+    });
+
+    it("tddExecute with firstSlice=false does not include plan context block", () => {
+      const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT, undefined, undefined, PLAN_CTX);
+      const result = builder.tddExecute("the plan", 2, false);
+
+      expect(result).not.toContain("## Plan Context");
+    });
+
+    it("tddExecute without planContext does not include plan context block on first slice", () => {
+      const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+      const result = builder.tddExecute("the plan", 1, true);
+
+      expect(result).not.toContain("## Plan Context");
+      expect(result).toContain("## Full Plan Context");
+    });
+
+    it("groupedExecute with firstGroup=true includes rendered plan context block", () => {
+      const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT, undefined, undefined, PLAN_CTX);
+      const result = builder.groupedExecute("Core", "group plan", true);
+
+      expect(result).toContain("## Plan Context");
+      expect(result).toContain("**Architecture:** Clean Architecture orchestrator");
+      const planCtxIdx = result.indexOf("## Plan Context");
+      const fullPlanIdx = result.indexOf("## Full Plan Context");
+      expect(planCtxIdx).toBeLessThan(fullPlanIdx);
+    });
+
+    it("groupedExecute with firstGroup=false does not include plan context block", () => {
+      const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT, undefined, undefined, PLAN_CTX);
+      const result = builder.groupedExecute("Core", "group plan", false);
+
+      expect(result).not.toContain("## Plan Context");
+    });
+
+    it("other prompt methods are unaffected by planContext", () => {
+      const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT, undefined, undefined, PLAN_CTX);
+      // These methods should not include plan context
+      expect(builder.plan("slice content", 1)).not.toContain("## Plan Context");
+      expect(builder.tdd("slice content")).not.toContain("## Plan Context");
+      expect(builder.verify("sha", 1)).not.toContain("## Plan Context");
+      expect(builder.completeness("slice", "sha", 1)).not.toContain("## Plan Context");
     });
   });
 });
