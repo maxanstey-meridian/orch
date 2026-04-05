@@ -1286,6 +1286,7 @@ const runMainWithWorkPlanMocks = async (
     planContent?: string;
     generatedPlanId?: string;
     preloadedState?: Record<string, unknown>;
+    runCleanupResult?: string;
     worktreeSetup?: string[];
     fingerprintBrief?: string | ((cwd: string) => string);
     assertGitRepoImplementation?: (cwd: string) => Promise<void>;
@@ -1335,7 +1336,7 @@ const runMainWithWorkPlanMocks = async (
   const checkWorktreeResume = vi.fn().mockResolvedValue(
     options?.checkWorktreeResumeResult ?? { ok: true },
   );
-  const runCleanup = vi.fn().mockResolvedValue("cleanup complete");
+  const runCleanup = vi.fn().mockResolvedValue(options?.runCleanupResult ?? "cleanup complete");
   const stashBackup = vi.fn().mockResolvedValue(false);
   const complexityTriageSpawnerFactory = vi.fn(() => () => ({
     send: vi.fn(),
@@ -2682,6 +2683,102 @@ describe("main execution preference wiring", () => {
     expect(generatePlanId).not.toHaveBeenCalled();
     expect(createContainer).not.toHaveBeenCalled();
     expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("preserves external direct worktrees during --work --cleanup and prints the shared cleanup message", async () => {
+    const directPlanPath = join(tempDir, "artifacts", "direct-work.json");
+    const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));
+    const externalTreePath = join(tempDir, "existing-tree");
+    const cleanupMessage = `Preserved external tree at ${externalTreePath}. State cleared.`;
+    const canonicalPlanId = resolvePlanId(directPlanPath);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const { createContainer, exit, generatePlanId, runCleanup } = await runMainWithWorkPlanMocks(
+        ["--cleanup"],
+        {
+          planPath: directPlanPath,
+          planContent: directPlan,
+          generatedPlanId: "random98",
+          preloadedState: {
+            worktree: {
+              path: externalTreePath,
+              branch: "feature/existing",
+              baseSha: "deadbeef",
+              managed: false,
+            },
+            lastCompletedSlice: 1,
+          },
+          runCleanupResult: cleanupMessage,
+        },
+      );
+
+      expect(runCleanup).toHaveBeenCalledWith(
+        expect.stringContaining(`.orch/state/plan-${canonicalPlanId}.json`),
+        expect.objectContaining({
+          lastCompletedSlice: 1,
+          worktree: expect.objectContaining({
+            path: externalTreePath,
+            managed: false,
+          }),
+        }),
+        expect.stringContaining(tempDir.replace(/^\/private/, "")),
+      );
+      expect(logSpy).toHaveBeenCalledWith(cleanupMessage);
+      expect(generatePlanId).not.toHaveBeenCalled();
+      expect(createContainer).not.toHaveBeenCalled();
+      expect(exit).toHaveBeenCalledWith(0);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("removes managed direct worktrees during --work --cleanup and prints the shared cleanup message", async () => {
+    const directPlanPath = join(tempDir, "artifacts", "direct-work.json");
+    const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));
+    const managedTreePath = join(tempDir, ".orch", "trees", "abc123");
+    const cleanupMessage = `Removed worktree at ${managedTreePath}. State cleared.`;
+    const canonicalPlanId = resolvePlanId(directPlanPath);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const { createContainer, exit, generatePlanId, runCleanup } = await runMainWithWorkPlanMocks(
+        ["--cleanup"],
+        {
+          planPath: directPlanPath,
+          planContent: directPlan,
+          generatedPlanId: "random97",
+          preloadedState: {
+            worktree: {
+              path: managedTreePath,
+              branch: "orch/direct-managed",
+              baseSha: "feedface",
+              managed: true,
+            },
+            lastCompletedSlice: 1,
+          },
+          runCleanupResult: cleanupMessage,
+        },
+      );
+
+      expect(runCleanup).toHaveBeenCalledWith(
+        expect.stringContaining(`.orch/state/plan-${canonicalPlanId}.json`),
+        expect.objectContaining({
+          lastCompletedSlice: 1,
+          worktree: expect.objectContaining({
+            path: managedTreePath,
+            managed: true,
+          }),
+        }),
+        expect.stringContaining(tempDir.replace(/^\/private/, "")),
+      );
+      expect(logSpy).toHaveBeenCalledWith(cleanupMessage);
+      expect(generatePlanId).not.toHaveBeenCalled();
+      expect(createContainer).not.toHaveBeenCalled();
+      expect(exit).toHaveBeenCalledWith(0);
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 
   it("shows a worked direct plan from its canonical artifact without allocating a fresh direct id", async () => {
