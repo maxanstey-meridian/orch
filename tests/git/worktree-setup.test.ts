@@ -473,6 +473,55 @@ describe("resolveWorktree", () => {
     expect(saveState).not.toHaveBeenCalled();
   });
 
+  it("falls back to forced git worktree removal when rollback hits a dirty setup tree", async () => {
+    vi.mocked(createWorktree).mockResolvedValue("/repo/.orch/trees/abc123");
+    vi.mocked(captureRef).mockResolvedValue("deadbeef");
+    vi.mocked(removeWorktree).mockRejectedValue(new Error("worktree is dirty"));
+    const dirtyFailureImplementation: NonNullable<ExecFileImplementation> = (
+      ...args: ExecFileArgs
+    ) => {
+      const [file, commandArgs] = args;
+      if (file === "git") {
+        completeExecFileCall(args[3], null, "", "");
+        return {} as ReturnType<typeof execFile>;
+      }
+
+      const command = commandArgs?.[1];
+      if (command === "echo dirty") {
+        completeExecFileCall(args[3], null, "", "");
+        return {} as ReturnType<typeof execFile>;
+      }
+
+      const error = new Error("command failed");
+      completeExecFileCall(args[3], error, "stdout line", "stderr line");
+      return {} as ReturnType<typeof execFile>;
+    };
+    mockedExecFile.mockImplementation(dirtyFailureImplementation);
+
+    await expect(
+      resolveWorktree({
+        branchName: "orch/abc123",
+        cwd: "/repo",
+        treePath: undefined,
+        worktreeSetup: ["echo dirty", "echo fail"],
+        activePlanId: "abc123",
+        state: {},
+        stateFile: "/repo/.orch/state/plan-abc123.json",
+        log: noop,
+      }),
+    ).rejects.toThrow("Worktree setup command failed: echo fail\nstdout line\nstderr line");
+
+    expect(removeWorktree).toHaveBeenCalledWith("/repo/.orch/trees/abc123", "/repo");
+    expect(execFile).toHaveBeenNthCalledWith(
+      3,
+      "git",
+      ["worktree", "remove", "--force", "/repo/.orch/trees/abc123"],
+      expect.objectContaining({ cwd: "/repo", encoding: "utf-8" }),
+      expect.any(Function),
+    );
+    expect(saveState).not.toHaveBeenCalled();
+  });
+
   it("preserves the original setup error when rollback removal also fails", async () => {
     vi.mocked(createWorktree).mockResolvedValue("/repo/.orch/trees/abc123");
     vi.mocked(captureRef).mockResolvedValue("deadbeef");
@@ -480,6 +529,12 @@ describe("resolveWorktree", () => {
     const failingImplementation: NonNullable<ExecFileImplementation> = (
       ...args: ExecFileArgs
     ) => {
+      if (args[0] === "git") {
+        const error = new Error("forced cleanup failed");
+        completeExecFileCall(args[3], error, "", "");
+        return {} as ReturnType<typeof execFile>;
+      }
+
       const error = new Error("command failed");
       completeExecFileCall(args[3], error, "stdout line", "stderr line");
       return {} as ReturnType<typeof execFile>;
@@ -500,6 +555,13 @@ describe("resolveWorktree", () => {
     ).rejects.toThrow("Worktree setup command failed: echo broken\nstdout line\nstderr line");
 
     expect(removeWorktree).toHaveBeenCalledWith("/repo/.orch/trees/abc123", "/repo");
+    expect(execFile).toHaveBeenNthCalledWith(
+      2,
+      "git",
+      ["worktree", "remove", "--force", "/repo/.orch/trees/abc123"],
+      expect.objectContaining({ cwd: "/repo", encoding: "utf-8" }),
+      expect.any(Function),
+    );
     expect(saveState).not.toHaveBeenCalled();
   });
 });

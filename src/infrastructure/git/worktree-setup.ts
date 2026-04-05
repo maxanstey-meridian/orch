@@ -31,14 +31,15 @@ const mergePersistedState = async (
   return Object.keys(persistedState).length === 0 ? fallbackState : persistedState;
 };
 
-const runShellCommand = async (
-  command: string,
+const runExecFile = async (
+  file: string,
+  args: readonly string[],
   cwd: string,
 ): Promise<{ stdout: string; stderr: string }> =>
   new Promise((resolve, reject) => {
     execFile(
-      process.env.SHELL ?? "/bin/sh",
-      ["-lc", command],
+      file,
+      [...args],
       { cwd, encoding: "utf-8" },
       (error, stdout, stderr) => {
         if (error) {
@@ -53,6 +54,19 @@ const runShellCommand = async (
       },
     );
   });
+
+const runShellCommand = async (
+  command: string,
+  cwd: string,
+): Promise<{ stdout: string; stderr: string }> =>
+  runExecFile(process.env.SHELL ?? "/bin/sh", ["-lc", command], cwd);
+
+const forceRemoveManagedWorktree = async (
+  worktreePath: string,
+  repoRoot: string,
+): Promise<void> => {
+  await runExecFile("git", ["worktree", "remove", "--force", worktreePath], repoRoot);
+};
 
 const formatSetupOutput = (stdout?: string, stderr?: string): string =>
   [stdout?.trim(), stderr?.trim()].filter((part) => part && part.length > 0).join("\n");
@@ -120,6 +134,11 @@ export const resolveWorktree = async (opts: ResolveWorktreeOpts): Promise<Worktr
         await removeWorktree(treePath, cwd);
       } catch {
         // Best-effort rollback only — preserve the original setup error.
+        try {
+          await forceRemoveManagedWorktree(treePath, cwd);
+        } catch {
+          // Best-effort rollback only — preserve the original setup error.
+        }
       }
       throw error;
     }
