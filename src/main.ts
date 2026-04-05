@@ -340,6 +340,20 @@ const writeDirectPlanArtifact = (opts: {
   return planPath;
 };
 
+const ensureWorkedDirectPlanArtifact = (
+  planPath: string,
+  orchDir: string,
+  planId: string,
+): string => {
+  const canonicalPlanPath = resolve(orchDir, planFileName(planId));
+  if (!existsSync(canonicalPlanPath)) {
+    mkdirSync(orchDir, { recursive: true });
+    writeFileSync(canonicalPlanPath, readFileSync(planPath, "utf-8"));
+  }
+
+  return canonicalPlanPath;
+};
+
 const resolvePlannedWorkExecutionMode = (
   planContent: string,
   executionPreference: ExecutionPreference,
@@ -772,7 +786,9 @@ export const main = async (runtime: MainRuntime = {}) => {
   const directFromWork = workMode && executionMode === "direct";
   const canonicalPlanId = directFromInventory ? undefined : ensureCanonicalPlan(planPath, orchDir);
   const canonicalWorkedPlanPath =
-    canonicalPlanId === undefined ? undefined : resolve(orchDir, planFileName(canonicalPlanId));
+    directFromWork && canonicalPlanId !== undefined
+      ? ensureWorkedDirectPlanArtifact(planPath, orchDir, canonicalPlanId)
+      : undefined;
   const activePlanId = directFromInventory ? generatePlanId() : canonicalPlanId!;
   const executionPlanPath = directFromInventory
     ? writeDirectPlanArtifact({

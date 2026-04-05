@@ -2704,6 +2704,28 @@ describe("main execution preference wiring", () => {
     expect(exit).toHaveBeenCalledWith(0);
   });
 
+  it("copies an external worked direct artifact named plan-<id>.json into the repo .orch path", async () => {
+    const directPlanPath = join(tempDir, "artifacts", "plan-abc123.json");
+    const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));
+    const canonicalPlanPath = join(tempDir, ".orch", "plan-abc123.json");
+
+    const { createContainer, exit, formatPlanSummary, generatePlanId, parsePlan } =
+      await runMainWithWorkPlanMocks(["--show-plan"], {
+        planPath: directPlanPath,
+        planContent: directPlan,
+        generatedPlanId: "random88",
+      });
+
+    expect(parsePlan).toHaveBeenCalledWith(
+      expect.stringContaining(".orch/plan-abc123.json"),
+    );
+    expect(formatPlanSummary).toHaveBeenCalledTimes(1);
+    expect(generatePlanId).not.toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(0);
+    await expect(readFile(canonicalPlanPath, "utf-8")).resolves.toBe(directPlan);
+  });
+
   it("checks resume state before resolving an external tree for direct --work", async () => {
     const directPlanPath = join(tempDir, "artifacts", "direct-work.json");
     const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));
