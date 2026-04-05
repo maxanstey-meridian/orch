@@ -1013,34 +1013,6 @@ Rules:
     return { provider: this.providerForRole(role), id: agent.sessionId };
   }
 
-  private async persistLiveSessionIfAvailable(
-    role: "tdd" | "review" | "verify" | "gap",
-  ): Promise<void> {
-    const agent =
-      role === "tdd"
-        ? this.tddAgent
-        : role === "review"
-          ? this.reviewAgent
-          : role === "verify"
-            ? this.verifyAgent
-            : this.gapAgent;
-    if (!agent) {
-      return;
-    }
-
-    const sessionId = agent.sessionId.trim();
-    if (!sessionId) {
-      return;
-    }
-
-    this.state = advanceState(this.state, {
-      kind: "agentSpawned",
-      role,
-      session: { provider: this.providerForRole(role), id: sessionId },
-    });
-    await this.persistence.save(this.state);
-  }
-
   private async sendRulesReminder(role: "tdd" | "review"): Promise<void> {
     const agent = role === "tdd" ? this.tddAgent : this.reviewAgent;
     if (!agent) {
@@ -1074,7 +1046,12 @@ Rules:
       cwd: this.config.cwd,
     });
     this.pipeToSink(this.verifyAgent, "verify");
-    await this.persistLiveSessionIfAvailable("verify");
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "verify",
+      session: this.currentSession("verify"),
+    });
+    await this.persistence.save(this.state);
   }
 
   private async respawnGap(): Promise<void> {
@@ -1086,7 +1063,12 @@ Rules:
       cwd: this.config.cwd,
     });
     this.pipeToSink(this.gapAgent, "gap");
-    await this.persistLiveSessionIfAvailable("gap");
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "gap",
+      session: this.currentSession("gap"),
+    });
+    await this.persistence.save(this.state);
   }
 
   private async ensureGroupScopedAgent(role: "verify" | "gap"): Promise<AgentHandle> {
@@ -1926,7 +1908,6 @@ Rules:
       "verify",
       "verify",
     );
-    await this.persistLiveSessionIfAvailable("verify");
     let parsed = parseVerifyResult(verifyResult.assistantText ?? "");
 
     for (let cycle = 1; !isVerifyPassing(parsed) && cycle <= this.config.maxReviewCycles; cycle++) {
@@ -1996,7 +1977,6 @@ Rules:
         "verify",
         "re-verify",
       );
-      await this.persistLiveSessionIfAvailable("verify");
       parsed = parseVerifyResult(reVerifyResult.assistantText ?? "");
 
       if (!isVerifyPassing(parsed) && !this.config.auto) {
@@ -2123,8 +2103,6 @@ Rules:
         "gap",
         "gap",
       );
-      await this.persistLiveSessionIfAvailable("gap");
-
       const gapText = gapResult.assistantText ?? "";
 
       if (gapResult.exitCode !== 0 || gapText.includes("NO_GAPS_FOUND")) {
