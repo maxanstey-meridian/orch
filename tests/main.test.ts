@@ -2321,6 +2321,22 @@ describe("main execution preference wiring", () => {
     },
   );
 
+  it("keeps generated inventory registry paths rooted in the repo .orch directory when --tree is used", async () => {
+    const externalTreePath = join(tempDir, "inventory-grouped-tree");
+    await mkdir(externalTreePath, { recursive: true });
+    const { registryPath } = await runMainWithInventoryPlanMocks({
+      args: ["--grouped", "--tree", externalTreePath],
+    });
+    const { readRegistry } = await import("#infrastructure/registry/run-registry.js");
+    const entries = await readRegistry(registryPath);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.planPath).toContain(`${join(tempDir, ".orch")}/`);
+    expect(entries[0]?.statePath).toContain(`${join(tempDir, ".orch")}/state/`);
+    expect(entries[0]?.planPath).not.toContain(`${externalTreePath}/`);
+    expect(entries[0]?.statePath).not.toContain(`${externalTreePath}/`);
+  });
+
   it("surfaces the grouped triage summary in operator output before execution starts", async () => {
     const { hudLogs } = await runMainWithInventoryPlanMocks({
       requestTriageResult: { mode: "grouped", reason: "few coherent milestones" },
@@ -2356,6 +2372,38 @@ describe("main execution preference wiring", () => {
         tests: "Run the relevant tests and explain the coverage changes.",
       }),
     );
+  });
+
+  it("keeps direct inventory registry paths rooted in the repo .orch directory when --tree is used", async () => {
+    const externalTreePath = join(tempDir, "inventory-direct-tree");
+    await mkdir(externalTreePath, { recursive: true });
+    const { readRegistry } = await import("#infrastructure/registry/run-registry.js");
+    const {
+      registryPath,
+    } = await runMainWithInventoryPlanMocks({
+      args: ["--quick", "--tree", externalTreePath],
+      generatedPlanId: "direct-tree",
+      resolveWorktreeResult: {
+        cwd: externalTreePath,
+        worktreeInfo: { path: externalTreePath, branch: "feature/existing" },
+        skipStash: true,
+        updatedState: {
+          worktree: {
+            path: externalTreePath,
+            branch: "feature/existing",
+            baseSha: "deadbeef",
+            managed: false,
+          },
+        },
+      },
+    });
+    const entries = await readRegistry(registryPath);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.planPath).toContain(`${join(tempDir, ".orch")}/`);
+    expect(entries[0]?.statePath).toContain(`${join(tempDir, ".orch")}/state/`);
+    expect(entries[0]?.planPath).not.toContain(`${externalTreePath}/`);
+    expect(entries[0]?.statePath).not.toContain(`${externalTreePath}/`);
   });
 
   it("uses direct-specific completion copy after a successful direct inventory run", async () => {
@@ -2698,6 +2746,33 @@ describe("main execution preference wiring", () => {
     expect(assertGitRepo).toHaveBeenCalledTimes(2);
     expect(assertGitRepo.mock.calls[0]?.[0]).toBe(realpathSync(tempDir));
     expect(assertGitRepo.mock.calls[1]?.[0]).toBe(externalTreePath);
+  });
+
+  it("aborts direct inventory execution before createContainer when managed worktree setup fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const worktreeSetup = ["pnpm install", "pnpm build"];
+    const {
+      createContainer,
+      exit,
+      resolveWorktree,
+    } = await runMainWithInventoryPlanMocks({
+      args: ["--quick", "--branch", "orch/abc123"],
+      worktreeSetup,
+      resolveWorktreeError: new Error("Worktree setup command failed: pnpm build\nsetup exploded"),
+    });
+
+    expect(resolveWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({
+        worktreeSetup,
+        branchName: "orch/abc123",
+      }),
+    );
+    expect(createContainer).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Worktree setup command failed: pnpm build\nsetup exploded",
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+    errorSpy.mockRestore();
   });
 
   it("stashes the main checkout when resolveWorktree does not request skipStash", async () => {
