@@ -206,6 +206,26 @@ describe("checkWorktreeResume", () => {
     expect((result as { message: string }).message).toContain(branch);
   });
 
+  it("errors when a branchless external resume finds the saved tree on the wrong branch", async () => {
+    const externalTreePath = join(repoDir, "external-branchless-wrong-branch");
+    exec(`git worktree add ${externalTreePath}`, repoDir);
+    const baseSha = exec("git rev-parse HEAD", externalTreePath);
+    const branch = exec("git branch --show-current", externalTreePath);
+    exec("git checkout -b other", externalTreePath);
+    const state = {
+      worktree: { path: externalTreePath, branch, baseSha, managed: false },
+    };
+
+    const result = await checkWorktreeResume(undefined, undefined, state);
+
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining("is on branch"),
+    });
+    expect((result as { message: string }).message).toContain("other");
+    expect((result as { message: string }).message).toContain(branch);
+  });
+
   it("errors when an external tree HEAD has not advanced but slices are marked complete", async () => {
     const externalTreePath = join(repoDir, "external-stale");
     exec(`git worktree add ${externalTreePath}`, repoDir);
@@ -217,6 +237,24 @@ describe("checkWorktreeResume", () => {
     };
 
     const result = await checkWorktreeResume(undefined, externalTreePath, state);
+
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringContaining("Commits missing"),
+    });
+  });
+
+  it("errors when a branchless external resume has completed slices but HEAD is still at baseSha", async () => {
+    const externalTreePath = join(repoDir, "external-branchless-stale");
+    exec(`git worktree add ${externalTreePath}`, repoDir);
+    const baseSha = exec("git rev-parse HEAD", externalTreePath);
+    const branch = exec("git branch --show-current", externalTreePath);
+    const state = {
+      worktree: { path: externalTreePath, branch, baseSha, managed: false },
+      lastCompletedSlice: 2,
+    };
+
+    const result = await checkWorktreeResume(undefined, undefined, state);
 
     expect(result).toEqual({
       ok: false,

@@ -1285,6 +1285,7 @@ const runMainWithWorkPlanMocks = async (
       updatedState: {},
     },
   );
+  const stashBackup = vi.fn().mockResolvedValue(false);
   const complexityTriageSpawnerFactory = vi.fn(() => () => ({
     send: vi.fn(),
     kill: vi.fn(),
@@ -1358,7 +1359,7 @@ const runMainWithWorkPlanMocks = async (
   }));
   vi.doMock("#infrastructure/git/git.js", () => ({
     getStatus: vi.fn().mockResolvedValue(""),
-    stashBackup: vi.fn().mockResolvedValue(false),
+    stashBackup,
   }));
   vi.doMock("#ui/hud.js", () => ({
     createHud: vi.fn(() => ({
@@ -1442,6 +1443,7 @@ const runMainWithWorkPlanMocks = async (
     runFingerprint,
     resolveWorktree,
     stateFile,
+    stashBackup,
     complexityTriageSpawnerFactory,
   };
 };
@@ -2371,7 +2373,7 @@ describe("main execution preference wiring", () => {
     const externalTreePath = join(tempDir, "existing-tree");
     await mkdir(externalTreePath, { recursive: true });
 
-    const { createContainer, resolveWorktree, planPath } = await runMainWithWorkPlanMocks(
+    const { createContainer, resolveWorktree, planPath, stashBackup } = await runMainWithWorkPlanMocks(
       ["--tree", externalTreePath],
       {
         resolveWorktreeResult: {
@@ -2405,6 +2407,7 @@ describe("main execution preference wiring", () => {
     expect(config.logPath).toBe(expectedLogPath);
     expect(config.stateFile).not.toContain(`${externalTreePath}/.orch/`);
     expect(config.logPath).not.toContain(`${externalTreePath}/.orch/`);
+    expect(stashBackup).not.toHaveBeenCalled();
   });
 
   it("passes --tree through direct inventory execution and uses the selected tree as cwd", async () => {
@@ -2451,6 +2454,20 @@ describe("main execution preference wiring", () => {
     expect(config.logPath).toBe(expectedLogPath);
     expect(config.stateFile).not.toContain(`${externalTreePath}/.orch/`);
     expect(config.logPath).not.toContain(`${externalTreePath}/.orch/`);
+  });
+
+  it("stashes the main checkout when resolveWorktree does not request skipStash", async () => {
+    const { stashBackup } = await runMainWithWorkPlanMocks([], {
+      resolveWorktreeResult: {
+        cwd: tempDir,
+        worktreeInfo: null,
+        skipStash: false,
+        updatedState: {},
+      },
+    });
+
+    const { realpathSync } = await import("fs");
+    expect(stashBackup).toHaveBeenCalledWith(realpathSync(tempDir));
   });
 
   it("errors when --work override conflicts with the loaded plan mode", async () => {
