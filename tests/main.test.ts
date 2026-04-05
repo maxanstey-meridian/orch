@@ -1533,6 +1533,10 @@ const runMainWithInventoryPlanMocks = async (options?: {
   const requestTriageSpawnerFactory = vi.fn(() => () => {
     return triageAgent;
   });
+  const planGeneratorSpawnerFactory = vi.fn(() => () => ({
+    send: vi.fn(),
+    kill: vi.fn(),
+  }));
   const buildRequestTriagePrompt = vi.fn(() => '{"mode":"direct","reason":"bounded local change"}');
   const parseRequestTriageResult = vi.fn((text: string) =>
     options?.parsedRequestTriageResult ?? JSON.parse(text)
@@ -1610,10 +1614,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
         send: vi.fn(),
         kill: vi.fn(),
       })),
-      planGeneratorSpawnerFactory: vi.fn(() => () => ({
-        send: vi.fn(),
-        kill: vi.fn(),
-      })),
+      planGeneratorSpawnerFactory,
     };
   });
   vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
@@ -1721,6 +1722,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     doGeneratePlan,
     generatePlanId,
     requestTriageSpawnerFactory,
+    planGeneratorSpawnerFactory,
     buildRequestTriagePrompt,
     parseRequestTriageResult,
     exit,
@@ -2080,6 +2082,55 @@ describe("main execution preference wiring", () => {
     expect(triageAgent.kill).toHaveBeenCalledTimes(1);
   });
 
+  it("uses the selected tree as planning cwd for auto inventory triage and generated plan bootstrap", async () => {
+    const externalTreePath = join(tempDir, "inventory-auto-tree");
+    await mkdir(externalTreePath, { recursive: true });
+    const {
+      assertGitRepo,
+      createContainer,
+      doGeneratePlan,
+      inventoryPath,
+      planGeneratorSpawnerFactory,
+      requestTriageSpawnerFactory,
+      stateFile,
+    } = await runMainWithInventoryPlanMocks({
+      args: ["--tree", externalTreePath],
+      requestTriageResult: { mode: "grouped", reason: "few coherent milestones" },
+    });
+
+    const { realpathSync } = await import("fs");
+    const expectedOrchDir = join(realpathSync(tempDir), ".orch");
+    const expectedStateFile = statePathForPlan(expectedOrchDir, resolvePlanId(join(tempDir, ".orch", "plan-generated.json")));
+    const config = createContainer.mock.calls[0]?.[0] as Record<string, unknown>;
+
+    expect(requestTriageSpawnerFactory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: externalTreePath,
+      }),
+    );
+    expect(planGeneratorSpawnerFactory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: externalTreePath,
+      }),
+    );
+    expect(doGeneratePlan).toHaveBeenCalledWith(
+      inventoryPath,
+      "brief text",
+      expectedOrchDir,
+      expect.any(Function),
+      expect.any(Function),
+      "grouped",
+    );
+    expect(config.stateFile).toBe(expectedStateFile);
+    expect(config.logPath).toBe(logPathForPlan(expectedOrchDir, resolvePlanId(join(tempDir, ".orch", "plan-generated.json"))));
+    expect(stateFile).toContain(`${join(tempDir, ".orch")}/state/`);
+    expect(String(config.stateFile)).not.toContain(`${externalTreePath}/.orch/`);
+    expect(String(config.logPath)).not.toContain(`${externalTreePath}/.orch/`);
+    expect(assertGitRepo).toHaveBeenCalledTimes(2);
+    expect(assertGitRepo.mock.calls[0]?.[0]).toBe(realpathSync(tempDir));
+    expect(assertGitRepo.mock.calls[1]?.[0]).toBe(externalTreePath);
+  });
+
   it("prefers non-empty triage resultText when assistantText is empty", async () => {
     const {
       createContainer,
@@ -2175,6 +2226,52 @@ describe("main execution preference wiring", () => {
         }),
         expect.any(Object),
       );
+    },
+  );
+
+  it.each([
+    { flag: "--grouped", executionMode: "grouped" as const },
+    { flag: "--long", executionMode: "sliced" as const },
+  ])(
+    "uses the selected tree as planning cwd for explicit generated inventory mode $flag",
+    async ({ flag, executionMode }) => {
+      const externalTreePath = join(tempDir, `inventory-${flag.slice(2)}-tree`);
+      await mkdir(externalTreePath, { recursive: true });
+      const {
+        assertGitRepo,
+        createContainer,
+        doGeneratePlan,
+        inventoryPath,
+        planGeneratorSpawnerFactory,
+        requestTriageSpawnerFactory,
+      } = await runMainWithInventoryPlanMocks({
+        args: [flag, "--tree", externalTreePath],
+      });
+
+      const { realpathSync } = await import("fs");
+      const expectedOrchDir = join(realpathSync(tempDir), ".orch");
+      const config = createContainer.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(requestTriageSpawnerFactory).not.toHaveBeenCalled();
+      expect(planGeneratorSpawnerFactory).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: externalTreePath,
+        }),
+      );
+      expect(doGeneratePlan).toHaveBeenCalledWith(
+        inventoryPath,
+        "brief text",
+        expectedOrchDir,
+        expect.any(Function),
+        expect.any(Function),
+        executionMode,
+      );
+      expect(String(config.stateFile)).toContain(`${expectedOrchDir}/state/`);
+      expect(String(config.logPath)).toContain(`${expectedOrchDir}/logs/`);
+      expect(String(config.stateFile)).not.toContain(`${externalTreePath}/.orch/`);
+      expect(String(config.logPath)).not.toContain(`${externalTreePath}/.orch/`);
+      expect(assertGitRepo).toHaveBeenCalledTimes(2);
+      expect(assertGitRepo.mock.calls[0]?.[0]).toBe(realpathSync(tempDir));
+      expect(assertGitRepo.mock.calls[1]?.[0]).toBe(externalTreePath);
     },
   );
 
@@ -2464,7 +2561,7 @@ describe("main execution preference wiring", () => {
     const externalTreePath = join(tempDir, "existing-tree");
     await mkdir(externalTreePath, { recursive: true });
 
-    const { createContainer, resolveWorktree } = await runMainWithInventoryPlanMocks({
+    const { assertGitRepo, createContainer, planGeneratorSpawnerFactory, requestTriageSpawnerFactory, resolveWorktree } = await runMainWithInventoryPlanMocks({
       args: ["--quick", "--tree", externalTreePath],
       generatedPlanId: "direct42",
       resolveWorktreeResult: {
@@ -2510,6 +2607,15 @@ describe("main execution preference wiring", () => {
     expect(config.logPath).toBe(expectedLogPath);
     expect(config.stateFile).not.toContain(`${externalTreePath}/.orch/`);
     expect(config.logPath).not.toContain(`${externalTreePath}/.orch/`);
+    expect(requestTriageSpawnerFactory).not.toHaveBeenCalled();
+    expect(planGeneratorSpawnerFactory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: externalTreePath,
+      }),
+    );
+    expect(assertGitRepo).toHaveBeenCalledTimes(2);
+    expect(assertGitRepo.mock.calls[0]?.[0]).toBe(realpathSync(tempDir));
+    expect(assertGitRepo.mock.calls[1]?.[0]).toBe(externalTreePath);
   });
 
   it("stashes the main checkout when resolveWorktree does not request skipStash", async () => {

@@ -614,6 +614,7 @@ export const main = async (runtime: MainRuntime = {}) => {
     exitWithError(`--tree path does not exist: ${treePath}`);
     return;
   }
+  const planningCwd = treePath ?? cwd;
   if (cleanupMode && !workMode) {
     exitWithError("--cleanup requires --work <plan>.");
     return;
@@ -694,11 +695,11 @@ export const main = async (runtime: MainRuntime = {}) => {
           executionPreference,
           requestContent: srcContent,
           agentConfig,
-          cwd,
+          cwd: planningCwd,
           log,
         });
         printExecutionModeBanner(log, executionMode);
-        const spawnPlanGenerator = planGeneratorSpawnerFactory({ agentConfig, cwd });
+        const spawnPlanGenerator = planGeneratorSpawnerFactory({ agentConfig, cwd: planningCwd });
         if (executionMode === "direct") {
           planPath = inputPath;
           planContent = srcContent;
