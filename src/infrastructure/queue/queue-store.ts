@@ -14,7 +14,7 @@ const createCorruptQueueError = (queuePath: string): Error =>
 
 const LOCK_OWNER_FILE = "owner.json";
 const lockRetryDelayMs = 10;
-const staleLockAgeMs = 5_000;
+const staleLockAgeMs = 60_000;
 const pendingMutations = new Map<string, Promise<void>>();
 
 const sleep = async (ms: number): Promise<void> =>
@@ -79,14 +79,19 @@ const isProcessAlive = (pid: number): boolean => {
 
 const writeLockMetadata = async (lockPath: string): Promise<void> => {
   await mkdir(lockPath);
-  await writeFile(
-    join(lockPath, LOCK_OWNER_FILE),
-    JSON.stringify({
-      pid: process.pid,
-      createdAtMs: Date.now(),
-    }),
-    { flag: "wx" },
-  );
+  try {
+    await writeFile(
+      join(lockPath, LOCK_OWNER_FILE),
+      JSON.stringify({
+        pid: process.pid,
+        createdAtMs: Date.now(),
+      }),
+      { flag: "wx" },
+    );
+  } catch (error) {
+    await rm(lockPath, { recursive: true, force: true });
+    throw error;
+  }
 };
 
 const readLockMetadata = async (
@@ -242,7 +247,7 @@ const withFileLock = async <T>(queuePath: string, operation: () => Promise<T>): 
       await writeLockMetadata(lockPath);
       break;
     } catch (error) {
-      if (!hasCode(error) || error.code !== "EEXIST") {
+      if (!hasCode(error) || (error.code !== "EEXIST" && error.code !== "ENOENT")) {
         throw error;
       }
 

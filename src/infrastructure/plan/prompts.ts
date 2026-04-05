@@ -12,70 +12,18 @@ export const hasCriteriaSection = (content: string): boolean => content.includes
 
 const PLAN_GENERATION_SHARED_INSTRUCTIONS = `Transform this feature inventory into a group-and-slice plan.
 
-**You are generating the HIGH-LEVEL plan structure, NOT per-cycle TDD plans.** Ignore the Cycle N format from your system prompt — that is for a different task.
+Follow the JSON schema and raw-JSON-only output contract from your system prompt exactly.
 
-## Required format
+## Runtime reminders
 
-Output valid JSON matching this schema:
-
-\`\`\`json
-{
-  "executionMode": "<grouped|sliced>",
-  "context": {
-    "architecture": "<optional architecture summary>",
-    "keyFiles": {
-      "src/foo.ts": "<why this file matters>"
-    },
-    "concepts": {
-      "someConcept": "<important product/runtime concept>"
-    },
-    "conventions": {
-      "testingBias": "<important implementation or testing convention>"
-    }
-  },
-  "groups": [
-    {
-      "name": "<group name>",
-      "description": "<optional group description>",
-      "slices": [
-        {
-          "number": 1,
-          "title": "<slice title>",
-          "why": "<one sentence explaining why this slice is needed>",
-          "files": [
-            { "path": "src/foo.ts", "action": "new" },
-            { "path": "src/bar.ts", "action": "edit" }
-          ],
-          "criteria": ["<binary acceptance criterion>"],
-          "details": "<concrete implementation details — what to build, how it connects>",
-          "tests": "<what to test, which file>"
-        }
-      ]
-    }
-  ]
-}
-\`\`\`
-
-## Field reference
-
-- \`"executionMode"\` must be \`"grouped"\` or \`"sliced"\`, and it must match the requested planning mode.
-- \`"action"\` must be one of: \`"new"\`, \`"edit"\`, \`"delete"\`.
-- \`"number"\` is a positive integer — globally unique across the entire plan.
-- \`"files"\` must have at least one entry per slice.
-- \`"criteria"\` must be a non-empty array of binary acceptance checks for that slice.
-- All string fields (\`"name"\`, \`"title"\`, \`"why"\`, \`"details"\`, \`"tests"\`) must be non-empty.
-- Top-level \`"context"\` is optional, but include it when you can infer useful repo-wide guidance that will reduce re-exploration for implementing agents.
-- Within \`"context"\`, \`"architecture"\` is an optional string and \`"keyFiles"\`, \`"concepts"\`, and \`"conventions"\` are optional string-to-string maps.
-
-## Rules
-
-- **Slice numbers must be GLOBALLY unique and sequential across the entire plan.** Group 1 has Slices 1-3, Group 2 has Slices 4-6, etc. Do NOT restart numbering per group. The orchestrator tracks progress by slice number — duplicate numbers cause slices to be skipped.
-- Every generated slice must include a non-empty \`criteria\` array of binary acceptance checks that downstream evaluators can verify mechanically.
-- Use top-level \`"context"\` for stable repo knowledge only: architecture boundaries, authoritative files, product/runtime concepts, and conventions that apply across multiple slices. Do not duplicate slice-specific details there.
-- The plan agent is the sole author of criteria in this iteration. Do not add a separate contract-negotiation phase or defer criteria authoring to later agents.
+- You are generating the high-level plan structure, not per-behaviour build instructions.
+- \`"executionMode"\` must match the requested planning mode exactly.
+- Slice numbers must stay globally unique and sequential across the entire plan.
+- Every slice must include a non-empty \`criteria\` array of binary acceptance checks.
+- Use top-level \`"context"\` only for stable repo-wide guidance that reduces re-exploration.
 - The generated plan is authoritative. Do not invent compatibility shims, legacy fallback, coercion, or fail-open behavior unless the inventory explicitly requires them.
 - Future-slice wiring stays deferred. Do not pull later integration work forward just to make the current group or slice feel complete.
-- Output ONLY the raw JSON object. No markdown code fences, no \`\`\`json blocks, no preamble, no commentary, no explanation before or after. The very first character of your response must be \`{\` and the very last must be \`}\`.`;
+- Output only the raw JSON object. No markdown fences, no preamble, no commentary.`;
 
 const buildGroupedPlanGenerationRules = (): string => `## Grouped mode requirements
 
@@ -107,7 +55,7 @@ export const buildPlanPrompt = (
   fullPlan?: string,
   sliceNumber?: number,
 ): string =>
-  `You are a planning agent. Explore the codebase and produce a step-by-step TDD execution plan for the following slice.
+  `You are a planning agent. Explore the codebase and produce a numbered implementation brief for the following slice.
 ${
   fullPlan
     ? `
@@ -125,11 +73,12 @@ ${sliceContent}
 
 ## Instructions
 1. Read the relevant files to understand current state.
-2. Output numbered RED→GREEN cycles. Each cycle: one failing test, then minimal code to pass.
+2. Output numbered implementation steps that tell the builder what to change, where to change it, and what to test.
 3. Do NOT write any code — plan only.
 4. The plan describes the INTENT. If existing code does something different from what the plan describes, the plan is the authority — plan to change the existing code, not to preserve it.
 5. Future-slice wiring stays deferred. Do not turn later planned integration into a requirement for the current slice unless the plan explicitly says to do it now.
 6. Compatibility/fallback behavior must be stated, not invented. If the slice does not explicitly preserve legacy behavior, plan explicit invalid handling rather than silent reinterpretation.
+7. Do NOT produce RED/GREEN or failing-test-first choreography. The builder's system prompt owns execution style.
 
 ## Enrichment
 As you explore, capture the context you discover so the implementing agent doesn't have to re-explore. Include in your output:
@@ -204,14 +153,9 @@ ${planAuthority}
 ${fixDiscipline}`;
   }
 
-  return `Implement the following plan slice using strict RED→GREEN TDD cycles.
+  return `Implement the following plan slice using the builder contract from your system prompt.
 
-The plan slice contains numbered cycles with RED and GREEN blocks. Follow them in order:
-1. Write the test described in RED. Run tests. Confirm it fails.
-2. Write the minimal code described in GREEN. Run tests. Confirm it passes.
-3. Move to the next cycle. Do NOT skip ahead or batch.
-
-If the plan slice does not contain explicit cycles, decompose it into behaviours yourself and apply the same process: one failing test, then minimal code to pass, repeat.
+Treat the plan as the spec for this slice. Implement the required behavior, add regression tests, run the tests for real, and keep the work scoped to this slice.
 ${planContext}
 ## Plan Slice
 ${sliceContent}
@@ -263,10 +207,10 @@ export const buildVerifyPrompt = (
   executionUnitLabel: string,
   fixSummary?: string,
 ): string =>
-  `Verify the changes since commit ${baseSha}. Context: TDD implementation of ${executionUnitLabel}.
+  `Verify the changes since commit ${baseSha}. Context: builder implementation of ${executionUnitLabel}.
 
-${fixSummary ? `## Fix summary from the TDD bot\n${fixSummary}\n\n` : ""}## Instructions
-1. Review the changed code and run the verification commands you judge necessary.
+${fixSummary ? `## Fix summary from the builder\n${fixSummary}\n\n` : ""}## Instructions
+1. Run the verification commands required by your system prompt and project config against the diff since ${baseSha}.
 2. You MUST end with a short human summary followed by a machine-readable \`### VERIFY_JSON\` block in the exact format below.
 3. Do not replace the structured block with prose. You may include prose before it, but the block is mandatory.
 
@@ -313,7 +257,7 @@ ${fullPlan}
     : "";
 
   if (hasCriteriaSection(sliceContent)) {
-    return `You are a completeness checker. A TDD bot just implemented a plan slice. Your job is to verify that EVERY criterion and concrete requirement in the slice was actually implemented — not whether the code is clean, but whether it does what was asked.
+    return `You are a completeness checker. A builder just implemented a plan slice. Your job is to verify that EVERY criterion and concrete requirement in the slice was actually implemented — not whether the code is clean, but whether it does what was asked.
 
 ${planContext}
 ## Slice ${sliceNumber ?? "N"} (the slice that was just implemented)
@@ -333,7 +277,7 @@ ${sliceContent}
 6. Check ARCHITECTURAL requirements separately from functional ones:
    - If the plan says "use function X" or "call Y from domain layer", verify the import exists and the function is actually called. Grep for it.
    - If the plan says "phase transitions use transition()" or "state advances use advanceState()", those are HARD REQUIREMENTS — not suggestions. Code that manages state a different way (e.g. manual object spreads instead of advanceState) is MISSING the requirement even if tests pass.
-   - The plan's specified approach IS the requirement. An equivalent alternative that the TDD bot chose instead is a DIVERGENT finding.
+   - The plan's specified approach IS the requirement. An equivalent alternative that the builder chose instead is a DIVERGENT finding.
 
 ## Output format
 
@@ -352,7 +296,7 @@ If everything is complete and matches the plan, respond with exactly: SLICE_COMP
 If anything is missing or divergent, list ALL issues. Do not stop at the first one.`;
   }
 
-  return `You are a completeness checker. A TDD bot just implemented a plan slice. Your job is to verify that EVERY requirement in the slice was actually implemented — not whether the code is clean, but whether it does what was asked.
+  return `You are a completeness checker. A builder just implemented a plan slice. Your job is to verify that EVERY requirement in the slice was actually implemented — not whether the code is clean, but whether it does what was asked.
 
 ${planContext}
 ## Slice ${sliceNumber ?? "N"} (the slice that was just implemented)
@@ -369,7 +313,7 @@ ${sliceContent}
 4. Check ARCHITECTURAL requirements separately from functional ones:
    - If the plan says "use function X" or "call Y from domain layer", verify the import exists and the function is actually called. Grep for it.
    - If the plan says "phase transitions use transition()" or "state advances use advanceState()", those are HARD REQUIREMENTS — not suggestions. Code that manages state a different way (e.g. manual object spreads instead of advanceState) is MISSING the requirement even if tests pass.
-   - The plan's specified approach IS the requirement. An equivalent alternative that the TDD bot chose instead is a DIVERGENT finding.
+   - The plan's specified approach IS the requirement. An equivalent alternative that the builder chose instead is a DIVERGENT finding.
 
 ## Output format
 
@@ -469,21 +413,6 @@ export const buildReviewPreamble = (baseSha: string): string =>
 3. For each changed file, identify files that import from or call into it. Read those too if a boundary changed.
 4. **Verify every finding against the current file state before reporting.** If you see something in the diff that looks wrong, open the file and confirm it's still wrong. Do not report stale findings from a previous cycle.
 
-## Review discipline
-
-- **Two-pass priority.** Data safety, race conditions, and bugs first. Structural and naming issues second. Do not interleave severities.
-- **No hedging.** Not "you might want to", not "it could be worth considering". State what's wrong and what the fix is.
-- **No praise sandwiches.** Code that works correctly is baseline — not noteworthy. Do not pad findings with compliments.
-- **Severity is not negotiable.** A bug is a bug. A type lie is a type lie. Do not downgrade to be diplomatic.
-
-## Output format
-
-For each finding:
-- **File and line**
-- **What's wrong** (one sentence)
-- **Evidence** (the code or trace that proves it)
-- **Fix** (concrete, actionable)
-
 ## Deliverable check
 
 Before concluding, answer this: if a project manager read the plan slice and then looked at what was built, would they consider it actually done? Specifically:
@@ -516,24 +445,6 @@ ${sliceContent}`;
 
 ${priorFindings ? `## Prior review findings\nYour previous review flagged these issues — verify each one was addressed. If any were ignored or only partially fixed, re-flag them:\n\n${priorFindings}\n\n## Review pass discipline\nThis is likely your final useful review pass for this slice.\nRe-check the prior findings carefully and only add a new issue if it is clearly material and was genuinely missed before.\nBatch related issues into one finding when they share a root cause or would be fixed by the same change.\nDo not pad the review with speculative, cosmetic, or low-value nits just to say something new.\nDo not hold back a material issue for a later pass.\n\n` : `## Review pass discipline\nAssume you may only get one useful review pass for this slice.\nSurface the highest-signal issues now.\nBatch related issues into one finding when they share a root cause or would be fixed by the same change.\nDo not pad the review with speculative, cosmetic, or low-value nits.\nDo not hold back a material issue for a later pass.\n\n`}${buildReviewPreamble(baseSha)}
 
-## What to look for
-- Bugs: incorrect runtime behavior, off-by-one, swallowed errors, race conditions
-- Type fidelity: runtime values disagreeing with declared types, \`any\`/\`unknown\` as value carriers
-- Dead code: new exports with zero consumers introduced by the change
-- Structural: duplicated logic, parallel state, mixed concerns introduced by the change
-- Names: identifiers that no longer match their scope or purpose after the change
-- Enum/value completeness: new variants not handled in all consumers
-- Over-engineering: deps bags, wrapper types, or indirection layers that exist "for testability" but add complexity with no real benefit. If a function is only called from one place, it doesn't need to be injectable. If a value is available on \`this\`, don't thread it through a params object. Prefer direct imports over DI for pure functions and leaf I/O. Three lines of duplication beats a premature abstraction
-- Test resilience: new tests that mock the system under test, tests that would pass even if the feature were removed, tests that assert mock call arguments instead of observable outcomes
-
-## What NOT to flag
-- Style, formatting, cosmetic preferences
-- Test coverage gaps (separate pass handles this)
-- Harmless redundancy that aids readability
-- Threshold values tuned empirically
-- Test style preferences (describe/it nesting, assertion library choice)
-- Missing wiring to call sites that a LATER slice will handle — do not flag functions that exist but aren't called yet. However, bugs, type errors, dead code, and structural issues within the changed files are always in scope, even if the file is "not done yet."
-
 ${criteriaCheck}
 
 ${planSliceSection}
@@ -549,7 +460,7 @@ If a criterion can be broken by removing its key implementation line while the t
 `
     : "";
 
-  return `You are a gap-finder for a TDD pipeline. A group of slices has just been implemented and reviewed.
+  return `You are a gap-finder for a builder pipeline. A group of slices has just been implemented and reviewed.
 
 Your job is to find **missing test coverage and unhandled edge cases** — NOT code style, naming, or architecture.
 
@@ -562,22 +473,6 @@ Do not hold back a material finding for later, and do not invent marginal findin
 ${criteriaPriority}
 
 ${buildReviewPreamble(baseSha)}
-
-## What to look for
-- Untested edge cases and boundary conditions
-- Combinations of features built in this group that have no test coverage
-  (e.g. arrays of enums, nullable records, nested compositions)
-- Integration paths between slices with no coverage
-- Off-by-one scenarios, empty inputs, null inputs
-- Any behaviour described in the plan that has no corresponding test
-
-## What NOT to report
-- Code style, formatting, naming — already reviewed
-- Architecture suggestions, refactoring ideas — not your job
-- Things that are tested adequately — no praise needed
-- Pure branch-coverage nits once a representative regression guard already exists
-- Multiple variants of the same missing-coverage theme when one bundled finding would cover them
-- Low-value hardening ideas that do not materially increase confidence in the shipped behavior
 
 ## Test resilience check
 
@@ -596,12 +491,6 @@ For each test file changed in this group, evaluate:
    test that exercises the full path without mocking intermediate steps?
 
 Report unguarded features as gaps, same format as coverage gaps.
-
-## Prioritisation and batching rules
-- Report at most 3 gaps.
-- Prefer reachable runtime defects, public contract mismatches, missing end-to-end coverage for newly added behavior, and unguarded integration paths over narrow branch-coverage follow-ups.
-- If several findings share one root cause or would be solved by the same test cluster, collapse them into one gap.
-- If the remaining issues are only minor hardening or diminishing-return coverage ideas, respond with exactly: NO_GAPS_FOUND
 
 ## Group plan
 ${groupContent}

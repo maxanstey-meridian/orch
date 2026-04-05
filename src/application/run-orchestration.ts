@@ -353,10 +353,10 @@ export class RunOrchestration {
   ): string {
     if (unit.kind === "direct") {
       return this.prompts.withBrief(
-        `Verify the changes since commit ${verifyBaseSha}. Context: TDD implementation of the direct request.\n\n${
+        `Verify the changes since commit ${verifyBaseSha}. Context: builder implementation of the direct request.\n\n${
           fixSummary ? `## Fix summary from the builder\n${fixSummary}\n\n` : ""
         }## Direct request\n${unit.content}\n\n## Instructions
-1. Review the changed code and run the verification commands you judge necessary.
+1. Run the verification commands required by your system prompt and project config against the diff since ${verifyBaseSha}.
 2. You MUST end with a short human summary followed by a machine-readable \`### VERIFY_JSON\` block in the exact format below.
 3. Do not replace the structured block with prose. You may include prose before it, but the block is mandatory.
 

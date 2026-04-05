@@ -163,10 +163,10 @@ describe("resolveWorktree", () => {
     });
   });
 
-  it("reuses existing worktree from state on resume (checkWorktreeResume already verified)", async () => {
+  it("reuses existing external worktree state on resume without recapturing or persisting", async () => {
     const worktree = {
-      path: "/repo/.orch/trees/abc123",
-      branch: "orch/abc123",
+      path: "/external-checkouts/feature-branch",
+      branch: "feature/external-tree",
       baseSha: "deadbeef",
       managed: false,
     };
@@ -182,10 +182,16 @@ describe("resolveWorktree", () => {
       log: noop,
     });
 
-    expect(result.cwd).toBe("/repo/.orch/trees/abc123");
+    expect(result.cwd).toBe("/external-checkouts/feature-branch");
     expect(result.skipStash).toBe(true);
-    expect(result.worktreeInfo).toEqual({ path: "/repo/.orch/trees/abc123", branch: "orch/abc123" });
+    expect(result.worktreeInfo).toEqual({
+      path: "/external-checkouts/feature-branch",
+      branch: "feature/external-tree",
+    });
     expect(createWorktree).not.toHaveBeenCalled();
+    expect(captureCurrentBranch).not.toHaveBeenCalled();
+    expect(captureRef).not.toHaveBeenCalled();
+    expect(saveState).not.toHaveBeenCalled();
   });
 
   it("reuses existing worktree from state even when --branch is passed again", async () => {
