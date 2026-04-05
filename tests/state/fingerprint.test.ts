@@ -482,6 +482,78 @@ describe("runFingerprint", () => {
     expect(second.context.repo.generatedAt).not.toBe(first.context.repo.generatedAt);
   });
 
+  it("marks provenance entries stale on cache hit when supporting file changes", async () => {
+    await writeFile(
+      join(tempDir, "package.json"),
+      JSON.stringify({
+        dependencies: {},
+        devDependencies: { typescript: "^5.0.0" },
+      }),
+    );
+    initGitRepo(tempDir);
+
+    const outputDir = join(tempDir, ".orch");
+    const first = await runFingerprint({ cwd: tempDir, outputDir });
+
+    // The detected layer cites "package.json" as a supporting file
+    expect(
+      Object.values(first.context.effective.provenance).some((p) =>
+        p.supportingFiles?.includes("package.json"),
+      ),
+    ).toBe(true);
+
+    // Touch package.json so its mtime is after the provenance updatedAt
+    // (small delay ensures mtime actually advances)
+    await new Promise((r) => setTimeout(r, 50));
+    await writeFile(
+      join(tempDir, "package.json"),
+      JSON.stringify({
+        dependencies: {},
+        devDependencies: { typescript: "^5.0.0", vitest: "^3.0.0" },
+      }),
+    );
+
+    // Second call is a cache hit (HEAD + manifest hash computed from mtime changed,
+    // but that triggers regeneration). We need to keep the same manifest hash.
+    // Instead: touch a file cited in provenance that is NOT a manifest candidate.
+    // The detected layer cites "src" as a supporting file.
+    await mkdir(join(tempDir, "src"), { recursive: true });
+    await writeFile(join(tempDir, "src", "index.ts"), "export const x = 1;");
+
+    // Restore package.json to match the original manifest hash
+    await writeFile(
+      join(tempDir, "package.json"),
+      JSON.stringify({
+        dependencies: {},
+        devDependencies: { typescript: "^5.0.0" },
+      }),
+    );
+
+    // This is still a cache miss because package.json mtime changed (manifest hash differs).
+    // To truly test the cache-hit + stale path, we need provenance that cites a non-manifest file.
+    // Force a cache hit by using forceRefresh=false (the default) after re-generating with
+    // the same manifest state. Let's take a different approach: generate, wait, touch a
+    // non-manifest supporting file, and verify staleness.
+
+    // Re-generate fresh so the artifact matches the current manifest state
+    const fresh = await runFingerprint({ cwd: tempDir, outputDir, forceRefresh: true });
+    expect(fresh.context.freshness).toBeDefined();
+
+    // Now touch "src" directory content — "src" is cited as a supporting file
+    await new Promise((r) => setTimeout(r, 50));
+    await writeFile(join(tempDir, "src", "new-file.ts"), "export const y = 2;");
+
+    // Cache hit path: HEAD and manifests unchanged, but "src" supporting file changed
+    // Note: "src" is a directory, so statSync on it checks the directory mtime
+    const cached = await runFingerprint({ cwd: tempDir, outputDir });
+
+    // At least one provenance entry should be marked stale
+    const staleEntries = Object.values(cached.context.effective.provenance).filter(
+      (p) => p.note === "stale: supporting file changed",
+    );
+    expect(staleEntries.length).toBeGreaterThan(0);
+  });
+
   it("skip takes priority over forceRefresh — returns defaults", async () => {
     await writeFile(
       join(tempDir, "package.json"),
