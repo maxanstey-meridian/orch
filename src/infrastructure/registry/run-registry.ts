@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, rmdir, stat, writeFile } from "fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import type { RunEntry } from "#domain/registry.js";
@@ -147,9 +147,8 @@ const readRegistryLockOwner = async (lockPath: string): Promise<RegistryLockOwne
 };
 
 const writeRegistryLockOwner = async (lockPath: string): Promise<void> => {
-  await mkdir(lockPath);
   await writeFile(
-    join(lockPath, LOCK_OWNER_FILE),
+    lockPath,
     JSON.stringify({
       pid: process.pid,
       acquiredAt: new Date().toISOString(),
@@ -188,16 +187,7 @@ const removeStaleRegistryLock = async (lockPath: string): Promise<boolean> => {
 };
 
 const releaseRegistryLock = async (lockPath: string): Promise<void> => {
-  await rm(join(lockPath, LOCK_OWNER_FILE), { force: true });
-  try {
-    await rmdir(lockPath);
-  } catch (error) {
-    if (hasCode(error) && (error.code === "ENOENT" || error.code === "ENOTEMPTY")) {
-      return;
-    }
-
-    throw error;
-  }
+  await rm(lockPath, { recursive: true, force: true });
 };
 
 export const withRegistryLock = async <T>(
@@ -212,7 +202,10 @@ export const withRegistryLock = async <T>(
       await writeRegistryLockOwner(lockPath);
       break;
     } catch (error) {
-      if (hasCode(error) && (error.code === "EEXIST" || error.code === "ENOENT")) {
+      if (
+        hasCode(error) &&
+        (error.code === "EEXIST" || error.code === "EISDIR" || error.code === "ENOENT")
+      ) {
         if (await removeStaleRegistryLock(lockPath)) {
           continue;
         }

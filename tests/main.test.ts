@@ -19,6 +19,24 @@ const MINIMAL_PLAN = `## Group: Test
 Do nothing.
 `;
 
+const buildDirectArtifactPlan = (inventoryPath: string): string => JSON.stringify({
+  groups: [
+    {
+      name: "Direct",
+      slices: [
+        {
+          number: 1,
+          title: "Direct request",
+          why: "Direct execution was selected during bootstrap.",
+          files: [{ path: inventoryPath, action: "edit" }],
+          details: "Implement the inventory request directly without generated plan slices.",
+          tests: "Run the relevant tests and explain the coverage changes.",
+        },
+      ],
+    },
+  ],
+});
+
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 
 const getCreateContainerConfig = (createContainer: ReturnType<typeof vi.fn>): Record<string, unknown> => {
@@ -1264,9 +1282,12 @@ const makeTestAgent = (): AgentHandle => ({
 const runMainWithWorkPlanMocks = async (
   args: string[],
   options?: {
+    planPath?: string;
     planContent?: string;
+    generatedPlanId?: string;
     preloadedState?: Record<string, unknown>;
     worktreeSetup?: string[];
+    fingerprintBrief?: string | ((cwd: string) => string);
     assertGitRepoImplementation?: (cwd: string) => Promise<void>;
     checkWorktreeResumeResult?: { ok: true } | { ok: false; message: string };
     resolveWorktreeResult?: {
@@ -1278,7 +1299,8 @@ const runMainWithWorkPlanMocks = async (
     resolveWorktreeError?: Error;
   },
 ) => {
-  const planPath = join(tempDir, "plan.md");
+  const planPath = options?.planPath ?? join(tempDir, "plan.md");
+  await mkdir(dirname(planPath), { recursive: true });
   await writeFile(planPath, options?.planContent ?? MINIMAL_PLAN);
   const orchDir = join(tempDir, ".orch");
   const stateFile = statePathForPlan(orchDir, resolvePlanId(planPath));
@@ -1293,7 +1315,13 @@ const runMainWithWorkPlanMocks = async (
     })),
   }));
   const assertGitRepo = vi.fn(options?.assertGitRepoImplementation ?? (async () => undefined));
-  const runFingerprint = vi.fn().mockResolvedValue({ brief: "brief text" });
+  const runFingerprint = vi.fn().mockImplementation(async ({ cwd }: { cwd: string }) => ({
+    brief:
+      typeof options?.fingerprintBrief === "function"
+        ? options.fingerprintBrief(cwd)
+        : (options?.fingerprintBrief ?? "brief text"),
+  }));
+  const generatePlanId = vi.fn(() => options?.generatedPlanId ?? "direct01");
   const resolveWorktree = options?.resolveWorktreeError === undefined
     ? vi.fn().mockResolvedValue(
         options?.resolveWorktreeResult ?? {
@@ -1307,11 +1335,27 @@ const runMainWithWorkPlanMocks = async (
   const checkWorktreeResume = vi.fn().mockResolvedValue(
     options?.checkWorktreeResumeResult ?? { ok: true },
   );
+  const runCleanup = vi.fn().mockResolvedValue("cleanup complete");
   const stashBackup = vi.fn().mockResolvedValue(false);
   const complexityTriageSpawnerFactory = vi.fn(() => () => ({
     send: vi.fn(),
     kill: vi.fn(),
   }));
+  const parsePlan = vi.fn().mockResolvedValue([
+    {
+      name: "Test",
+      slices: [{
+        number: 1,
+        title: "Slice 1",
+        content: "content",
+        why: "why",
+        files: [{ path: "src/s1.ts", action: "new" }],
+        details: "details",
+        tests: "tests",
+      }],
+    },
+  ]);
+  const formatPlanSummary = vi.fn();
 
   vi.resetModules();
   vi.doMock("../src/composition-root.js", () => ({
@@ -1357,25 +1401,22 @@ const runMainWithWorkPlanMocks = async (
   vi.doMock("#infrastructure/fingerprint.js", () => ({
     runFingerprint,
   }));
+  vi.doMock("#infrastructure/plan/plan-generator.js", async () => {
+    const actual =
+      await vi.importActual<typeof import("#infrastructure/plan/plan-generator.js")>(
+        "#infrastructure/plan/plan-generator.js"
+      );
+    return {
+      ...actual,
+      generatePlanId,
+    };
+  });
   vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
-    parsePlan: vi.fn().mockResolvedValue([
-      {
-        name: "Test",
-        slices: [{
-          number: 1,
-          title: "Slice 1",
-          content: "content",
-          why: "why",
-          files: [{ path: "src/s1.ts", action: "new" }],
-          details: "details",
-          tests: "tests",
-        }],
-      },
-    ]),
+    parsePlan,
   }));
   vi.doMock("#infrastructure/git/worktree.js", () => ({
     checkWorktreeResume,
-    runCleanup: vi.fn(),
+    runCleanup,
   }));
   vi.doMock("#infrastructure/git/worktree-setup.js", () => ({
     resolveWorktree,
@@ -1403,7 +1444,7 @@ const runMainWithWorkPlanMocks = async (
       ...actual,
       logSection: vi.fn(),
       printStartupBanner: vi.fn(),
-      formatPlanSummary: vi.fn(),
+      formatPlanSummary,
     };
   });
   vi.doMock("#infrastructure/factories.js", async () => {
@@ -1449,6 +1490,7 @@ const runMainWithWorkPlanMocks = async (
     vi.doUnmock("#infrastructure/factories.js");
     vi.doUnmock("#domain/agent-config.js");
     vi.doUnmock("#infrastructure/fingerprint.js");
+    vi.doUnmock("#infrastructure/plan/plan-generator.js");
     vi.doUnmock("#infrastructure/plan/plan-parser.js");
     vi.doUnmock("#infrastructure/git/worktree.js");
     vi.doUnmock("#infrastructure/git/worktree-setup.js");
@@ -1466,6 +1508,10 @@ const runMainWithWorkPlanMocks = async (
     runFingerprint,
     resolveWorktree,
     checkWorktreeResume,
+    runCleanup,
+    generatePlanId,
+    parsePlan,
+    formatPlanSummary,
     stateFile,
     stashBackup,
     complexityTriageSpawnerFactory,
@@ -2003,7 +2049,8 @@ describe("main execution preference wiring", () => {
     expect(buildRequestTriagePrompt).not.toHaveBeenCalled();
     expect(parseRequestTriageResult).not.toHaveBeenCalled();
     expect(doGeneratePlan).not.toHaveBeenCalled();
-    expect(createContainer).toHaveBeenCalledWith(
+    const config = getCreateContainerConfig(createContainer);
+    expect(config).toEqual(
       expect.objectContaining({
         planPath: inventoryPath,
         planContent: "# Feature Inventory\n\n- Add authentication\n",
@@ -2012,8 +2059,9 @@ describe("main execution preference wiring", () => {
         executionMode: "direct",
         skills: expect.objectContaining({ plan: null }),
       }),
-      expect.any(Object),
     );
+    expect(String(config.stateFile)).toMatch(/\.orch\/state\/plan-direct01\.json$/);
+    expect(String(config.logPath)).toMatch(/\.orch\/logs\/plan-direct01\.log$/);
     expect(execute).toHaveBeenCalledWith([
       expect.objectContaining({
         name: "Direct",
@@ -2101,14 +2149,16 @@ describe("main execution preference wiring", () => {
       JSON.stringify({ mode: "direct", reason: "bounded local change" }),
     );
     expect(doGeneratePlan).not.toHaveBeenCalled();
-    expect(createContainer).toHaveBeenCalledWith(
+    const config = getCreateContainerConfig(createContainer);
+    expect(config).toEqual(
       expect.objectContaining({
         planPath: inventoryPath,
         executionPreference: "auto",
         executionMode: "direct",
       }),
-      expect.any(Object),
     );
+    expect(String(config.stateFile)).toMatch(/\.orch\/state\/plan-direct01\.json$/);
+    expect(String(config.logPath)).toMatch(/\.orch\/logs\/plan-direct01\.log$/);
     expect(triageAgent.kill).toHaveBeenCalledTimes(1);
   });
 
@@ -2565,13 +2615,104 @@ describe("main execution preference wiring", () => {
     );
   });
 
+  it("treats a worked direct artifact as direct --work and keeps state/log identity stable across reruns", async () => {
+    const directPlanPath = join(tempDir, "artifacts", "direct-work.json");
+    const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));
+
+    const firstRun = await runMainWithWorkPlanMocks([], {
+      planPath: directPlanPath,
+      planContent: directPlan,
+      generatedPlanId: "random01",
+    });
+    const secondRun = await runMainWithWorkPlanMocks([], {
+      planPath: directPlanPath,
+      planContent: directPlan,
+      generatedPlanId: "random02",
+    });
+
+    const canonicalPlanId = resolvePlanId(directPlanPath);
+    const expectedPlanPathSuffix = `.orch/plan-${canonicalPlanId}.json`;
+    const expectedStateFileSuffix = `.orch/state/plan-${canonicalPlanId}.json`;
+    const expectedLogPathSuffix = `.orch/logs/plan-${canonicalPlanId}.log`;
+    const firstConfig = getCreateContainerConfig(firstRun.createContainer);
+    const secondConfig = getCreateContainerConfig(secondRun.createContainer);
+
+    expect(firstConfig).toEqual(
+      expect.objectContaining({
+        executionMode: "direct",
+      }),
+    );
+    expect(secondConfig).toEqual(
+      expect.objectContaining({
+        executionMode: "direct",
+      }),
+    );
+    expect(String(firstConfig.planPath)).toContain(expectedPlanPathSuffix);
+    expect(String(firstConfig.stateFile)).toContain(expectedStateFileSuffix);
+    expect(String(firstConfig.logPath)).toContain(expectedLogPathSuffix);
+    expect(String(secondConfig.planPath)).toContain(expectedPlanPathSuffix);
+    expect(String(secondConfig.stateFile)).toContain(expectedStateFileSuffix);
+    expect(String(secondConfig.logPath)).toContain(expectedLogPathSuffix);
+    expect(firstRun.generatePlanId).not.toHaveBeenCalled();
+    expect(secondRun.generatePlanId).not.toHaveBeenCalled();
+  });
+
+  it("uses the canonical direct state file for --work --cleanup instead of generating a fresh direct id", async () => {
+    const directPlanPath = join(tempDir, "artifacts", "direct-work.json");
+    const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));
+    const canonicalPlanId = resolvePlanId(directPlanPath);
+
+    const { createContainer, exit, generatePlanId, runCleanup } = await runMainWithWorkPlanMocks(
+      ["--cleanup"],
+      {
+        planPath: directPlanPath,
+        planContent: directPlan,
+        generatedPlanId: "random99",
+        preloadedState: {
+          lastCompletedSlice: 1,
+        },
+      },
+    );
+
+    expect(runCleanup).toHaveBeenCalledWith(
+      expect.stringContaining(`.orch/state/plan-${canonicalPlanId}.json`),
+      expect.objectContaining({ lastCompletedSlice: 1 }),
+      expect.stringContaining(tempDir.replace(/^\/private/, "")),
+    );
+    expect(generatePlanId).not.toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("shows a worked direct plan from its canonical artifact without allocating a fresh direct id", async () => {
+    const directPlanPath = join(tempDir, "artifacts", "direct-work.json");
+    const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));
+    const canonicalPlanId = resolvePlanId(directPlanPath);
+    const { createContainer, exit, formatPlanSummary, generatePlanId, parsePlan } =
+      await runMainWithWorkPlanMocks(["--show-plan"], {
+        planPath: directPlanPath,
+        planContent: directPlan,
+        generatedPlanId: "random77",
+      });
+
+    expect(parsePlan).toHaveBeenCalledWith(
+      expect.stringContaining(`.orch/plan-${canonicalPlanId}.json`),
+    );
+    expect(formatPlanSummary).toHaveBeenCalledTimes(1);
+    expect(generatePlanId).not.toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
   it("passes --tree through resolveWorktree and uses the selected tree as cwd for --work", async () => {
     const externalTreePath = join(tempDir, "existing-tree");
     await mkdir(externalTreePath, { recursive: true });
+    const treeBrief = `brief for ${externalTreePath}`;
 
-    const { createContainer, resolveWorktree, planPath, stashBackup } = await runMainWithWorkPlanMocks(
+    const { createContainer, resolveWorktree, planPath, runFingerprint, stashBackup } = await runMainWithWorkPlanMocks(
       ["--tree", externalTreePath],
       {
+        fingerprintBrief: (cwd) => `brief for ${cwd}`,
         resolveWorktreeResult: {
           cwd: externalTreePath,
           worktreeInfo: { path: externalTreePath, branch: "feature/existing" },
@@ -2586,6 +2727,11 @@ describe("main execution preference wiring", () => {
         treePath: externalTreePath,
       }),
     );
+    expect(runFingerprint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: externalTreePath,
+      }),
+    );
     const { realpathSync } = await import("fs");
     const expectedOrchDir = join(realpathSync(tempDir), ".orch");
     const expectedStateFile = statePathForPlan(expectedOrchDir, resolvePlanId(planPath));
@@ -2593,6 +2739,7 @@ describe("main execution preference wiring", () => {
     expect(createContainer).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: externalTreePath,
+        brief: treeBrief,
         stateFile: expectedStateFile,
         logPath: expectedLogPath,
       }),

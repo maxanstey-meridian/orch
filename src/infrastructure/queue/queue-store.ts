@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, rmdir, stat, writeFile } from "fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import type { QueueEntry } from "#domain/queue.js";
@@ -12,7 +12,6 @@ const hasCode = (value: unknown): value is { readonly code: string } =>
 const createCorruptQueueError = (queuePath: string): Error =>
   new Error(`Queue file is corrupt: ${queuePath}`);
 
-const LOCK_OWNER_FILE = "owner.json";
 const lockRetryDelayMs = 10;
 const ownerlessStaleLockAgeMs = 30_000;
 const pendingMutations = new Map<string, Promise<void>>();
@@ -78,9 +77,8 @@ const isProcessAlive = (pid: number): boolean => {
 };
 
 const writeLockMetadata = async (lockPath: string): Promise<void> => {
-  await mkdir(lockPath);
   await writeFile(
-    join(lockPath, LOCK_OWNER_FILE),
+    lockPath,
     JSON.stringify({
       pid: process.pid,
       createdAtMs: Date.now(),
@@ -93,7 +91,7 @@ const readLockMetadata = async (
   lockPath: string,
 ): Promise<{ readonly pid: number; readonly createdAtMs: number } | undefined> => {
   try {
-    const raw = await readFile(join(lockPath, LOCK_OWNER_FILE), "utf8");
+    const raw = await readFile(lockPath, "utf8");
     const parsed: unknown = JSON.parse(raw);
     return isLockMetadata(parsed) ? parsed : undefined;
   } catch (error) {
@@ -159,16 +157,7 @@ const clearStaleLock = async (lockPath: string): Promise<boolean> => {
 };
 
 const releaseLock = async (lockPath: string): Promise<void> => {
-  await rm(join(lockPath, LOCK_OWNER_FILE), { force: true });
-  try {
-    await rmdir(lockPath);
-  } catch (error) {
-    if (hasCode(error) && (error.code === "ENOENT" || error.code === "ENOTEMPTY")) {
-      return;
-    }
-
-    throw error;
-  }
+  await rm(lockPath, { recursive: true, force: true });
 };
 
 const writeQueue = async (queuePath: string, entries: QueueEntry[]): Promise<void> => {
@@ -242,7 +231,10 @@ const withFileLock = async <T>(queuePath: string, operation: () => Promise<T>): 
       await writeLockMetadata(lockPath);
       break;
     } catch (error) {
-      if (!hasCode(error) || error.code !== "EEXIST") {
+      if (
+        !hasCode(error) ||
+        (error.code !== "EEXIST" && error.code !== "EISDIR" && error.code !== "ENOENT")
+      ) {
         throw error;
       }
 

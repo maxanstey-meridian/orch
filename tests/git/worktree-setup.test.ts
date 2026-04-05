@@ -26,6 +26,7 @@ import { loadState, saveState } from "#infrastructure/state/state.js";
 import { execFile } from "child_process";
 
 const noop = () => {};
+const WORKTREE_SETUP_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 const mockedExecFile = vi.mocked(execFile);
 type ExecFileImplementation = Parameters<typeof mockedExecFile.mockImplementation>[0];
 type ExecFileArgs = ExecFileImplementation extends (...args: infer Args) => unknown ? Args : never;
@@ -402,14 +403,22 @@ describe("resolveWorktree", () => {
       1,
       shell,
       ["-lc", "echo first"],
-      expect.objectContaining({ cwd: "/repo/.orch/trees/abc123", encoding: "utf-8" }),
+      expect.objectContaining({
+        cwd: "/repo/.orch/trees/abc123",
+        encoding: "utf-8",
+        maxBuffer: WORKTREE_SETUP_MAX_BUFFER_BYTES,
+      }),
       expect.any(Function),
     );
     expect(execFile).toHaveBeenNthCalledWith(
       2,
       shell,
       ["-lc", "echo second"],
-      expect.objectContaining({ cwd: "/repo/.orch/trees/abc123", encoding: "utf-8" }),
+      expect.objectContaining({
+        cwd: "/repo/.orch/trees/abc123",
+        encoding: "utf-8",
+        maxBuffer: WORKTREE_SETUP_MAX_BUFFER_BYTES,
+      }),
       expect.any(Function),
     );
     expect(saveState).toHaveBeenCalledTimes(1);

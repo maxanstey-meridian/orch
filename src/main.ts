@@ -271,6 +271,49 @@ const buildDirectExecutionGroups = (
   },
 ];
 
+const isWorkedDirectArtifactPlan = (planContent: string): boolean => {
+  try {
+    const parsed: unknown = JSON.parse(planContent);
+    if (!isRecord(parsed) || parsed.executionMode !== undefined || !Array.isArray(parsed.groups)) {
+      return false;
+    }
+
+    if (parsed.groups.length !== 1) {
+      return false;
+    }
+
+    const [group] = parsed.groups;
+    if (
+      !isRecord(group) ||
+      group.name !== "Direct" ||
+      !Array.isArray(group.slices) ||
+      group.slices.length !== 1
+    ) {
+      return false;
+    }
+
+    const [slice] = group.slices;
+    if (!isRecord(slice)) {
+      return false;
+    }
+
+    return (
+      slice.number === 1 &&
+      slice.title === "Direct request" &&
+      slice.why === "Direct execution was selected during bootstrap." &&
+      slice.details === "Implement the inventory request directly without generated plan slices." &&
+      slice.tests === "Run the relevant tests and explain the coverage changes." &&
+      Array.isArray(slice.files) &&
+      slice.files.length === 1 &&
+      isRecord(slice.files[0]) &&
+      typeof slice.files[0].path === "string" &&
+      slice.files[0].action === "edit"
+    );
+  } catch {
+    return false;
+  }
+};
+
 const writeDirectPlanArtifact = (opts: {
   orchDir: string;
   planId: string;
@@ -661,7 +704,7 @@ export const main = async (runtime: MainRuntime = {}) => {
     earlyLog.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
   };
 
-  const fingerprintCwd = inventoryPath ? planningCwd : cwd;
+  const fingerprintCwd = treePath ?? (inventoryPath ? planningCwd : cwd);
   const { brief } = await runFingerprint({
     cwd: fingerprintCwd,
     outputDir: orchDir,
@@ -679,7 +722,9 @@ export const main = async (runtime: MainRuntime = {}) => {
     if (workMode) {
       planPath = resolve(workPath!);
       planContent = readFileSync(planPath, "utf-8");
-      executionMode = resolvePlannedWorkExecutionMode(planContent, executionPreference);
+      executionMode = isWorkedDirectArtifactPlan(planContent)
+        ? "direct"
+        : resolvePlannedWorkExecutionMode(planContent, executionPreference);
       printExecutionModeBanner(log, executionMode);
     } else {
       const inputPath = resolve(inventoryPath!);
@@ -723,17 +768,24 @@ export const main = async (runtime: MainRuntime = {}) => {
   }
 
   // 4. Derive per-plan state path
-  const activePlanId =
-    executionMode === "direct" ? generatePlanId() : ensureCanonicalPlan(planPath, orchDir);
-  const registryPlanPath =
-    executionMode === "direct"
-      ? writeDirectPlanArtifact({
-          orchDir,
-          planId: activePlanId,
-          requestContent: planContent ?? "",
-          inventoryPath: planPath,
-        })
+  const directFromInventory = !workMode && executionMode === "direct";
+  const directFromWork = workMode && executionMode === "direct";
+  const canonicalPlanId = directFromInventory ? undefined : ensureCanonicalPlan(planPath, orchDir);
+  const canonicalWorkedPlanPath =
+    canonicalPlanId === undefined ? undefined : resolve(orchDir, planFileName(canonicalPlanId));
+  const activePlanId = directFromInventory ? generatePlanId() : canonicalPlanId!;
+  const executionPlanPath = directFromInventory
+    ? writeDirectPlanArtifact({
+        orchDir,
+        planId: activePlanId,
+        requestContent: planContent ?? "",
+        inventoryPath: planPath,
+      })
+    : directFromWork
+      ? canonicalWorkedPlanPath!
       : planPath;
+  const orchestratorPlanPath = directFromWork ? executionPlanPath : planPath;
+  const registryPlanPath = executionPlanPath;
   const branchName = parseBranchFlag(args, activePlanId);
   const stateFile = statePathForPlan(orchDir, activePlanId);
   let cleanup = () => {};
@@ -756,7 +808,7 @@ export const main = async (runtime: MainRuntime = {}) => {
   }
 
   if (showPlan) {
-    const groups = await parsePlan(planPath);
+    const groups = await parsePlan(executionPlanPath);
     for (const line of earlyLog) {
       origLog(line);
     }
@@ -805,9 +857,10 @@ export const main = async (runtime: MainRuntime = {}) => {
 
   try {
     if (executionMode === "direct") {
-      const directGroups = isPlanFormat(planContent ?? "")
-        ? await parsePlan(planPath)
-        : buildDirectExecutionGroups(planContent ?? "", planPath);
+      const directGroups =
+        directFromWork || isPlanFormat(planContent ?? "")
+          ? await parsePlan(executionPlanPath)
+          : buildDirectExecutionGroups(planContent ?? "", planPath);
       const totalDirectSlices = directGroups.reduce((n, g) => n + g.slices.length, 0);
       const isTTY = process.stdout.isTTY === true && process.stdin.isTTY === true;
       const hud = createHud(isTTY);
@@ -839,7 +892,7 @@ export const main = async (runtime: MainRuntime = {}) => {
       }
       const orchestratorConfig = {
         cwd: effectiveCwd,
-        planPath,
+        planPath: orchestratorPlanPath,
         planContent: planContent ?? "",
         brief,
         executionMode,

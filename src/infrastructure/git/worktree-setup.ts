@@ -5,6 +5,8 @@ import { loadState, saveState, type OrchestratorState } from "../state/state.js"
 import { captureCurrentBranch, captureRef } from "./git.js";
 import { createWorktree, removeWorktree } from "./worktree.js";
 
+const WORKTREE_SETUP_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+
 type WorktreeResult = {
   readonly cwd: string;
   readonly worktreeInfo?: { readonly path: string; readonly branch: string };
@@ -40,7 +42,11 @@ const runExecFile = async (
     execFile(
       file,
       [...args],
-      { cwd, encoding: "utf-8" },
+      {
+        cwd,
+        encoding: "utf-8",
+        maxBuffer: WORKTREE_SETUP_MAX_BUFFER_BYTES,
+      },
       (error, stdout, stderr) => {
         if (error) {
           const execError = error as ExecFileException & { stdout?: string; stderr?: string };
