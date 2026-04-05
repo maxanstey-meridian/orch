@@ -61,6 +61,7 @@ describe("loadOrchrConfig", () => {
       skills: { tdd: "./tdd.md", review: null, verify: "./v.md", plan: null, gap: "./g.md" },
       rules: { tdd: "./rules.md", review: ["a.md", "b.md"] },
       config: { maxReviewCycles: 3, reviewThreshold: 80, maxReplans: 2 },
+      worktreeSetup: ["pnpm install", "pnpm build"],
     };
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify(full));
 
@@ -89,6 +90,23 @@ describe("loadOrchrConfig", () => {
 
   it("rejects non-string skill values", () => {
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ skills: { tdd: 42 } }));
+
+    expect(() => loadOrchrConfig("/fake")).toThrow("Invalid .orchrc.json");
+  });
+
+  it("accepts worktreeSetup arrays", () => {
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({ worktreeSetup: ["pnpm install", "pnpm build"] }),
+    );
+
+    const result = loadOrchrConfig("/fake");
+    expect(result.worktreeSetup).toEqual(["pnpm install", "pnpm build"]);
+  });
+
+  it("rejects non-string worktreeSetup entries", () => {
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({ worktreeSetup: ["pnpm install", 42] }),
+    );
 
     expect(() => loadOrchrConfig("/fake")).toThrow("Invalid .orchrc.json");
   });
@@ -228,6 +246,20 @@ describe("resolveOrchrConfig", () => {
     const result = resolveOrchrConfig({ config: { maxReviewCycles: 5, reviewThreshold: 0 } }, "/fake");
     expect(result.config.maxReviewCycles).toBe(5);
     expect(result.config.reviewThreshold).toBe(0);
+  });
+
+  it("defaults worktreeSetup to an empty array", () => {
+    const result = resolveOrchrConfig({}, "/fake");
+    expect(result.worktreeSetup).toEqual([]);
+  });
+
+  it("passes worktreeSetup through to resolved config", () => {
+    const result = resolveOrchrConfig(
+      { worktreeSetup: ["pnpm install", "pnpm build"] },
+      "/fake",
+    );
+
+    expect(result.worktreeSetup).toEqual(["pnpm install", "pnpm build"]);
   });
 
   it("throws on missing rule file", () => {

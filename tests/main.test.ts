@@ -1252,6 +1252,7 @@ const runMainWithWorkPlanMocks = async (
   options?: {
     planContent?: string;
     preloadedState?: Record<string, unknown>;
+    worktreeSetup?: string[];
     assertGitRepoImplementation?: (cwd: string) => Promise<void>;
     checkWorktreeResumeResult?: { ok: true } | { ok: false; message: string };
     resolveWorktreeResult?: {
@@ -1260,6 +1261,7 @@ const runMainWithWorkPlanMocks = async (
       skipStash: boolean;
       updatedState?: Record<string, unknown>;
     };
+    resolveWorktreeError?: Error;
   },
 ) => {
   const planPath = join(tempDir, "plan.md");
@@ -1278,14 +1280,16 @@ const runMainWithWorkPlanMocks = async (
   }));
   const assertGitRepo = vi.fn(options?.assertGitRepoImplementation ?? (async () => undefined));
   const runFingerprint = vi.fn().mockResolvedValue({ brief: "brief text" });
-  const resolveWorktree = vi.fn().mockResolvedValue(
-    options?.resolveWorktreeResult ?? {
-      cwd: tempDir,
-      worktreeInfo: null,
-      skipStash: true,
-      updatedState: {},
-    },
-  );
+  const resolveWorktree = options?.resolveWorktreeError === undefined
+    ? vi.fn().mockResolvedValue(
+        options?.resolveWorktreeResult ?? {
+          cwd: tempDir,
+          worktreeInfo: null,
+          skipStash: true,
+          updatedState: {},
+        },
+      )
+    : vi.fn().mockRejectedValue(options.resolveWorktreeError);
   const checkWorktreeResume = vi.fn().mockResolvedValue(
     options?.checkWorktreeResumeResult ?? { ok: true },
   );
@@ -1313,6 +1317,7 @@ const runMainWithWorkPlanMocks = async (
       },
       config: {},
       rules: { tdd: undefined, review: undefined },
+      worktreeSetup: options?.worktreeSetup ?? [],
       agents: {},
     })),
     buildOrchrSummary: vi.fn(() => "summary"),
@@ -1461,6 +1466,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
   requestTriageSendError?: Error;
   parsedRequestTriageResult?: { mode: "direct" | "grouped" | "sliced"; reason: string };
   fingerprintBrief?: string | ((cwd: string) => string);
+  worktreeSetup?: string[];
   inputAlreadyPlan?: boolean;
   inventoryContent?: string;
   generatedPlanId?: string;
@@ -1471,6 +1477,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     skipStash: boolean;
     updatedState?: Record<string, unknown>;
   };
+  resolveWorktreeError?: Error;
 }) => {
   const inventoryPath = join(tempDir, "inventory.md");
   await writeFile(
@@ -1521,7 +1528,9 @@ const runMainWithInventoryPlanMocks = async (options?: {
     skipStash: true,
     updatedState: {},
   };
-  const resolveWorktree = vi.fn().mockResolvedValue(defaultResolveWorktreeResult);
+  const resolveWorktree = options?.resolveWorktreeError === undefined
+    ? vi.fn().mockResolvedValue(defaultResolveWorktreeResult)
+    : vi.fn().mockRejectedValue(options.resolveWorktreeError);
   const triageAgent = {
     send: options?.requestTriageSendError === undefined
       ? vi.fn().mockResolvedValue({
@@ -1567,6 +1576,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
       },
       config: {},
       rules: { tdd: undefined, review: undefined },
+      worktreeSetup: options?.worktreeSetup ?? [],
       agents: {},
     })),
     buildOrchrSummary: vi.fn(() => "summary"),
@@ -2540,6 +2550,31 @@ describe("main execution preference wiring", () => {
     expect(stashBackup).not.toHaveBeenCalled();
   });
 
+  it("forwards worktreeSetup into resolveWorktree and aborts before createContainer when setup fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const worktreeSetup = ["pnpm install", "pnpm build"];
+    const {
+      createContainer,
+      exit,
+      resolveWorktree,
+    } = await runMainWithWorkPlanMocks(["--branch", "orch/abc123"], {
+      worktreeSetup,
+      resolveWorktreeError: new Error("Worktree setup command failed: pnpm build\nsetup exploded"),
+    });
+
+    expect(resolveWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({
+        worktreeSetup,
+      }),
+    );
+    expect(createContainer).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Worktree setup command failed: pnpm build\nsetup exploded",
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+    errorSpy.mockRestore();
+  });
+
   it("passes --tree through checkWorktreeResume and exits before execution when resume validation fails", async () => {
     const externalTreePath = join(tempDir, "existing-tree");
     await mkdir(externalTreePath, { recursive: true });
@@ -2583,10 +2618,12 @@ describe("main execution preference wiring", () => {
     const externalTreePath = join(tempDir, "existing-tree");
     await mkdir(externalTreePath, { recursive: true });
     const treeBrief = `brief for ${externalTreePath}`;
+    const worktreeSetup = ["pnpm install"];
 
     const { assertGitRepo, createContainer, planGeneratorSpawnerFactory, requestTriageSpawnerFactory, resolveWorktree, runFingerprint } = await runMainWithInventoryPlanMocks({
       args: ["--quick", "--tree", externalTreePath],
       fingerprintBrief: (cwd) => `brief for ${cwd}`,
+      worktreeSetup,
       generatedPlanId: "direct42",
       resolveWorktreeResult: {
         cwd: externalTreePath,
@@ -2610,6 +2647,7 @@ describe("main execution preference wiring", () => {
     expect(resolveWorktree).toHaveBeenCalledWith(
       expect.objectContaining({
         treePath: externalTreePath,
+        worktreeSetup,
       }),
     );
     expect(createContainer).toHaveBeenCalledWith(
@@ -2775,6 +2813,7 @@ describe("main log path wiring", () => {
         },
         config: {},
         rules: { tdd: undefined, review: undefined },
+        worktreeSetup: [],
         agents: {},
       })),
       buildOrchrSummary: vi.fn(() => "summary"),
@@ -2944,6 +2983,7 @@ describe("main log path wiring", () => {
         },
         config: {},
         rules: { tdd: undefined, review: undefined },
+        worktreeSetup: [],
         agents: {},
       })),
       buildOrchrSummary: vi.fn(() => "summary"),
@@ -3110,6 +3150,7 @@ describe("main log path wiring", () => {
         },
         config: {},
         rules: { tdd: undefined, review: undefined },
+        worktreeSetup: [],
         agents: {},
       })),
       buildOrchrSummary: vi.fn(() => "summary"),

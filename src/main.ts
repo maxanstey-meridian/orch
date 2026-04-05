@@ -820,15 +820,23 @@ export const main = async (runtime: MainRuntime = {}) => {
       const planLogPath = logPathForPlan(orchDir, activePlanId);
       log(`${ts()} ${a.dim}Log file: ${planLogPath}${a.reset}`);
       log(`${ts()} ${a.dim}Initialising agents — this may take a few minutes...${a.reset}`);
-      const { cwd: effectiveCwd } = await resolveWorktree({
-        branchName,
-        cwd,
-        treePath,
-        activePlanId,
-        state: await loadState(stateFile),
-        stateFile,
-        log,
-      });
+      let effectiveCwd: string;
+      try {
+        ({ cwd: effectiveCwd } = await resolveWorktree({
+          branchName,
+          cwd,
+          treePath,
+          worktreeSetup: orchrc.worktreeSetup,
+          activePlanId,
+          state: await loadState(stateFile),
+          stateFile,
+          log,
+        }));
+      } catch (error) {
+        cleanup();
+        exitWithError(error instanceof Error ? error.message : String(error));
+        return;
+      }
       const orchestratorConfig = {
         cwd: effectiveCwd,
         planPath,
@@ -900,19 +908,34 @@ export const main = async (runtime: MainRuntime = {}) => {
     }
     // resolveWorktree persists worktree state to disk before returning,
     // so RunOrchestration.execute() will pick it up via persistence.load().
-    const {
-      cwd: effectiveCwd,
-      worktreeInfo,
-      skipStash,
-    } = await resolveWorktree({
-      branchName,
-      cwd,
-      treePath,
-      activePlanId,
-      state,
-      stateFile,
-      log,
-    });
+    let effectiveCwd: string;
+    let worktreeInfo:
+      | {
+          readonly path: string;
+          readonly branch: string;
+        }
+      | undefined;
+    let skipStash: boolean;
+    try {
+      ({
+        cwd: effectiveCwd,
+        worktreeInfo,
+        skipStash,
+      } = await resolveWorktree({
+        branchName,
+        cwd,
+        treePath,
+        worktreeSetup: orchrc.worktreeSetup,
+        activePlanId,
+        state,
+        stateFile,
+        log,
+      }));
+    } catch (error) {
+      cleanup();
+      exitWithError(error instanceof Error ? error.message : String(error));
+      return;
+    }
     const interactive = !auto && isTTY;
 
     // 8. Validate group filter

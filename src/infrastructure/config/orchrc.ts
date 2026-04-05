@@ -38,6 +38,7 @@ export const orchrcSchema = z
     rules: rulesSchema.optional(),
     config: configSchema.optional(),
     agents: agentsSchema,
+    worktreeSetup: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -55,6 +56,7 @@ export type ResolvedOrchrConfig = {
   skills: Record<SkillKey, ResolvedSkill>;
   rules: Partial<Record<RuleKey, string>>;
   config: Partial<z.infer<typeof configSchema>>;
+  worktreeSetup: string[];
   agents?: Partial<Record<AgentRole, string>>;
 };
 
@@ -96,7 +98,13 @@ export const resolveOrchrConfig = (raw: OrchrConfig, cwd: string): ResolvedOrchr
     }
   }
 
-  return { skills, rules, config: raw.config ?? {}, agents: raw.agents };
+  return {
+    skills,
+    rules,
+    config: raw.config ?? {},
+    worktreeSetup: raw.worktreeSetup ?? [],
+    agents: raw.agents,
+  };
 };
 
 export const buildOrchrSummary = (config: ResolvedOrchrConfig): string | undefined => {

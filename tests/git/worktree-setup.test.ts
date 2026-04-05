@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+vi.mock("child_process", () => ({
+  execFile: vi.fn(),
+}));
+
 vi.mock("../../src/infrastructure/git/worktree.js", () => ({
   createWorktree: vi.fn(),
 }));
@@ -18,6 +22,7 @@ import { resolveWorktree } from "#infrastructure/git/worktree-setup.js";
 import { createWorktree } from "#infrastructure/git/worktree.js";
 import { captureCurrentBranch, captureRef } from "#infrastructure/git/git.js";
 import { loadState, saveState } from "#infrastructure/state/state.js";
+import { execFile } from "child_process";
 
 const noop = () => {};
 
@@ -33,6 +38,7 @@ describe("resolveWorktree", () => {
       branchName: undefined,
       cwd: "/repo",
       treePath: undefined,
+      worktreeSetup: [],
       activePlanId: "abc123",
       state,
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -54,6 +60,7 @@ describe("resolveWorktree", () => {
       branchName: "orch/abc123",
       cwd: "/repo",
       treePath: undefined,
+      worktreeSetup: [],
       activePlanId: "abc123",
       state: {},
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -82,6 +89,7 @@ describe("resolveWorktree", () => {
       branchName: "orch/abc123",
       cwd: "/repo",
       treePath: undefined,
+      worktreeSetup: [],
       activePlanId: "abc123",
       state: {},
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -107,6 +115,7 @@ describe("resolveWorktree", () => {
       branchName: undefined,
       cwd: "/repo",
       treePath: "/repo-existing-tree",
+      worktreeSetup: ["pnpm install"],
       activePlanId: "abc123",
       state: {},
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -128,6 +137,7 @@ describe("resolveWorktree", () => {
     expect(captureCurrentBranch).toHaveBeenCalledWith("/repo-existing-tree");
     expect(captureRef).toHaveBeenCalledWith("/repo-existing-tree");
     expect(createWorktree).not.toHaveBeenCalled();
+    expect(execFile).not.toHaveBeenCalled();
   });
 
   it("persists external tree metadata onto the current saved state instead of stale state input", async () => {
@@ -144,6 +154,7 @@ describe("resolveWorktree", () => {
       branchName: undefined,
       cwd: "/repo",
       treePath: "/repo-existing-tree",
+      worktreeSetup: [],
       activePlanId: "abc123",
       state: {},
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -176,6 +187,7 @@ describe("resolveWorktree", () => {
       branchName: undefined,
       cwd: "/repo",
       treePath: undefined,
+      worktreeSetup: ["pnpm install"],
       activePlanId: "abc123",
       state,
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -192,6 +204,7 @@ describe("resolveWorktree", () => {
     expect(captureCurrentBranch).not.toHaveBeenCalled();
     expect(captureRef).not.toHaveBeenCalled();
     expect(saveState).not.toHaveBeenCalled();
+    expect(execFile).not.toHaveBeenCalled();
   });
 
   it("reuses persisted external worktree state even when the same --tree path is passed again", async () => {
@@ -207,6 +220,7 @@ describe("resolveWorktree", () => {
       branchName: undefined,
       cwd: "/repo",
       treePath: "/external-checkouts/feature-branch",
+      worktreeSetup: ["pnpm install"],
       activePlanId: "abc123",
       state,
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -224,6 +238,7 @@ describe("resolveWorktree", () => {
     expect(captureCurrentBranch).not.toHaveBeenCalled();
     expect(captureRef).not.toHaveBeenCalled();
     expect(saveState).not.toHaveBeenCalled();
+    expect(execFile).not.toHaveBeenCalled();
   });
 
   it("reuses existing worktree from state even when --branch is passed again", async () => {
@@ -238,6 +253,7 @@ describe("resolveWorktree", () => {
       branchName: "orch/abc123",
       cwd: "/repo",
       treePath: undefined,
+      worktreeSetup: ["pnpm install"],
       activePlanId: "abc123",
       state: { worktree },
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -246,6 +262,7 @@ describe("resolveWorktree", () => {
 
     expect(createWorktree).not.toHaveBeenCalled();
     expect(result.cwd).toBe("/repo/.orch/trees/abc123");
+    expect(execFile).not.toHaveBeenCalled();
   });
 
   it("does not call saveState when createWorktree rejects", async () => {
@@ -257,6 +274,7 @@ describe("resolveWorktree", () => {
         branchName: "orch/abc123",
         cwd: "/repo",
         treePath: undefined,
+        worktreeSetup: [],
         activePlanId: "abc123",
         state: {},
         stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -275,6 +293,7 @@ describe("resolveWorktree", () => {
         branchName: "orch/abc123",
         cwd: "/repo",
         treePath: undefined,
+        worktreeSetup: [],
         activePlanId: "abc123",
         state: {},
         stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -298,6 +317,7 @@ describe("resolveWorktree", () => {
       branchName: "orch/different-branch",
       cwd: "/repo",
       treePath: undefined,
+      worktreeSetup: ["pnpm install"],
       activePlanId: "abc123",
       state: { worktree },
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -307,6 +327,7 @@ describe("resolveWorktree", () => {
     expect(createWorktree).not.toHaveBeenCalled();
     expect(result.cwd).toBe("/repo/.orch/trees/abc123");
     expect(result.worktreeInfo).toEqual({ path: "/repo/.orch/trees/abc123", branch: "orch/abc123" });
+    expect(execFile).not.toHaveBeenCalled();
   });
 
   it("fresh creation preserves existing state fields in updatedState", async () => {
@@ -318,6 +339,7 @@ describe("resolveWorktree", () => {
       branchName: "orch/abc123",
       cwd: "/repo",
       treePath: undefined,
+      worktreeSetup: [],
       activePlanId: "abc123",
       state: { lastCompletedSlice: 5 },
       stateFile: "/repo/.orch/state/plan-abc123.json",
@@ -331,5 +353,108 @@ describe("resolveWorktree", () => {
       baseSha: "deadbeef",
       managed: true,
     });
+  });
+
+  it("runs managed worktree setup commands sequentially in the created worktree cwd", async () => {
+    const shell = process.env.SHELL ?? "/bin/sh";
+    vi.mocked(createWorktree).mockResolvedValue("/repo/.orch/trees/abc123");
+    vi.mocked(captureRef).mockResolvedValue("deadbeef");
+    vi.mocked(saveState).mockResolvedValue(undefined);
+    vi.mocked(execFile).mockImplementation(
+      (
+        file: string,
+        args: readonly string[] | null,
+        options: { cwd?: string } | null,
+        callback: ((error: Error | null, stdout: string, stderr: string) => void) | undefined,
+      ) => {
+        callback?.(null, "", "");
+        return {} as never;
+      },
+    );
+
+    await resolveWorktree({
+      branchName: "orch/abc123",
+      cwd: "/repo",
+      treePath: undefined,
+      worktreeSetup: ["echo first", "echo second"],
+      activePlanId: "abc123",
+      state: {},
+      stateFile: "/repo/.orch/state/plan-abc123.json",
+      log: noop,
+    });
+
+    expect(execFile).toHaveBeenNthCalledWith(
+      1,
+      shell,
+      ["-lc", "echo first"],
+      expect.objectContaining({ cwd: "/repo/.orch/trees/abc123", encoding: "utf-8" }),
+      expect.any(Function),
+    );
+    expect(execFile).toHaveBeenNthCalledWith(
+      2,
+      shell,
+      ["-lc", "echo second"],
+      expect.objectContaining({ cwd: "/repo/.orch/trees/abc123", encoding: "utf-8" }),
+      expect.any(Function),
+    );
+    expect(saveState).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts managed worktree setup on the first failing command and does not persist state", async () => {
+    vi.mocked(createWorktree).mockResolvedValue("/repo/.orch/trees/abc123");
+    vi.mocked(captureRef).mockResolvedValue("deadbeef");
+    vi.mocked(execFile).mockImplementation(
+      (
+        _file: string,
+        args: readonly string[] | null,
+        _options: { cwd?: string } | null,
+        callback: ((error: Error | null, stdout: string, stderr: string) => void) | undefined,
+      ) => {
+        const command = args?.[1];
+        if (command === "echo first") {
+          callback?.(null, "", "");
+          return {} as never;
+        }
+
+        const error = new Error("command failed");
+        callback?.(error, "stdout line", "stderr line");
+        return {} as never;
+      },
+    );
+
+    await expect(
+      resolveWorktree({
+        branchName: "orch/abc123",
+        cwd: "/repo",
+        treePath: undefined,
+        worktreeSetup: ["echo first", "echo second", "echo third"],
+        activePlanId: "abc123",
+        state: {},
+        stateFile: "/repo/.orch/state/plan-abc123.json",
+        log: noop,
+      }),
+    ).rejects.toThrow("Worktree setup command failed: echo second");
+
+    await expect(
+      resolveWorktree({
+        branchName: "orch/abc123",
+        cwd: "/repo",
+        treePath: undefined,
+        worktreeSetup: ["echo first", "echo second"],
+        activePlanId: "def456",
+        state: {},
+        stateFile: "/repo/.orch/state/plan-def456.json",
+        log: noop,
+      }),
+    ).rejects.toThrow("stdout line\nstderr line");
+
+    expect(execFile).toHaveBeenCalledTimes(4);
+    expect(execFile).not.toHaveBeenCalledWith(
+      expect.any(String),
+      ["-lc", "echo third"],
+      expect.anything(),
+      expect.any(Function),
+    );
+    expect(saveState).not.toHaveBeenCalled();
   });
 });
