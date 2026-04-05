@@ -4,6 +4,7 @@ import { existsSync, readFileSync, mkdirSync, watch, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { basename, dirname, resolve } from "path";
 import { resolveAllAgentConfigs } from "#domain/agent-config.js";
+import { hasRepoContextArtifact } from "#domain/context.js";
 import type {
   ExecutionMode,
   ExecutionPreference,
@@ -723,7 +724,7 @@ export const main = async (runtime: MainRuntime = {}) => {
   };
 
   const fingerprintCwd = treePath ?? (inventoryPath ? planningCwd : cwd);
-  const { brief } = await runFingerprint({
+  const { brief, context } = await runFingerprint({
     cwd: fingerprintCwd,
     outputDir: orchDir,
     skip: skipFingerprint,
@@ -1086,6 +1087,7 @@ export const main = async (runtime: MainRuntime = {}) => {
           printStartupBanner(log, {
             planPath,
             brief,
+            hasContext: hasRepoContextArtifact(context),
             executionMode,
             auto,
             interactive,

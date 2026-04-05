@@ -53,6 +53,52 @@ const getCreateContainerConfig = (createContainer: ReturnType<typeof vi.fn>): Re
   return config as Record<string, unknown>;
 };
 
+const createMockContextArtifact = (withContext = true) => {
+  const effectiveContext = withContext
+    ? {
+        architecture: "Clean Architecture (ports & adapters)",
+        concepts: { stack: "TypeScript / unknown / Node.js." },
+      }
+    : {};
+
+  return {
+    version: 1 as const,
+    repo: {
+      rootPath: "/repo",
+      repoName: "repo",
+      generatedAt: "2026-04-05T00:00:00.000Z",
+    },
+    layers: {
+      operator: { context: {}, provenance: {} },
+      detected: {
+        context: effectiveContext,
+        provenance: withContext
+          ? {
+              "context.architecture": {
+                source: "detected",
+                updatedAt: "2026-04-05T00:00:00.000Z",
+                supportingFiles: ["src"],
+              },
+            }
+          : {},
+      },
+      planner: { context: {}, provenance: {} },
+    },
+    effective: {
+      context: effectiveContext,
+      provenance: withContext
+        ? {
+            "context.architecture": {
+              source: "detected",
+              updatedAt: "2026-04-05T00:00:00.000Z",
+              supportingFiles: ["src"],
+            },
+          }
+        : {},
+    },
+  };
+};
+
 let tempDir: string;
 
 beforeEach(async () => {
@@ -1289,6 +1335,7 @@ const runMainWithWorkPlanMocks = async (
     runCleanupResult?: string;
     worktreeSetup?: string[];
     fingerprintBrief?: string | ((cwd: string) => string);
+    fingerprintContext?: ReturnType<typeof createMockContextArtifact>;
     assertGitRepoImplementation?: (cwd: string) => Promise<void>;
     checkWorktreeResumeResult?: { ok: true } | { ok: false; message: string };
     resolveWorktreeResult?: {
@@ -1300,6 +1347,22 @@ const runMainWithWorkPlanMocks = async (
     resolveWorktreeError?: Error;
   },
 ) => {
+  const execute = vi.fn().mockImplementation(
+    async (
+      _groups: unknown,
+      callbacks?: {
+        readonly onReady?: (info: {
+          readonly tddSessionId: string;
+          readonly reviewSessionId: string;
+        }) => void;
+      },
+    ) => {
+      callbacks?.onReady?.({
+        tddSessionId: "sess-tdd-12345678",
+        reviewSessionId: "sess-rev-87654321",
+      });
+    },
+  );
   const planPath = options?.planPath ?? join(tempDir, "plan.md");
   await mkdir(dirname(planPath), { recursive: true });
   await writeFile(planPath, options?.planContent ?? MINIMAL_PLAN);
@@ -1311,7 +1374,7 @@ const runMainWithWorkPlanMocks = async (
   }
   const createContainer = vi.fn(() => ({
     resolve: vi.fn(() => ({
-      execute: vi.fn().mockResolvedValue(undefined),
+      execute,
       dispose: vi.fn(),
     })),
   }));
@@ -1321,6 +1384,7 @@ const runMainWithWorkPlanMocks = async (
       typeof options?.fingerprintBrief === "function"
         ? options.fingerprintBrief(cwd)
         : (options?.fingerprintBrief ?? "brief text"),
+    context: options?.fingerprintContext ?? createMockContextArtifact(),
   }));
   const generatePlanId = vi.fn(() => options?.generatedPlanId ?? "direct01");
   const resolveWorktree = options?.resolveWorktreeError === undefined
@@ -1342,6 +1406,7 @@ const runMainWithWorkPlanMocks = async (
     send: vi.fn(),
     kill: vi.fn(),
   }));
+  const printStartupBanner = vi.fn();
   const parsePlan = vi.fn().mockResolvedValue([
     {
       name: "Test",
@@ -1444,7 +1509,7 @@ const runMainWithWorkPlanMocks = async (
     return {
       ...actual,
       logSection: vi.fn(),
-      printStartupBanner: vi.fn(),
+      printStartupBanner,
       formatPlanSummary,
     };
   });
@@ -1504,6 +1569,7 @@ const runMainWithWorkPlanMocks = async (
   return {
     assertGitRepo,
     createContainer,
+    execute,
     exit,
     planPath,
     runFingerprint,
@@ -1513,6 +1579,7 @@ const runMainWithWorkPlanMocks = async (
     generatePlanId,
     parsePlan,
     formatPlanSummary,
+    printStartupBanner,
     stateFile,
     stashBackup,
     complexityTriageSpawnerFactory,
@@ -1527,6 +1594,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
   requestTriageSendError?: Error;
   parsedRequestTriageResult?: { mode: "direct" | "grouped" | "sliced"; reason: string };
   fingerprintBrief?: string | ((cwd: string) => string);
+  fingerprintContext?: ReturnType<typeof createMockContextArtifact>;
   worktreeSetup?: string[];
   inputAlreadyPlan?: boolean;
   inventoryContent?: string;
@@ -1566,7 +1634,22 @@ const runMainWithInventoryPlanMocks = async (options?: {
     ],
   }));
 
-  const execute = vi.fn().mockResolvedValue(undefined);
+  const execute = vi.fn().mockImplementation(
+    async (
+      _groups: unknown,
+      callbacks?: {
+        readonly onReady?: (info: {
+          readonly tddSessionId: string;
+          readonly reviewSessionId: string;
+        }) => void;
+      },
+    ) => {
+      callbacks?.onReady?.({
+        tddSessionId: "sess-tdd-12345678",
+        reviewSessionId: "sess-rev-87654321",
+      });
+    },
+  );
   const logSection = vi.fn();
   const createContainer = vi.fn(() => ({
     resolve: vi.fn(() => ({
@@ -1582,6 +1665,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
       typeof options?.fingerprintBrief === "function"
         ? options.fingerprintBrief(cwd)
         : (options?.fingerprintBrief ?? "brief text"),
+    context: options?.fingerprintContext ?? createMockContextArtifact(),
   }));
   const defaultResolveWorktreeResult = options?.resolveWorktreeResult ?? {
     cwd: tempDir,
@@ -1617,6 +1701,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
   const parseRequestTriageResult = vi.fn((text: string) =>
     options?.parsedRequestTriageResult ?? JSON.parse(text)
   );
+  const printStartupBanner = vi.fn();
   const hudLogs: string[] = [];
 
   vi.resetModules();
@@ -1743,7 +1828,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     return {
       ...actual,
       logSection,
-      printStartupBanner: vi.fn(),
+      printStartupBanner,
       formatPlanSummary: vi.fn(),
     };
   });
@@ -1811,8 +1896,26 @@ const runMainWithInventoryPlanMocks = async (options?: {
     stateFile: statePathForPlan(join(tempDir, ".orch"), options?.generatedPlanId ?? "direct01"),
     triageAgent,
     logSection,
+    printStartupBanner,
   };
 };
+
+describe("main fingerprint context wiring", () => {
+  it("passes canonical context presence to the startup banner instead of inferring from brief text", async () => {
+    const result = await runMainWithWorkPlanMocks([], {
+      fingerprintBrief: "stale brief text",
+      fingerprintContext: createMockContextArtifact(false),
+    });
+
+    expect(result.printStartupBanner).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({
+        brief: "stale brief text",
+        hasContext: false,
+      }),
+    );
+  });
+});
 
 describe("main tree flag validation", () => {
   const runWithMode = async (
@@ -3438,7 +3541,10 @@ describe("main log path wiring", () => {
       };
     });
     vi.doMock("#infrastructure/fingerprint.js", () => ({
-      runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+      runFingerprint: vi.fn().mockResolvedValue({
+        brief: "brief text",
+        context: createMockContextArtifact(),
+      }),
     }));
     vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
       parsePlan: vi.fn().mockResolvedValue([
@@ -3608,7 +3714,10 @@ describe("main log path wiring", () => {
       };
     });
     vi.doMock("#infrastructure/fingerprint.js", () => ({
-      runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+      runFingerprint: vi.fn().mockResolvedValue({
+        brief: "brief text",
+        context: createMockContextArtifact(),
+      }),
     }));
     vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
       parsePlan: vi.fn().mockResolvedValue([
@@ -3775,7 +3884,10 @@ describe("main log path wiring", () => {
       };
     });
     vi.doMock("#infrastructure/fingerprint.js", () => ({
-      runFingerprint: vi.fn().mockResolvedValue({ brief: "brief text" }),
+      runFingerprint: vi.fn().mockResolvedValue({
+        brief: "brief text",
+        context: createMockContextArtifact(),
+      }),
     }));
     vi.doMock("#infrastructure/plan/plan-parser.js", () => ({
       parsePlan: vi.fn().mockRejectedValue(new Error("Invalid plan")),

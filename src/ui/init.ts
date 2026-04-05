@@ -114,3 +114,87 @@ export const profileToMarkdown = (profile: InitProfile): string => {
   lines.push("");
   return lines.join("\n");
 };
+
+const PROFILE_MARKDOWN_HEADER = "## Project Profile (from init)";
+
+const profileFieldLabels = {
+  Language: "language",
+  Framework: "framework",
+  Style: "style",
+  Linting: "linting",
+  References: "references",
+  Notes: "extraContext",
+} as const;
+
+type ProfileFieldLabel = keyof typeof profileFieldLabels;
+
+const parseProfileFieldLine = (
+  line: string,
+): { readonly label: ProfileFieldLabel; readonly value: string } | null => {
+  const match = /^- \*\*(Language|Framework|Style|Linting|References|Notes):\*\* (.+)$/.exec(line);
+  if (match === null) {
+    return null;
+  }
+
+  const label = match[1];
+  const value = match[2];
+  if (
+    label !== "Language" &&
+    label !== "Framework" &&
+    label !== "Style" &&
+    label !== "Linting" &&
+    label !== "References" &&
+    label !== "Notes"
+  ) {
+    return null;
+  }
+
+  return { label, value: value.trim() };
+};
+
+export const parseProfileMarkdown = (markdown: string): InitProfile | null => {
+  const lines = markdown
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (lines[0] !== PROFILE_MARKDOWN_HEADER) {
+    return null;
+  }
+
+  const parsed: Partial<InitProfile> = {};
+
+  for (const line of lines.slice(1)) {
+    const field = parseProfileFieldLine(line);
+    if (field === null) {
+      return null;
+    }
+
+    const key = profileFieldLabels[field.label];
+    if (key === "references") {
+      const references = field.value
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+      if (references.length > 0) {
+        parsed.references = references;
+      }
+      continue;
+    }
+
+    parsed[key] = field.value;
+  }
+
+  if (typeof parsed.language !== "string" || parsed.language.length === 0) {
+    return null;
+  }
+
+  return {
+    language: parsed.language,
+    ...(parsed.framework ? { framework: parsed.framework } : {}),
+    ...(parsed.style ? { style: parsed.style } : {}),
+    ...(parsed.linting ? { linting: parsed.linting } : {}),
+    ...(parsed.references ? { references: parsed.references } : {}),
+    ...(parsed.extraContext ? { extraContext: parsed.extraContext } : {}),
+  };
+};

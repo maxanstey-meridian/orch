@@ -147,6 +147,7 @@ export const printExecutionModeBanner = (log: LogFn, executionMode: ExecutionMod
 export type BannerOpts = {
   readonly planPath: string;
   readonly brief: string;
+  readonly hasContext: boolean;
   readonly executionMode: ExecutionMode;
   readonly auto: boolean;
   readonly interactive: boolean;
@@ -172,7 +173,7 @@ export const printStartupBanner = (log: LogFn, opts: BannerOpts): void => {
     log(`   ${a.dim}Worktree${a.reset} ${opts.worktree.path}`);
   }
   log(
-    `   ${a.dim}Brief${a.reset}   ${opts.brief ? `${a.green}✓${a.reset} .orch/brief.md` : `${a.dim}none${a.reset}`}`,
+    `   ${a.dim}Brief${a.reset}   ${opts.hasContext ? `${a.green}✓${a.reset} .orch/brief.md` : `${a.dim}none${a.reset}`}`,
   );
   log(`   ${a.dim}Execution${a.reset} ${executionSummary}`);
   log(

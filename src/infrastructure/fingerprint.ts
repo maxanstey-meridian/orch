@@ -1,6 +1,25 @@
 import { execSync } from "child_process";
-import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, statSync } from "fs";
+import { readFileSync, existsSync, readdirSync, writeFileSync, statSync } from "fs";
 import { join, relative } from "path";
+import {
+  createEmptyRepoContextArtifact,
+  createEmptyRepoContextLayer,
+  flattenRepoContextData,
+  mergeRepoContextLayers,
+  type RepoContextArtifact,
+  type RepoContextData,
+  type RepoContextEntryProvenance,
+  type RepoContextLayer,
+  type RepoContextLayerName,
+} from "#domain/context.js";
+import { renderBriefFromContext } from "./context/context-brief.js";
+import {
+  contextFilePath,
+  loadRepoContext,
+  saveRepoContext,
+  tryLoadRepoContext,
+} from "./context/context-store.js";
+import { parseProfileMarkdown } from "#ui/init.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -11,13 +30,9 @@ type StackInfo = {
   readonly deps: string[];
 };
 
-export type ProjectProfile = {
-  readonly stack?: string;
-};
-
 export type FingerprintResult = {
   readonly brief: string;
-  readonly profile: ProjectProfile;
+  readonly context: RepoContextArtifact;
 };
 
 type FingerprintOptions = {
@@ -375,186 +390,258 @@ export const sampleFlow = (root: string): string => {
   return "";
 };
 
+const keyDependencySummary = (deps: readonly string[]): string | undefined => {
+  const keyDeps = deps
+    .filter((dep) => !dep.includes("Test") && !dep.includes("xunit") && !dep.includes("coverlet"))
+    .slice(0, 6);
+
+  return keyDeps.length > 0 ? keyDeps.join(", ") : undefined;
+};
+
+const detectKeyFiles = (root: string): Readonly<Record<string, string>> => {
+  const entries: Array<readonly [string, string]> = [];
+  const candidates = [
+    ["src/main.ts", "Primary TypeScript entry point"],
+    ["src/index.ts", "Primary TypeScript module entry point"],
+    ["src/Program.cs", "Primary C# entry point"],
+    ["src/main.cs", "Primary C# entry point"],
+    ["CLAUDE.md", "Repository architecture decisions and hard rules"],
+    ["AGENTS.md", "Repository-specific agent instructions"],
+  ] as const;
+
+  for (const [path, description] of candidates) {
+    if (fileExists(join(root, path))) {
+      entries.push([path, description]);
+    }
+  }
+
+  return Object.fromEntries(entries);
+};
+
+const summariseFolders = (folders: readonly string[]): string | undefined => {
+  if (folders.length === 0) {
+    return undefined;
+  }
+
+  const summary = folders.slice(0, 8).join(", ");
+  return folders.length > 8 ? `${summary}, ...` : summary;
+};
+
+const buildDetectedContextData = (
+  root: string,
+  precomputed?: { stack: StackInfo; testStyle: string },
+): RepoContextData => {
+  const stack = precomputed?.stack ?? detectStack(root);
+  const projects = detectProjects(root);
+  const folders = detectFolderStructure(root);
+  const sourceFiles = stack.lang === "C#" ? findFiles(root, "*.cs") : findFiles(root, "*.ts");
+  const patterns = detectCodePatterns(root, sourceFiles);
+  const antiPatterns = detectAntiPatterns(root);
+  const testStyle = precomputed?.testStyle ?? detectTestStyle(root);
+  const keyFiles = detectKeyFiles(root);
+  const concepts: Record<string, string> = {
+    stack: `${stack.lang} / ${stack.target} / ${stack.framework}.`,
+    tests: testStyle,
+  };
+  const conventions: Record<string, string> = {};
+  const dependencySummary = keyDependencySummary(stack.deps);
+  const folderSummary = summariseFolders(folders);
+
+  if (dependencySummary !== undefined) {
+    concepts.dependencies = dependencySummary;
+  }
+  if (projects.length > 0) {
+    concepts.projects = projects.join(", ");
+  }
+  if (folderSummary !== undefined) {
+    concepts.structure = folderSummary;
+  }
+  if (patterns.length > 0) {
+    conventions.patterns = patterns.join("; ");
+  }
+  if (antiPatterns.length > 0) {
+    conventions.antiPatterns = antiPatterns.join("; ");
+  }
+
+  return {
+    architecture: detectArchPattern(folders),
+    ...(Object.keys(keyFiles).length > 0 ? { keyFiles } : {}),
+    concepts,
+    ...(Object.keys(conventions).length > 0 ? { conventions } : {}),
+  };
+};
+
+const buildOperatorContextData = (initProfileMarkdown: string): RepoContextData => {
+  const parsed = parseProfileMarkdown(initProfileMarkdown);
+  if (parsed === null) {
+    return {};
+  }
+
+  const concepts: Record<string, string> = {
+    language: parsed.language,
+  };
+  const conventions: Record<string, string> = {};
+  const keyFiles = Object.fromEntries(
+    (parsed.references ?? []).map((path) => [path, "Operator reference from init"]),
+  );
+
+  if (parsed.framework) {
+    concepts.framework = parsed.framework;
+  }
+  if (parsed.extraContext) {
+    concepts.notes = parsed.extraContext;
+  }
+  if (parsed.style) {
+    conventions.style = parsed.style;
+  }
+  if (parsed.linting) {
+    conventions.linting = parsed.linting;
+  }
+
+  return {
+    ...(Object.keys(keyFiles).length > 0 ? { keyFiles } : {}),
+    concepts,
+    ...(Object.keys(conventions).length > 0 ? { conventions } : {}),
+  };
+};
+
+const buildLayerProvenance = (params: {
+  source: RepoContextLayerName;
+  context: RepoContextData;
+  updatedAt: string;
+  supportingFiles: readonly string[];
+}): RepoContextLayer => {
+  const flattened = flattenRepoContextData(params.context);
+  const provenanceEntries = Object.keys(flattened).map((path) => [
+    path,
+    {
+      source: params.source,
+      updatedAt: params.updatedAt,
+      supportingFiles: params.supportingFiles,
+    } satisfies RepoContextEntryProvenance,
+  ]);
+
+  return {
+    context: params.context,
+    provenance: Object.fromEntries(provenanceEntries),
+  };
+};
+
 // ─── Brief builder ──────────────────────────────────────────────────────────
 
 export const generateBrief = (
   root: string,
   precomputed?: { stack: StackInfo; testStyle: string },
 ): string => {
-  const stack = precomputed?.stack ?? detectStack(root);
-  const projects = detectProjects(root);
-  const folders = detectFolderStructure(root);
-  const arch = detectArchPattern(folders);
-  const testStyle = precomputed?.testStyle ?? detectTestStyle(root);
-  const allSrcFiles = stack.lang === "C#" ? findFiles(root, "*.cs") : findFiles(root, "*.ts");
-  const patterns = detectCodePatterns(root, allSrcFiles);
-  const antiPatterns = detectAntiPatterns(root);
-  const flow = sampleFlow(root);
+  const detected = buildDetectedContextData(root, precomputed);
+  const now = new Date().toISOString();
+  const artifact = {
+    ...createEmptyRepoContextArtifact({ rootPath: root, generatedAt: now }),
+    layers: {
+      operator: createEmptyRepoContextLayer(),
+      detected: buildLayerProvenance({
+        source: "detected",
+        context: detected,
+        updatedAt: now,
+        supportingFiles: ["package.json", "src", "tests"],
+      }),
+      planner: createEmptyRepoContextLayer(),
+    },
+  };
 
-  const lines: string[] = [
-    "# Codebase Brief",
-    "",
-    "> Auto-generated by fingerprint.ts. Injected into agent prompts to maintain",
-    "> consistency across compaction boundaries. Do not edit — regenerate instead.",
-    "",
-    "## Stack",
-    "",
-    `${stack.lang} / ${stack.target} / ${stack.framework}.`,
-  ];
-
-  if (stack.deps.length > 0) {
-    const keyDeps = stack.deps
-      .filter((d) => !d.includes("Test") && !d.includes("xunit") && !d.includes("coverlet"))
-      .slice(0, 6);
-    if (keyDeps.length > 0) {
-      lines.push(`Key deps: ${keyDeps.join(", ")}.`);
-    }
-  }
-
-  lines.push(`Tests: ${testStyle}.`);
-  lines.push("");
-
-  if (projects.length > 0) {
-    lines.push("## Projects");
-    lines.push("");
-    for (const p of projects) {
-      lines.push(`- ${p}`);
-    }
-    lines.push("");
-  }
-
-  if (folders.length > 0) {
-    lines.push("## Structure");
-    lines.push("");
-    lines.push("```");
-    const grouped = new Map<string, string[]>();
-    for (const f of folders) {
-      const parts = f.split("/");
-      const key = `${parts[0]}/${parts[1]}`;
-      if (!grouped.has(key)) {
-        grouped.set(key, []);
-      }
-      if (parts.length > 2) {
-        grouped.get(key)!.push(parts.slice(2).join("/"));
-      }
-    }
-    for (const [parent, children] of grouped) {
-      lines.push(parent + "/");
-      for (const child of children) {
-        if (child) {
-          lines.push(`  ${child}`);
-        }
-      }
-    }
-    lines.push("```");
-    lines.push("");
-  }
-
-  lines.push("## Architecture");
-  lines.push("");
-  lines.push(arch);
-  lines.push("");
-
-  if (patterns.length > 0) {
-    lines.push("## Patterns in use");
-    lines.push("");
-    for (const p of patterns) {
-      lines.push(`- ${p}`);
-    }
-    lines.push("");
-  }
-
-  if (antiPatterns.length > 0) {
-    lines.push("## What this codebase does NOT do");
-    lines.push("");
-    for (const a of antiPatterns) {
-      lines.push(`- ${a}`);
-    }
-    lines.push("");
-  }
-
-  if (flow) {
-    const lang = stack.lang === "C#" ? "csharp" : "typescript";
-    lines.push("## Example flow (entry point)");
-    lines.push("");
-    lines.push(`\`\`\`${lang}`);
-    lines.push(flow);
-    lines.push("```");
-    lines.push("");
-  }
-
-  if (fileExists(join(root, "CLAUDE.md"))) {
-    lines.push("## See also");
-    lines.push("");
-    lines.push(
-      "CLAUDE.md has authoritative architecture decisions, change ripple map, and hard rules.",
-    );
-    lines.push(
-      "This brief is a structural snapshot — CLAUDE.md is the source of truth for intent.",
-    );
-    lines.push("");
-  }
-
-  return lines.join("\n");
+  return renderBriefFromContext({
+    ...artifact,
+    effective: mergeRepoContextLayers(artifact.layers),
+  });
 };
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
-const DEFAULTS: FingerprintResult = { brief: "", profile: {} };
+const DEFAULTS = (cwd: string): FingerprintResult => ({
+  brief: "",
+  context: createEmptyRepoContextArtifact({ rootPath: cwd }),
+});
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
 export const runFingerprint = async (opts: FingerprintOptions): Promise<FingerprintResult> => {
   if (opts.skip) {
-    return DEFAULTS;
+    return DEFAULTS(opts.cwd);
   }
 
   const initProfilePath = join(opts.outputDir, "init-profile.md");
-  const initPrefix = fileExists(initProfilePath) ? tryRead(initProfilePath).trim() : "";
+  const initProfileMarkdown = fileExists(initProfilePath) ? tryRead(initProfilePath).trim() : "";
 
-  // Check freshness — skip if brief exists and is <1h old
+  // Check freshness — skip if context exists and is <1h old
   // forceRefresh bypasses cache (e.g. after --init rewrites init-profile.md)
   const briefPath = join(opts.outputDir, "brief.md");
-  const profilePath = join(opts.outputDir, "profile.json");
+  const cachedContextPath = contextFilePath(opts.outputDir);
   if (!opts.forceRefresh) {
     try {
-      const stat = statSync(briefPath);
+      const stat = statSync(cachedContextPath);
       if (Date.now() - stat.mtimeMs < ONE_HOUR_MS) {
-        const brief = tryRead(briefPath).trim();
-        const cachedProfile = tryParseJson(tryRead(profilePath));
-        if (brief && cachedProfile) {
-          const profile: ProjectProfile =
-            typeof cachedProfile.stack === "string" ? { stack: cachedProfile.stack } : {};
-          return { brief, profile };
+        const context = tryLoadRepoContext(opts.outputDir);
+        if (context !== null) {
+          const cachedBrief = tryRead(briefPath).trim();
+          if (cachedBrief) {
+            return { brief: cachedBrief, context };
+          }
+
+          const renderedBrief = renderBriefFromContext(context);
+          writeFileSync(briefPath, renderedBrief);
+          return { brief: renderedBrief, context };
         }
       }
     } catch {
-      /* brief doesn't exist yet, generate it */
+      /* context doesn't exist yet, generate it */
     }
   }
 
   const stack = detectStack(opts.cwd);
   const testStyle = detectTestStyle(opts.cwd);
-  const generated = generateBrief(opts.cwd, { stack, testStyle });
-
-  // Init profile takes priority — prepend operator-stated context
-  const brief = initPrefix ? `${initPrefix}\n\n${generated}` : generated;
-
-  const profile: ProjectProfile = {
-    stack: stack.lang,
+  const generatedAt = new Date().toISOString();
+  const operator = buildLayerProvenance({
+    source: "operator",
+    context: buildOperatorContextData(initProfileMarkdown),
+    updatedAt: generatedAt,
+    supportingFiles: initProfileMarkdown ? [".orch/init-profile.md"] : [],
+  });
+  const detected = buildLayerProvenance({
+    source: "detected",
+    context: buildDetectedContextData(opts.cwd, { stack, testStyle }),
+    updatedAt: generatedAt,
+    supportingFiles: ["package.json", "src", "tests", "CLAUDE.md", "AGENTS.md"].filter((path) =>
+      fileExists(join(opts.cwd, path)),
+    ),
+  });
+  const artifact: RepoContextArtifact = {
+    ...createEmptyRepoContextArtifact({ rootPath: opts.cwd, generatedAt }),
+    layers: {
+      operator,
+      detected,
+      planner: createEmptyRepoContextLayer(),
+    },
+    effective: mergeRepoContextLayers({
+      operator,
+      detected,
+      planner: createEmptyRepoContextLayer(),
+    }),
   };
 
   // Suggest --init when project has no manifest files
-  if (stack.lang === "unknown" && !initPrefix) {
+  if (stack.lang === "unknown" && !initProfileMarkdown) {
     console.log("Empty project detected. Run with --init for guided setup.");
   }
 
-  // Write brief and profile to disk
-  mkdirSync(opts.outputDir, { recursive: true });
+  saveRepoContext(opts.outputDir, artifact);
+  const storedContext = loadRepoContext(opts.outputDir);
+  if (storedContext === null) {
+    throw new Error(`Repo context was not persisted to ${cachedContextPath}`);
+  }
+  const brief = renderBriefFromContext(storedContext);
   writeFileSync(briefPath, brief);
-  writeFileSync(profilePath, JSON.stringify(profile));
 
-  return { brief, profile };
+  return { brief, context: storedContext };
 };
 
 export const wrapBrief = (brief: string): string => {

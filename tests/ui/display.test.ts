@@ -22,6 +22,7 @@ describe("printStartupBanner", () => {
   const baseOpts = {
     planPath: "/repo/.orch/plan-abc123.md",
     brief: "Some context",
+    hasContext: true,
     executionMode: "grouped" as const,
     auto: false,
     interactive: true,
@@ -40,16 +41,23 @@ describe("printStartupBanner", () => {
     expect(text).toContain("plan-abc123.md");
   });
 
-  it("shows green check when brief is truthy", () => {
+  it("shows green check when canonical context is present", () => {
     const { lines, log } = collect();
     printStartupBanner(log, baseOpts);
     const text = strip(lines.join("\n"));
     expect(text).toContain(".orch/brief.md");
   });
 
-  it("shows 'none' when brief is empty", () => {
+  it("shows 'none' when canonical context is absent", () => {
     const { lines, log } = collect();
-    printStartupBanner(log, { ...baseOpts, brief: "" });
+    printStartupBanner(log, { ...baseOpts, hasContext: false });
+    const text = strip(lines.join("\n"));
+    expect(text).toContain("none");
+  });
+
+  it("does not infer context presence from a non-empty brief string", () => {
+    const { lines, log } = collect();
+    printStartupBanner(log, { ...baseOpts, brief: "stale brief", hasContext: false });
     const text = strip(lines.join("\n"));
     expect(text).toContain("none");
   });

@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile, mkdir, readFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
+import { loadRepoContext } from "#infrastructure/context/context-store.js";
+import { renderBriefFromContext } from "#infrastructure/context/context-brief.js";
 import {
   detectStack,
   detectProjects,
@@ -357,7 +359,7 @@ describe("sampleFlow", () => {
 });
 
 describe("runFingerprint", () => {
-  it("generates brief, writes to disk, and returns profile for TS project", async () => {
+  it("generates a canonical context artifact, writes it, and returns the rendered brief", async () => {
     await writeFile(
       join(tempDir, "package.json"),
       JSON.stringify({
@@ -375,11 +377,17 @@ describe("runFingerprint", () => {
     const result = await runFingerprint({ cwd: tempDir, outputDir });
 
     expect(result.brief).toContain("# Codebase Brief");
-    expect(result.brief).toContain("TypeScript");
-    expect(result.profile.stack).toBe("TypeScript");
-    // Verify brief was written to disk
+    expect(result.context.layers.detected.context.concepts?.stack).toContain("TypeScript");
+    expect(result.context.effective.context.architecture).toBe("Flat structure");
     const onDisk = await readFile(join(outputDir, "brief.md"), "utf-8");
     expect(onDisk).toBe(result.brief);
+    const storedContext = loadRepoContext(outputDir);
+    expect(storedContext).not.toBeNull();
+    if (storedContext === null) {
+      throw new Error("Expected stored repo context");
+    }
+    expect(storedContext).toEqual(result.context);
+    expect(renderBriefFromContext(storedContext)).toBe(result.brief);
   });
 
   it("returns defaults when skip is true", async () => {
@@ -389,10 +397,10 @@ describe("runFingerprint", () => {
       skip: true,
     });
     expect(result.brief).toBe("");
-    expect(result.profile).toEqual({});
+    expect(result.context.effective.context).toEqual({});
   });
 
-  it("returns cached brief on second call without regenerating", async () => {
+  it("returns cached brief and context on second call without regenerating", async () => {
     await writeFile(
       join(tempDir, "package.json"),
       JSON.stringify({
@@ -406,10 +414,10 @@ describe("runFingerprint", () => {
     const second = await runFingerprint({ cwd: tempDir, outputDir });
 
     expect(second.brief.trim()).toBe(first.brief.trim());
-    expect(second.profile.stack).toBe(first.profile.stack);
+    expect(second.context).toEqual(first.context);
   });
 
-  it("forceRefresh regenerates a fresh brief instead of returning cache", async () => {
+  it("forceRefresh regenerates a fresh context artifact instead of returning cache", async () => {
     await writeFile(
       join(tempDir, "package.json"),
       JSON.stringify({
@@ -420,20 +428,20 @@ describe("runFingerprint", () => {
 
     const outputDir = join(tempDir, ".orch");
 
-    // First call generates the brief
+    // First call generates the artifact
     const first = await runFingerprint({ cwd: tempDir, outputDir });
-    expect(first.brief).toContain("TypeScript");
+    expect(first.context.layers.detected.context.concepts?.stack).toContain("TypeScript");
 
-    // Tamper with the cached brief to detect if it's re-read vs regenerated
+    // Tamper with the cached brief to detect if it is re-read from disk.
     await writeFile(join(outputDir, "brief.md"), "STALE CACHE");
 
     // Without forceRefresh — returns cached (stale) content
     const cached = await runFingerprint({ cwd: tempDir, outputDir });
     expect(cached.brief).toBe("STALE CACHE");
 
-    // With forceRefresh — regenerates, overwrites stale cache
+    // With forceRefresh — regenerates from context and overwrites stale cache
     const forced = await runFingerprint({ cwd: tempDir, outputDir, forceRefresh: true });
-    expect(forced.brief).toContain("TypeScript");
+    expect(forced.context.layers.detected.context.concepts?.stack).toContain("TypeScript");
     expect(forced.brief).not.toContain("STALE CACHE");
   });
 
@@ -453,10 +461,10 @@ describe("runFingerprint", () => {
       forceRefresh: true,
     });
     expect(result.brief).toBe("");
-    expect(result.profile).toEqual({});
+    expect(result.context.effective.context).toEqual({});
   });
 
-  it("returns dotnet test for C# project with xUnit tests", async () => {
+  it("captures C# stack information in the detected context", async () => {
     await mkdir(join(tempDir, "src"), { recursive: true });
     await mkdir(join(tempDir, "tests"), { recursive: true });
     await writeFile(
@@ -472,10 +480,11 @@ describe("runFingerprint", () => {
     );
 
     const result = await runFingerprint({ cwd: tempDir, outputDir: join(tempDir, ".orch") });
-    expect(result.profile.stack).toBe("C#");
+    expect(result.context.layers.detected.context.concepts?.stack).toContain("C#");
+    expect(result.context.layers.detected.context.concepts?.tests).toBe("xUnit");
   });
 
-  it("returns npx jest for Jest project", async () => {
+  it("captures TS + Jest information in the detected context", async () => {
     await writeFile(
       join(tempDir, "package.json"),
       JSON.stringify({
@@ -490,7 +499,43 @@ describe("runFingerprint", () => {
     );
 
     const result = await runFingerprint({ cwd: tempDir, outputDir: join(tempDir, ".orch") });
-    expect(result.profile.stack).toBe("TypeScript");
+    expect(result.context.layers.detected.context.concepts?.stack).toContain("TypeScript");
+    expect(result.context.layers.detected.context.concepts?.tests).toBe("Jest");
+  });
+
+  it("writes context.json and no longer writes profile.json", async () => {
+    await writeFile(join(tempDir, "package.json"), JSON.stringify({ devDependencies: { typescript: "^5.0.0" } }));
+
+    const outputDir = join(tempDir, ".orch");
+    await runFingerprint({ cwd: tempDir, outputDir });
+
+    const contextJson = await readFile(join(outputDir, "context.json"), "utf-8");
+    expect(contextJson).toContain('"version": 1');
+    await expect(readFile(join(outputDir, "profile.json"), "utf-8")).rejects.toThrow();
+  });
+
+  it("renders brief.md from the stored context artifact", async () => {
+    await writeFile(join(tempDir, "package.json"), JSON.stringify({ devDependencies: { typescript: "^5.0.0" } }));
+
+    const outputDir = join(tempDir, ".orch");
+    const result = await runFingerprint({ cwd: tempDir, outputDir });
+    const storedContext = loadRepoContext(outputDir);
+
+    expect(storedContext).not.toBeNull();
+    if (storedContext === null) {
+      throw new Error("Expected stored repo context");
+    }
+    expect(result.brief).toBe(renderBriefFromContext(storedContext));
+  });
+
+  it("produces a minimal but versioned artifact for unknown projects", async () => {
+    const outputDir = join(tempDir, ".orch");
+    const result = await runFingerprint({ cwd: tempDir, outputDir });
+
+    expect(result.context.version).toBe(1);
+    expect(result.context.layers.planner.context).toEqual({});
+    expect(result.context.layers.detected.context.architecture).toBe("Flat structure");
+    expect(result.context.layers.detected.context.concepts?.stack).toContain("unknown");
   });
 });
 
@@ -509,7 +554,7 @@ describe("wrapBrief", () => {
 });
 
 describe("generateBrief", () => {
-  it("includes stack and architecture sections", async () => {
+  it("includes architecture and structured context sections", async () => {
     await writeFile(
       join(tempDir, "package.json"),
       JSON.stringify({
@@ -519,7 +564,7 @@ describe("generateBrief", () => {
     );
 
     const brief = generateBrief(tempDir);
-    expect(brief).toContain("## Stack");
+    expect(brief).toContain("## Concepts");
     expect(brief).toContain("TypeScript");
     expect(brief).toContain("## Architecture");
   });
