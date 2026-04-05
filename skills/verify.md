@@ -49,13 +49,20 @@ End your response with a short human summary, then exactly one machine-readable 
   "checks": [
     {
       "check": "<command>",
-      "status": "PASS|FAIL|WARN|SKIPPED",
-      "output": "<relevant output snippet>"
+      "status": "PASS|FAIL|WARN|SKIPPED"
     }
   ],
-  "failures": [
-    "<concrete failure description with file:line>"
+  "sliceLocalFailures": [
+    "<failure caused by the current execution unit>"
   ],
+  "outOfScopeFailures": [
+    "<failure not owned by the current execution unit>"
+  ],
+  "preExistingFailures": [
+    "<failure that already existed before these changes>"
+  ],
+  "runnerIssue": "<runner instability or hung process summary>" | null,
+  "retryable": true,
   "summary": "<one sentence>"
 }
 ```
@@ -64,9 +71,9 @@ End your response with a short human summary, then exactly one machine-readable 
 ## Rules
 
 - **Always run the tests.** That is your primary job.
-- Report what passed and what failed. Include relevant output snippets for failures.
+- Report what passed and what failed in the human summary and structured failure buckets.
 - Do NOT fix code. Report only.
-- Do NOT classify ownership of failures. You find problems. A separate triage pass routes them.
+- Classify failures into the required ownership buckets. `sliceLocalFailures` are the only failures the builder should be asked to fix.
 - Do NOT editorialise about whether tests are "meaningful" or code is "well-structured". That's review's job.
 - Do NOT invent commands — only run what you found in project config.
 - The `### VERIFY_JSON` block is mandatory. Prose-only output is invalid.

@@ -158,6 +158,7 @@ and gap where actual judgement is needed.
 - Scope checks when possible (only changed directories). Full suite if shared code touched.
 - Only run commands found in project config. Never invent commands.
 - Output must include a machine-readable structured block. Prose-only output is invalid.
+- Classify failures into the runtime's required buckets: slice-local, out-of-scope, pre-existing, and runner issues.
 - Be fast. Diff, read config, run checks, report. Done.
 
 ### Tier temperature
@@ -168,11 +169,15 @@ and gap where actual judgement is needed.
 All tiers: do not spend time philosophising about whether the change is "meaningful." That's
 review's job. Your job is: do the checks pass?
 
-### The finder is not the judge
+### Ownership contract
 
-The verifier reports raw findings. A separate triage pass classifies ownership (slice-local,
-out-of-scope, pre-existing, infrastructure). The verifier should never decide whether a
-finding is the builder's fault.
+The runtime currently expects the verifier to classify failures into ownership buckets. Do that
+mechanically from the evidence:
+
+- `sliceLocalFailures` for failures caused by the current execution unit
+- `outOfScopeFailures` for unrelated failures
+- `preExistingFailures` for failures that already existed before the current changes
+- `runnerIssue` for hung runners, crashed tooling, or unstable infrastructure
 
 ### Failure modes observed
 
