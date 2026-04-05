@@ -1460,6 +1460,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
   requestTriageResultText?: string;
   requestTriageSendError?: Error;
   parsedRequestTriageResult?: { mode: "direct" | "grouped" | "sliced"; reason: string };
+  fingerprintBrief?: string | ((cwd: string) => string);
   inputAlreadyPlan?: boolean;
   inventoryContent?: string;
   generatedPlanId?: string;
@@ -1508,7 +1509,12 @@ const runMainWithInventoryPlanMocks = async (options?: {
   const doGeneratePlan = vi.fn().mockResolvedValue(generatedPlanPath);
   const generatePlanId = vi.fn(() => options?.generatedPlanId ?? "direct01");
   const assertGitRepo = vi.fn(options?.assertGitRepoImplementation ?? (async () => undefined));
-  const runFingerprint = vi.fn().mockResolvedValue({ brief: "brief text" });
+  const runFingerprint = vi.fn().mockImplementation(async ({ cwd }: { cwd: string }) => ({
+    brief:
+      typeof options?.fingerprintBrief === "function"
+        ? options.fingerprintBrief(cwd)
+        : (options?.fingerprintBrief ?? "brief text"),
+  }));
   const defaultResolveWorktreeResult = options?.resolveWorktreeResult ?? {
     cwd: tempDir,
     worktreeInfo: null,
@@ -2085,6 +2091,7 @@ describe("main execution preference wiring", () => {
   it("uses the selected tree as planning cwd for auto inventory triage and generated plan bootstrap", async () => {
     const externalTreePath = join(tempDir, "inventory-auto-tree");
     await mkdir(externalTreePath, { recursive: true });
+    const treeBrief = `brief for ${externalTreePath}`;
     const {
       assertGitRepo,
       createContainer,
@@ -2092,9 +2099,11 @@ describe("main execution preference wiring", () => {
       inventoryPath,
       planGeneratorSpawnerFactory,
       requestTriageSpawnerFactory,
+      runFingerprint,
       stateFile,
     } = await runMainWithInventoryPlanMocks({
       args: ["--tree", externalTreePath],
+      fingerprintBrief: (cwd) => `brief for ${cwd}`,
       requestTriageResult: { mode: "grouped", reason: "few coherent milestones" },
     });
 
@@ -2113,9 +2122,14 @@ describe("main execution preference wiring", () => {
         cwd: externalTreePath,
       }),
     );
+    expect(runFingerprint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: externalTreePath,
+      }),
+    );
     expect(doGeneratePlan).toHaveBeenCalledWith(
       inventoryPath,
-      "brief text",
+      treeBrief,
       expectedOrchDir,
       expect.any(Function),
       expect.any(Function),
@@ -2237,6 +2251,7 @@ describe("main execution preference wiring", () => {
     async ({ flag, executionMode }) => {
       const externalTreePath = join(tempDir, `inventory-${flag.slice(2)}-tree`);
       await mkdir(externalTreePath, { recursive: true });
+      const treeBrief = `brief for ${externalTreePath}`;
       const {
         assertGitRepo,
         createContainer,
@@ -2244,8 +2259,10 @@ describe("main execution preference wiring", () => {
         inventoryPath,
         planGeneratorSpawnerFactory,
         requestTriageSpawnerFactory,
+        runFingerprint,
       } = await runMainWithInventoryPlanMocks({
         args: [flag, "--tree", externalTreePath],
+        fingerprintBrief: (cwd) => `brief for ${cwd}`,
       });
 
       const { realpathSync } = await import("fs");
@@ -2257,9 +2274,14 @@ describe("main execution preference wiring", () => {
           cwd: externalTreePath,
         }),
       );
+      expect(runFingerprint).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: externalTreePath,
+        }),
+      );
       expect(doGeneratePlan).toHaveBeenCalledWith(
         inventoryPath,
-        "brief text",
+        treeBrief,
         expectedOrchDir,
         expect.any(Function),
         expect.any(Function),
@@ -2560,9 +2582,11 @@ describe("main execution preference wiring", () => {
   it("passes --tree through direct inventory execution and uses the selected tree as cwd", async () => {
     const externalTreePath = join(tempDir, "existing-tree");
     await mkdir(externalTreePath, { recursive: true });
+    const treeBrief = `brief for ${externalTreePath}`;
 
-    const { assertGitRepo, createContainer, planGeneratorSpawnerFactory, requestTriageSpawnerFactory, resolveWorktree } = await runMainWithInventoryPlanMocks({
+    const { assertGitRepo, createContainer, planGeneratorSpawnerFactory, requestTriageSpawnerFactory, resolveWorktree, runFingerprint } = await runMainWithInventoryPlanMocks({
       args: ["--quick", "--tree", externalTreePath],
+      fingerprintBrief: (cwd) => `brief for ${cwd}`,
       generatedPlanId: "direct42",
       resolveWorktreeResult: {
         cwd: externalTreePath,
@@ -2591,6 +2615,7 @@ describe("main execution preference wiring", () => {
     expect(createContainer).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: externalTreePath,
+        brief: treeBrief,
         stateFile: expectedStateFile,
         logPath: expectedLogPath,
       }),
@@ -2609,6 +2634,11 @@ describe("main execution preference wiring", () => {
     expect(config.logPath).not.toContain(`${externalTreePath}/.orch/`);
     expect(requestTriageSpawnerFactory).not.toHaveBeenCalled();
     expect(planGeneratorSpawnerFactory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: externalTreePath,
+      }),
+    );
+    expect(runFingerprint).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: externalTreePath,
       }),

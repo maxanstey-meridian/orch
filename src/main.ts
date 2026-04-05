@@ -661,8 +661,9 @@ export const main = async (runtime: MainRuntime = {}) => {
     earlyLog.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
   };
 
+  const fingerprintCwd = inventoryPath ? planningCwd : cwd;
   const { brief } = await runFingerprint({
-    cwd,
+    cwd: fingerprintCwd,
     outputDir: orchDir,
     skip: skipFingerprint,
     forceRefresh: !skipFingerprint,
