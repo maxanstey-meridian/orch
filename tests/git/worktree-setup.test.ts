@@ -25,6 +25,19 @@ import { loadState, saveState } from "#infrastructure/state/state.js";
 import { execFile } from "child_process";
 
 const noop = () => {};
+const mockedExecFile = vi.mocked(execFile);
+type ExecFileImplementation = Parameters<typeof mockedExecFile.mockImplementation>[0];
+type ExecFileArgs = ExecFileImplementation extends (...args: infer Args) => unknown ? Args : never;
+type ExecFileCallback = ExecFileArgs[3];
+
+const completeExecFileCall = (
+  callback: ExecFileCallback,
+  error: Error | null,
+  stdout = "",
+  stderr = "",
+): void => {
+  callback?.(error, stdout, stderr);
+};
 
 describe("resolveWorktree", () => {
   beforeEach(() => {
@@ -360,17 +373,13 @@ describe("resolveWorktree", () => {
     vi.mocked(createWorktree).mockResolvedValue("/repo/.orch/trees/abc123");
     vi.mocked(captureRef).mockResolvedValue("deadbeef");
     vi.mocked(saveState).mockResolvedValue(undefined);
-    vi.mocked(execFile).mockImplementation(
-      (
-        file: string,
-        args: readonly string[] | null,
-        options: { cwd?: string } | null,
-        callback: ((error: Error | null, stdout: string, stderr: string) => void) | undefined,
-      ) => {
-        callback?.(null, "", "");
-        return {} as never;
-      },
-    );
+    const successImplementation: NonNullable<ExecFileImplementation> = (
+      ...args: ExecFileArgs
+    ) => {
+      completeExecFileCall(args[3], null, "", "");
+      return {} as ReturnType<typeof execFile>;
+    };
+    mockedExecFile.mockImplementation(successImplementation);
 
     await resolveWorktree({
       branchName: "orch/abc123",
@@ -403,24 +412,20 @@ describe("resolveWorktree", () => {
   it("aborts managed worktree setup on the first failing command and does not persist state", async () => {
     vi.mocked(createWorktree).mockResolvedValue("/repo/.orch/trees/abc123");
     vi.mocked(captureRef).mockResolvedValue("deadbeef");
-    vi.mocked(execFile).mockImplementation(
-      (
-        _file: string,
-        args: readonly string[] | null,
-        _options: { cwd?: string } | null,
-        callback: ((error: Error | null, stdout: string, stderr: string) => void) | undefined,
-      ) => {
-        const command = args?.[1];
-        if (command === "echo first") {
-          callback?.(null, "", "");
-          return {} as never;
-        }
+    const failingImplementation: NonNullable<ExecFileImplementation> = (
+      ...args: ExecFileArgs
+    ) => {
+      const command = args[1]?.[1];
+      if (command === "echo first") {
+        completeExecFileCall(args[3], null, "", "");
+        return {} as ReturnType<typeof execFile>;
+      }
 
-        const error = new Error("command failed");
-        callback?.(error, "stdout line", "stderr line");
-        return {} as never;
-      },
-    );
+      const error = new Error("command failed");
+      completeExecFileCall(args[3], error, "stdout line", "stderr line");
+      return {} as ReturnType<typeof execFile>;
+    };
+    mockedExecFile.mockImplementation(failingImplementation);
 
     await expect(
       resolveWorktree({

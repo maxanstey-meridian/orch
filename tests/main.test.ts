@@ -21,6 +21,20 @@ Do nothing.
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 
+const getCreateContainerConfig = (createContainer: ReturnType<typeof vi.fn>): Record<string, unknown> => {
+  const firstCall = (createContainer.mock.calls as unknown[][])[0];
+  if (!firstCall) {
+    throw new Error("Expected createContainer to be called");
+  }
+
+  const config = firstCall[0];
+  if (!config || typeof config !== "object") {
+    throw new Error("Expected createContainer to receive a config object");
+  }
+
+  return config as Record<string, unknown>;
+};
+
 let tempDir: string;
 
 beforeEach(async () => {
@@ -2120,7 +2134,7 @@ describe("main execution preference wiring", () => {
     const { realpathSync } = await import("fs");
     const expectedOrchDir = join(realpathSync(tempDir), ".orch");
     const expectedStateFile = statePathForPlan(expectedOrchDir, resolvePlanId(join(tempDir, ".orch", "plan-generated.json")));
-    const config = createContainer.mock.calls[0]?.[0] as Record<string, unknown>;
+    const config = getCreateContainerConfig(createContainer);
 
     expect(requestTriageSpawnerFactory).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2277,7 +2291,7 @@ describe("main execution preference wiring", () => {
 
       const { realpathSync } = await import("fs");
       const expectedOrchDir = join(realpathSync(tempDir), ".orch");
-      const config = createContainer.mock.calls[0]?.[0] as Record<string, unknown>;
+      const config = getCreateContainerConfig(createContainer);
       expect(requestTriageSpawnerFactory).not.toHaveBeenCalled();
       expect(planGeneratorSpawnerFactory).toHaveBeenCalledWith(
         expect.objectContaining({

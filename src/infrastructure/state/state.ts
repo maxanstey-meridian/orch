@@ -68,6 +68,29 @@ const stateSchema = z
   })
   .passthrough();
 
+const stripEmptyAgentSessions = (parsed: unknown): unknown => {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return parsed;
+  }
+
+  const clone = { ...(parsed as Record<string, unknown>) };
+  for (const key of ["verifySession", "gapSession"] as const) {
+    const session = clone[key];
+    if (
+      typeof session === "object" &&
+      session !== null &&
+      !Array.isArray(session) &&
+      "id" in session &&
+      typeof (session as { id?: unknown }).id === "string" &&
+      (session as { id: string }).id.trim() === ""
+    ) {
+      delete clone[key];
+    }
+  }
+
+  return clone;
+};
+
 export const loadState = async (filePath: string): Promise<OrchestratorState> => {
   let raw: string;
   try {
@@ -82,6 +105,8 @@ export const loadState = async (filePath: string): Promise<OrchestratorState> =>
   } catch {
     return {};
   }
+
+  parsed = stripEmptyAgentSessions(parsed);
 
   const result = stateSchema.safeParse(parsed);
   if (!result.success) {
