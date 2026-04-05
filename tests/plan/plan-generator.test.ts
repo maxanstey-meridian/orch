@@ -828,7 +828,7 @@ describe("generatePlan", () => {
     expect(capturedPrompt).toContain("Transform this feature inventory");
   });
 
-  it("prompt includes runtime planning instructions and defers schema detail to the system prompt", async () => {
+  it("prompt includes JSON schema shape and instructions", async () => {
     const inventoryPath = join(tmpDir, "inventory.md");
     writeFileSync(inventoryPath, "# Features\n\n## Auth\nLogin.");
 
@@ -850,12 +850,13 @@ describe("generatePlan", () => {
 
     await generatePlan(inventoryPath, "", agent, outputDir);
 
-    expect(capturedPrompt).toContain(
-      "Follow the JSON schema and raw-JSON-only output contract from your system prompt exactly.",
-    );
-    expect(capturedPrompt).toContain('"executionMode"');
-    expect(capturedPrompt).toContain("Every slice must include a non-empty `criteria` array");
-    expect(capturedPrompt).toContain('Use top-level `"context"` only for stable repo-wide guidance');
+    // Must reference JSON schema fields
+    for (const field of ["context", "architecture", "keyFiles", "concepts", "conventions", "groups", "slices", "number", "title", "why", "files", "action", "criteria", "details", "tests"]) {
+      expect(capturedPrompt).toContain(`"${field}"`);
+    }
+    // Must instruct JSON output
+    expect(capturedPrompt).toContain("valid JSON");
+    expect(capturedPrompt).toContain("stable repo knowledge only");
     // Must NOT contain old markdown format instructions
     expect(capturedPrompt).not.toContain("## Group:");
     expect(capturedPrompt).not.toContain("### Slice");
@@ -883,9 +884,9 @@ describe("generatePlan", () => {
 
     await generatePlan(inventoryPath, "", agent, outputDir);
 
-    expect(capturedPrompt).toContain("Every slice must include a non-empty `criteria` array");
-    expect(capturedPrompt).toContain("high-level plan structure, not per-behaviour build instructions");
-    expect(capturedPrompt).toContain("Follow the JSON schema and raw-JSON-only output contract from your system prompt exactly.");
+    expect(capturedPrompt).toContain('"criteria": ["<binary acceptance criterion>"');
+    expect(capturedPrompt).toContain("Every generated slice must include a non-empty `criteria` array");
+    expect(capturedPrompt).toContain("The plan agent is the sole author of criteria in this iteration");
   });
 
   it("documents the criteria contract in the plan-generation skill", () => {

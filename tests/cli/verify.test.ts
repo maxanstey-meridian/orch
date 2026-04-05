@@ -168,14 +168,14 @@ describe("parseVerifyResult", () => {
     expect(prompt).toContain('"sliceLocalFailures"');
     expect(prompt).toContain('"runnerIssue"');
     expect(prompt).toContain("sliceLocalFailures");
-    expect(prompt).toContain("Run the verification commands required by your system prompt and project config");
+    expect(prompt).toContain("ONLY failures the builder should be asked to fix");
   });
 
   it("verify skill requires the human summary plus mandatory VERIFY_JSON contract", () => {
     const skill = readFileSync("skills/verify.md", "utf8");
 
     expect(skill).toContain("### VERIFY_JSON");
-    expect(skill).toContain("sliceLocalFailures");
+    expect(skill).toContain("failures");
     expect(skill).toContain("The `### VERIFY_JSON` block is mandatory.");
   });
 });

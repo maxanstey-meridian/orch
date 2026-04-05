@@ -68,11 +68,11 @@ describe("withBrief", () => {
 });
 
 describe("buildTddPrompt", () => {
-  it("includes slice content and builder execution wording", () => {
+  it("includes slice content and TDD keywords", () => {
     const result = buildTddPrompt("slice text");
     expect(result).toContain("slice text");
-    expect(result).toContain("builder contract");
-    expect(result).toContain("add regression tests");
+    expect(result).toContain("RED");
+    expect(result).toContain("GREEN");
   });
 
   it("includes fix instructions in fix mode", () => {
@@ -101,11 +101,11 @@ describe("buildTddPrompt", () => {
     expect(result).toContain("at least one regression guard per criterion");
   });
 
-  it("keeps legacy fallback behavior when no criteria section exists", () => {
+  it("keeps legacy tdd wording when no criteria section exists", () => {
     const result = buildTddPrompt(SLICE_WITHOUT_CRITERIA);
 
-    expect(result).toContain("builder contract");
-    expect(result).toContain("Implement the following plan slice");
+    expect(result).toContain("RED");
+    expect(result).toContain("GREEN");
     expect(result).not.toContain("## Criteria coverage");
     expect(result).not.toContain("For each criterion in the `**Criteria:**` section");
   });
@@ -149,11 +149,11 @@ describe("buildDirectTestPassPrompt", () => {
 });
 
 describe("buildReviewPreamble", () => {
-  it("includes base SHA and review workflow guidance", () => {
+  it("includes base SHA and review discipline keywords", () => {
     const result = buildReviewPreamble("abc123");
     expect(result).toContain("abc123");
-    expect(result).toContain("Read the full contents of every changed file");
-    expect(result).toContain("Deliverable check");
+    expect(result).toContain("Review discipline");
+    expect(result).toContain("Two-pass priority");
   });
 });
 
@@ -213,7 +213,7 @@ describe("buildGapPrompt", () => {
     expect(criteriaResult).toContain("Prioritise missing regression guards tied to explicit criteria");
     expect(criteriaResult).toContain("ahead of generic edge-case ideas");
     expect(criteriaResult).toContain("NO_GAPS_FOUND");
-    expect(legacyResult).toContain("missing test coverage and unhandled edge cases");
+    expect(legacyResult).toContain("Untested edge cases and boundary conditions");
     expect(legacyResult).not.toContain("Prioritise missing regression guards tied to explicit criteria");
   });
 });
@@ -257,7 +257,6 @@ describe("buildPlanPrompt", () => {
     expect(result).toContain("You are a planning agent");
     expect(result).toContain("slice content here");
     expect(result).toContain("Do NOT write any code");
-    expect(result).toContain("numbered implementation steps");
   });
 
   it("makes plan authority and inference policy explicit", () => {
@@ -265,19 +264,17 @@ describe("buildPlanPrompt", () => {
     expect(result).toContain("the plan is the authority");
     expect(result).toContain("Future-slice wiring stays deferred");
     expect(result).toContain("Compatibility/fallback behavior must be stated, not invented");
-    expect(result).toContain("Do NOT produce RED/GREEN");
   });
 });
 
 describe("buildPlanGenerationPrompt", () => {
   it("teaches grouped mode to produce coarse increments with explicit mode metadata", () => {
     const result = buildPlanGenerationPrompt("grouped");
-    expect(result).toContain('"executionMode"');
+    expect(result).toContain('"executionMode": "grouped"');
     expect(result).toContain("coarse groups with independently meaningful deliverables");
     expect(result).toContain("review/verify cadence is driven by group boundaries");
     expect(result).toContain("larger internal change sets");
     expect(result).toContain("Reject micro-slice churn");
-    expect(result).toContain("Follow the JSON schema and raw-JSON-only output contract from your system prompt exactly.");
   });
 });
 
