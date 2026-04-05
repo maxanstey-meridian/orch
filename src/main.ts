@@ -855,6 +855,58 @@ export const main = async (runtime: MainRuntime = {}) => {
     void exitWithCleanup(143);
   });
 
+  const prepareExecutionWorktree = async (
+    opts: {
+      readonly requireResumeCheck: boolean;
+    },
+  ): Promise<
+    | { readonly aborted: true }
+    | {
+        readonly aborted: false;
+        readonly cwd: string;
+        readonly worktreeInfo:
+          | {
+              readonly path: string;
+              readonly branch: string;
+            }
+          | undefined;
+        readonly skipStash: boolean;
+      }
+  > => {
+    const state = await loadState(stateFile);
+    if (opts.requireResumeCheck) {
+      const resumeCheck = await checkWorktreeResume(branchName, treePath, state);
+      if (!resumeCheck.ok) {
+        origLog(resumeCheck.message);
+        exit(1);
+        return { aborted: true };
+      }
+    }
+
+    try {
+      const result = await resolveWorktree({
+        branchName,
+        cwd,
+        treePath,
+        worktreeSetup: orchrc.worktreeSetup,
+        activePlanId,
+        state,
+        stateFile,
+        log,
+      });
+      return {
+        aborted: false,
+        cwd: result.cwd,
+        worktreeInfo: result.worktreeInfo ?? undefined,
+        skipStash: result.skipStash,
+      };
+    } catch (error) {
+      cleanup();
+      exitWithError(error instanceof Error ? error.message : String(error));
+      return { aborted: true };
+    }
+  };
+
   try {
     if (executionMode === "direct") {
       const directGroups =
@@ -873,23 +925,13 @@ export const main = async (runtime: MainRuntime = {}) => {
       const planLogPath = logPathForPlan(orchDir, activePlanId);
       log(`${ts()} ${a.dim}Log file: ${planLogPath}${a.reset}`);
       log(`${ts()} ${a.dim}Initialising agents — this may take a few minutes...${a.reset}`);
-      let effectiveCwd: string;
-      try {
-        ({ cwd: effectiveCwd } = await resolveWorktree({
-          branchName,
-          cwd,
-          treePath,
-          worktreeSetup: orchrc.worktreeSetup,
-          activePlanId,
-          state: await loadState(stateFile),
-          stateFile,
-          log,
-        }));
-      } catch (error) {
-        cleanup();
-        exitWithError(error instanceof Error ? error.message : String(error));
+      const preparedWorktree = await prepareExecutionWorktree({
+        requireResumeCheck: directFromWork,
+      });
+      if (preparedWorktree.aborted) {
         return;
       }
+      const effectiveCwd = preparedWorktree.cwd;
       const orchestratorConfig = {
         cwd: effectiveCwd,
         planPath: orchestratorPlanPath,
@@ -952,43 +994,17 @@ export const main = async (runtime: MainRuntime = {}) => {
     cleanup = () => hud.teardown();
 
     // 6. Load per-plan state + resume mismatch guard + resolve worktree
-    const state: OrchestratorState = await loadState(stateFile);
-    const resumeCheck = await checkWorktreeResume(branchName, treePath, state);
-    if (!resumeCheck.ok) {
-      origLog(resumeCheck.message);
-      exit(1);
-      return;
-    }
     // resolveWorktree persists worktree state to disk before returning,
     // so RunOrchestration.execute() will pick it up via persistence.load().
-    let effectiveCwd: string;
-    let worktreeInfo:
-      | {
-          readonly path: string;
-          readonly branch: string;
-        }
-      | undefined;
-    let skipStash: boolean;
-    try {
-      ({
-        cwd: effectiveCwd,
-        worktreeInfo,
-        skipStash,
-      } = await resolveWorktree({
-        branchName,
-        cwd,
-        treePath,
-        worktreeSetup: orchrc.worktreeSetup,
-        activePlanId,
-        state,
-        stateFile,
-        log,
-      }));
-    } catch (error) {
-      cleanup();
-      exitWithError(error instanceof Error ? error.message : String(error));
+    const preparedWorktree = await prepareExecutionWorktree({
+      requireResumeCheck: true,
+    });
+    if (preparedWorktree.aborted) {
       return;
     }
+    const effectiveCwd = preparedWorktree.cwd;
+    const worktreeInfo = preparedWorktree.worktreeInfo;
+    const skipStash = preparedWorktree.skipStash;
     const interactive = !auto && isTTY;
 
     // 8. Validate group filter

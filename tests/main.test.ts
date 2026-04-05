@@ -2704,6 +2704,187 @@ describe("main execution preference wiring", () => {
     expect(exit).toHaveBeenCalledWith(0);
   });
 
+  it("checks resume state before resolving an external tree for direct --work", async () => {
+    const directPlanPath = join(tempDir, "artifacts", "direct-work.json");
+    const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));
+    const externalTreePath = join(tempDir, "existing-tree");
+    await mkdir(externalTreePath, { recursive: true });
+    const externalState = {
+      worktree: {
+        path: externalTreePath,
+        branch: "feature/existing",
+        baseSha: "deadbeef",
+        managed: false,
+      },
+      lastCompletedSlice: 1,
+    };
+
+    const { checkWorktreeResume, createContainer, resolveWorktree } = await runMainWithWorkPlanMocks(
+      ["--tree", externalTreePath],
+      {
+        planPath: directPlanPath,
+        planContent: directPlan,
+        preloadedState: externalState,
+        resolveWorktreeResult: {
+          cwd: externalTreePath,
+          worktreeInfo: { path: externalTreePath, branch: "feature/existing" },
+          skipStash: true,
+          updatedState: externalState,
+        },
+      },
+    );
+
+    expect(checkWorktreeResume).toHaveBeenCalledWith(
+      undefined,
+      externalTreePath,
+      expect.objectContaining({
+        lastCompletedSlice: 1,
+        worktree: externalState.worktree,
+      }),
+    );
+    expect(resolveWorktree.mock.invocationCallOrder[0]).toBeGreaterThan(
+      checkWorktreeResume.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(createContainer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionMode: "direct",
+        cwd: externalTreePath,
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("exits direct --work before worktree resolution when resume validation fails", async () => {
+    const directPlanPath = join(tempDir, "artifacts", "direct-work.json");
+    const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));
+    const externalTreePath = join(tempDir, "existing-tree");
+    await mkdir(externalTreePath, { recursive: true });
+    const externalState = {
+      worktree: {
+        path: externalTreePath,
+        branch: "feature/existing",
+        baseSha: "deadbeef",
+        managed: false,
+      },
+      lastCompletedSlice: 1,
+    };
+
+    const {
+      checkWorktreeResume,
+      createContainer,
+      exit,
+      resolveWorktree,
+    } = await runMainWithWorkPlanMocks(["--tree", externalTreePath], {
+      planPath: directPlanPath,
+      planContent: directPlan,
+      preloadedState: externalState,
+      checkWorktreeResumeResult: {
+        ok: false,
+        message: "resume mismatch",
+      },
+    });
+
+    expect(checkWorktreeResume).toHaveBeenCalledWith(
+      undefined,
+      externalTreePath,
+      expect.objectContaining({
+        lastCompletedSlice: 1,
+        worktree: externalState.worktree,
+      }),
+    );
+    expect(resolveWorktree).not.toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("rejects direct --work resume when managed state is missing the required branch flag", async () => {
+    const directPlanPath = join(tempDir, "artifacts", "direct-work.json");
+    const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));
+    const managedState = {
+      worktree: {
+        path: join(tempDir, ".orch", "trees", "abc123"),
+        branch: "orch/direct-managed",
+        baseSha: "feedface",
+        managed: true,
+      },
+      lastCompletedSlice: 1,
+    };
+
+    const {
+      checkWorktreeResume,
+      createContainer,
+      exit,
+      resolveWorktree,
+    } = await runMainWithWorkPlanMocks([], {
+      planPath: directPlanPath,
+      planContent: directPlan,
+      preloadedState: managedState,
+      checkWorktreeResumeResult: {
+        ok: false,
+        message:
+          "Previous run used --branch orch/direct-managed. Pass --branch again to resume, or --reset to start fresh.",
+      },
+    });
+
+    expect(checkWorktreeResume).toHaveBeenCalledWith(
+      undefined,
+      undefined,
+      expect.objectContaining({
+        lastCompletedSlice: 1,
+        worktree: managedState.worktree,
+      }),
+    );
+    expect(resolveWorktree).not.toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("rejects direct --work resume when the selected external tree changes", async () => {
+    const directPlanPath = join(tempDir, "artifacts", "direct-work.json");
+    const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));
+    const previousTreePath = join(tempDir, "existing-tree");
+    const nextTreePath = join(tempDir, "other-tree");
+    await mkdir(previousTreePath, { recursive: true });
+    await mkdir(nextTreePath, { recursive: true });
+    const externalState = {
+      worktree: {
+        path: previousTreePath,
+        branch: "feature/existing",
+        baseSha: "deadbeef",
+        managed: false,
+      },
+      lastCompletedSlice: 1,
+    };
+
+    const {
+      checkWorktreeResume,
+      createContainer,
+      exit,
+      resolveWorktree,
+    } = await runMainWithWorkPlanMocks(["--tree", nextTreePath], {
+      planPath: directPlanPath,
+      planContent: directPlan,
+      preloadedState: externalState,
+      checkWorktreeResumeResult: {
+        ok: false,
+        message:
+          `Previous run used --tree ${previousTreePath}. Pass --tree ${previousTreePath} again to resume, or --reset to start fresh.`,
+      },
+    });
+
+    expect(checkWorktreeResume).toHaveBeenCalledWith(
+      undefined,
+      nextTreePath,
+      expect.objectContaining({
+        lastCompletedSlice: 1,
+        worktree: externalState.worktree,
+      }),
+    );
+    expect(resolveWorktree).not.toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it("passes --tree through resolveWorktree and uses the selected tree as cwd for --work", async () => {
     const externalTreePath = join(tempDir, "existing-tree");
     await mkdir(externalTreePath, { recursive: true });
