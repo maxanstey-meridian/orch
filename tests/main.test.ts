@@ -2823,6 +2823,29 @@ describe("main execution preference wiring", () => {
     await expect(readFile(canonicalPlanPath, "utf-8")).resolves.toBe(directPlan);
   });
 
+  it("refreshes the canonical worked direct artifact when the source plan changes at the same path", async () => {
+    const directPlanPath = join(tempDir, "artifacts", "plan-abc123.json");
+    const firstDirectPlan = buildDirectArtifactPlan(join(tempDir, "inventory-v1.md"));
+    const secondDirectPlan = buildDirectArtifactPlan(join(tempDir, "inventory-v2.md"));
+    const canonicalPlanPath = join(tempDir, ".orch", "plan-abc123.json");
+
+    await runMainWithWorkPlanMocks(["--show-plan"], {
+      planPath: directPlanPath,
+      planContent: firstDirectPlan,
+      generatedPlanId: "random89",
+    });
+
+    await expect(readFile(canonicalPlanPath, "utf-8")).resolves.toBe(firstDirectPlan);
+
+    await runMainWithWorkPlanMocks(["--show-plan"], {
+      planPath: directPlanPath,
+      planContent: secondDirectPlan,
+      generatedPlanId: "random90",
+    });
+
+    await expect(readFile(canonicalPlanPath, "utf-8")).resolves.toBe(secondDirectPlan);
+  });
+
   it("checks resume state before resolving an external tree for direct --work", async () => {
     const directPlanPath = join(tempDir, "artifacts", "direct-work.json");
     const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));

@@ -346,9 +346,13 @@ const ensureWorkedDirectPlanArtifact = (
   planId: string,
 ): string => {
   const canonicalPlanPath = resolve(orchDir, planFileName(planId));
-  if (!existsSync(canonicalPlanPath)) {
+  const sourcePlanDocument = readFileSync(planPath, "utf-8");
+  const existingCanonicalDocument = existsSync(canonicalPlanPath)
+    ? readFileSync(canonicalPlanPath, "utf-8")
+    : undefined;
+  if (existingCanonicalDocument !== sourcePlanDocument) {
     mkdirSync(orchDir, { recursive: true });
-    writeFileSync(canonicalPlanPath, readFileSync(planPath, "utf-8"));
+    writeFileSync(canonicalPlanPath, sourcePlanDocument);
   }
 
   return canonicalPlanPath;
