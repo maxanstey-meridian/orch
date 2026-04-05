@@ -818,9 +818,7 @@ export const main = async (runtime: MainRuntime = {}) => {
       const planLogPath = logPathForPlan(orchDir, activePlanId);
       log(`${ts()} ${a.dim}Log file: ${planLogPath}${a.reset}`);
       log(`${ts()} ${a.dim}Initialising agents — this may take a few minutes...${a.reset}`);
-      const {
-        cwd: effectiveCwd,
-      } = await resolveWorktree({
+      const { cwd: effectiveCwd } = await resolveWorktree({
         branchName,
         cwd,
         treePath,

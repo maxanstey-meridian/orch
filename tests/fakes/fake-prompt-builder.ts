@@ -3,10 +3,15 @@ import type { FinalPass } from "#application/ports/prompt-builder.port.js";
 
 export const DIRECT_PROMPT_SENTINEL = "[DIRECT]";
 export const DIRECT_TEST_PASS_PROMPT_SENTINEL = "[DIRECT_TEST_PASS]";
+export const DIRECT_VERIFY_PROMPT_SENTINEL = "[DIRECT_VERIFY]";
+export const DIRECT_REVIEW_PROMPT_SENTINEL = "[DIRECT_REVIEW]";
+export const DIRECT_COMPLETENESS_PROMPT_SENTINEL = "[DIRECT_COMPLETENESS]";
+export const DIRECT_GAP_PROMPT_SENTINEL = "[DIRECT_GAP]";
 
 export class PassthroughPromptBuilder extends PromptBuilder {
   /** Override in tests to return custom final passes. */
   finalPassesOverride: readonly FinalPass[] = [];
+  directFinalPassesOverride: readonly FinalPass[] = [];
 
   plan(sliceContent: string, sliceNumber: number): string {
     return `[PLAN:${sliceNumber}] ${sliceContent}`;
@@ -36,6 +41,22 @@ export class PassthroughPromptBuilder extends PromptBuilder {
     return `${DIRECT_TEST_PASS_PROMPT_SENTINEL} ${requestContent}`;
   }
 
+  directVerify(baseSha: string, requestContent: string, fixSummary?: string): string {
+    return `${DIRECT_VERIFY_PROMPT_SENTINEL} from=${baseSha}\n## Direct request\n${requestContent}${fixSummary ? `\nFIX: ${fixSummary}` : ""}`;
+  }
+
+  directReview(requestContent: string, baseSha: string, followUp = false): string {
+    return `${DIRECT_REVIEW_PROMPT_SENTINEL} from=${baseSha}${followUp ? " FOLLOW_UP" : ""}\n## Direct request\n${requestContent}`;
+  }
+
+  directCompleteness(requestContent: string, baseSha: string): string {
+    return `${DIRECT_COMPLETENESS_PROMPT_SENTINEL} from=${baseSha}\n## Direct request\n${requestContent}`;
+  }
+
+  directGap(requestContent: string): string {
+    return `${DIRECT_GAP_PROMPT_SENTINEL}\n## Direct request\n${requestContent}`;
+  }
+
   verify(baseSha: string, sliceNumber: number, fixSummary?: string): string {
     return `[VERIFY:${sliceNumber}] from=${baseSha}${fixSummary ? ` FIX: ${fixSummary}` : ""}`;
   }
@@ -45,8 +66,8 @@ export class PassthroughPromptBuilder extends PromptBuilder {
   }
 
 
-  review(content: string, baseSha: string, priorFindings?: string): string {
-    return `[REVIEW] from=${baseSha}${priorFindings ? ` PRIOR: ${priorFindings}` : ""}`;
+  review(content: string, baseSha: string, followUp = false): string {
+    return `[REVIEW] from=${baseSha}${followUp ? " FOLLOW_UP" : ""}`;
   }
 
   completeness(sliceContent: string, baseSha: string, sliceNumber: number): string {
@@ -67,6 +88,17 @@ export class PassthroughPromptBuilder extends PromptBuilder {
 
   finalPasses(_baseSha: string): readonly FinalPass[] {
     return this.finalPassesOverride;
+  }
+
+  directFinalPasses(_baseSha: string, requestContent: string): readonly FinalPass[] {
+    const passes = this.directFinalPassesOverride.length > 0
+      ? this.directFinalPassesOverride
+      : this.finalPassesOverride;
+
+    return passes.map((pass) => ({
+      name: pass.name,
+      prompt: `${pass.prompt}\n\n## Direct request\n${requestContent}`,
+    }));
   }
 
   withBrief(prompt: string): string {

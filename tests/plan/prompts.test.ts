@@ -4,11 +4,16 @@ import {
   buildTddPrompt,
   buildDirectExecutePrompt,
   buildDirectTestPassPrompt,
+  buildDirectVerifyPrompt,
+  buildDirectReviewPrompt,
+  buildDirectCompletenessPrompt,
+  buildDirectGapPrompt,
   buildReviewPreamble,
   buildReviewPrompt,
   buildCompletenessPrompt,
   buildGapPrompt,
   buildFinalPasses,
+  buildDirectFinalPasses,
   buildCommitSweepPrompt,
   buildPlanPrompt,
   buildPlanGenerationPrompt,
@@ -68,11 +73,12 @@ describe("withBrief", () => {
 });
 
 describe("buildTddPrompt", () => {
-  it("includes slice content and TDD keywords", () => {
+  it("includes slice content and builder-first execution wording", () => {
     const result = buildTddPrompt("slice text");
     expect(result).toContain("slice text");
-    expect(result).toContain("RED");
-    expect(result).toContain("GREEN");
+    expect(result).toContain("Implement the following plan slice as the builder");
+    expect(result).toContain("do not turn it into fake RED→GREEN ceremony");
+    expect(result).toContain("run the relevant tests");
   });
 
   it("includes fix instructions in fix mode", () => {
@@ -101,11 +107,10 @@ describe("buildTddPrompt", () => {
     expect(result).toContain("at least one regression guard per criterion");
   });
 
-  it("keeps legacy tdd wording when no criteria section exists", () => {
+  it("keeps legacy builder wording when no criteria section exists", () => {
     const result = buildTddPrompt(SLICE_WITHOUT_CRITERIA);
 
-    expect(result).toContain("RED");
-    expect(result).toContain("GREEN");
+    expect(result).toContain("Implement the following plan slice as the builder");
     expect(result).not.toContain("## Criteria coverage");
     expect(result).not.toContain("For each criterion in the `**Criteria:**` section");
   });
@@ -172,9 +177,9 @@ describe("buildReviewPrompt", () => {
   });
 
   it("tightens follow-up review passes to material missed issues only", () => {
-    const result = buildReviewPrompt("slice", "abc123", "- **File and line** foo");
-    expect(result).toContain("This is likely your final useful review pass");
-    expect(result).toContain("only add a new issue if it is clearly material");
+    const result = buildReviewPrompt("slice", "abc123", true);
+    expect(result).toContain("This is a follow-up review in the same conversation");
+    expect(result).toContain("Only report issues that are still open or genuinely new and material");
     expect(result).toContain("Do not hold back a material issue for a later pass");
   });
 
@@ -189,6 +194,48 @@ describe("buildReviewPrompt", () => {
     expect(criteriaResult).not.toContain("for context, not as acceptance criteria");
     expect(legacyResult).toContain("for context, not as acceptance criteria");
     expect(legacyResult).not.toContain("## Criteria check");
+  });
+});
+
+describe("direct prompt builders", () => {
+  it("buildDirectVerifyPrompt uses builder wording and the direct request contract", () => {
+    const result = buildDirectVerifyPrompt("abc123", "request text", "fixed stuff");
+    expect(result).toContain("builder implementation of the direct request");
+    expect(result).toContain("Fix summary from the builder");
+    expect(result).toContain("request text");
+    expect(result).toContain("### VERIFY_JSON");
+  });
+
+  it("buildDirectReviewPrompt uses first-pass and follow-up review discipline without replaying prior findings", () => {
+    const firstPass = buildDirectReviewPrompt("request text", "abc123");
+    const followUp = buildDirectReviewPrompt("request text", "abc123", true);
+
+    expect(firstPass).toContain("Assume you may only get one useful review pass for this direct request");
+    expect(followUp).toContain("This is a follow-up review in the same conversation");
+    expect(followUp).toContain("Only report issues that are still open or genuinely new and material");
+    expect(followUp).not.toContain("## Prior review findings");
+  });
+
+  it("buildDirectCompletenessPrompt uses DIRECT_COMPLETE and direct-request authority wording", () => {
+    const result = buildDirectCompletenessPrompt("request text", "abc123");
+    expect(result).toContain("DIRECT_COMPLETE");
+    expect(result).toContain("the direct request is the authority");
+    expect(result).toContain("request text");
+  });
+
+  it("buildDirectGapPrompt uses NO_GAPS_FOUND and direct-request gap semantics", () => {
+    const result = buildDirectGapPrompt("request text");
+    expect(result).toContain("NO_GAPS_FOUND");
+    expect(result).toContain("direct request");
+    expect(result).toContain("Do not drip-feed narrower versions");
+  });
+
+  it("buildDirectFinalPasses rewrites plan completeness into request completeness", () => {
+    const passes = buildDirectFinalPasses("abc123", "request text");
+    const requestCompleteness = passes.find((pass) => pass.name === "Request completeness");
+    expect(requestCompleteness).toBeDefined();
+    expect(requestCompleteness?.prompt).toContain("matches the direct request");
+    expect(requestCompleteness?.prompt).toContain("NO_ISSUES_FOUND");
   });
 });
 
@@ -213,7 +260,7 @@ describe("buildGapPrompt", () => {
     expect(criteriaResult).toContain("Prioritise missing regression guards tied to explicit criteria");
     expect(criteriaResult).toContain("ahead of generic edge-case ideas");
     expect(criteriaResult).toContain("NO_GAPS_FOUND");
-    expect(legacyResult).toContain("Untested edge cases and boundary conditions");
+    expect(legacyResult).toContain("Only those edge cases a real caller is likely to hit and care about");
     expect(legacyResult).not.toContain("Prioritise missing regression guards tied to explicit criteria");
   });
 });
@@ -254,7 +301,7 @@ describe("buildFinalPasses", () => {
 describe("buildPlanPrompt", () => {
   it("produces expected prompt with slice content and planning instructions", () => {
     const result = buildPlanPrompt("slice content here");
-    expect(result).toContain("You are a planning agent");
+    expect(result).toContain("produce a concise execution brief for yourself as the builder");
     expect(result).toContain("slice content here");
     expect(result).toContain("Do NOT write any code");
   });

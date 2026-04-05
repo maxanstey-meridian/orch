@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { DefaultPromptBuilder } from "#infrastructure/default-prompt-builder.js";
 import { PromptBuilder } from "#application/ports/prompt-builder.port.js";
-import { withBrief, buildPlanPrompt, buildTddPrompt, buildDirectExecutePrompt, buildDirectTestPassPrompt, buildVerifyPrompt, buildReviewPrompt, buildCompletenessPrompt, buildGroupedCompletenessPrompt, buildCommitSweepPrompt, buildGapPrompt, buildFinalPasses } from "#infrastructure/plan/prompts.js";
+import { withBrief, buildPlanPrompt, buildTddPrompt, buildDirectExecutePrompt, buildDirectTestPassPrompt, buildDirectVerifyPrompt, buildDirectReviewPrompt, buildDirectCompletenessPrompt, buildDirectGapPrompt, buildVerifyPrompt, buildReviewPrompt, buildCompletenessPrompt, buildGroupedCompletenessPrompt, buildCommitSweepPrompt, buildGapPrompt, buildFinalPasses, buildDirectFinalPasses } from "#infrastructure/plan/prompts.js";
 import { TDD_RULES_REMINDER, REVIEW_RULES_REMINDER, buildRulesReminder } from "#infrastructure/claude/claude-agent-factory.js";
 
 const BRIEF = "This is a test brief";
@@ -174,11 +174,31 @@ describe("DefaultPromptBuilder", () => {
 
   it("review delegates to buildReviewPrompt", () => {
     const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
-    expect(builder.review("content", "sha", "prior")).toBe(
-      buildReviewPrompt("content", "sha", "prior"),
+    expect(builder.review("content", "sha", true)).toBe(
+      buildReviewPrompt("content", "sha", true),
     );
     expect(builder.review("content", "sha")).toBe(
       buildReviewPrompt("content", "sha"),
+    );
+  });
+
+  it("direct prompt helpers delegate to the direct prompt builders", () => {
+    const builder = new DefaultPromptBuilder(BRIEF, PLAN_CONTENT);
+
+    expect(builder.directVerify("sha", "request text", "fixed summary")).toBe(
+      withBrief(buildDirectVerifyPrompt("sha", "request text", "fixed summary"), BRIEF),
+    );
+    expect(builder.directReview("request text", "sha", true)).toBe(
+      buildDirectReviewPrompt("request text", "sha", true),
+    );
+    expect(builder.directCompleteness("request text", "sha")).toBe(
+      withBrief(buildDirectCompletenessPrompt("request text", "sha"), BRIEF),
+    );
+    expect(builder.directGap("request text")).toBe(
+      withBrief(buildDirectGapPrompt("request text"), BRIEF),
+    );
+    expect(builder.directFinalPasses("sha", "request text")).toEqual(
+      buildDirectFinalPasses("sha", "request text"),
     );
   });
 

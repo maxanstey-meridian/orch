@@ -40,14 +40,26 @@ class MockPromptBuilder extends PromptBuilder {
   directTestPass(requestContent: string): string {
     return `directTestPass:${requestContent}`;
   }
+  directVerify(baseSha: string, requestContent: string, fixSummary?: string): string {
+    return `directVerify:${baseSha}:${requestContent}:${fixSummary ?? "none"}`;
+  }
+  directReview(requestContent: string, baseSha: string, followUp?: boolean): string {
+    return `directReview:${requestContent}:${baseSha}:${followUp ?? false}`;
+  }
+  directCompleteness(requestContent: string, baseSha: string): string {
+    return `directCompleteness:${requestContent}:${baseSha}`;
+  }
+  directGap(requestContent: string): string {
+    return `directGap:${requestContent}`;
+  }
   verify(baseSha: string, sliceNumber: number, fixSummary?: string): string {
     return `verify:${baseSha}:${sliceNumber}:${fixSummary ?? "none"}`;
   }
   groupedVerify(baseSha: string, groupName: string, fixSummary?: string): string {
     return `groupVerify:${baseSha}:${groupName}:${fixSummary ?? "none"}`;
   }
-  review(content: string, baseSha: string, priorFindings?: string): string {
-    return `review:${content}:${baseSha}:${priorFindings ?? "none"}`;
+  review(content: string, baseSha: string, followUp?: boolean): string {
+    return `review:${content}:${baseSha}:${followUp ?? false}`;
   }
   completeness(
     sliceContent: string,
@@ -67,6 +79,9 @@ class MockPromptBuilder extends PromptBuilder {
   }
   finalPasses(baseSha: string): readonly FinalPass[] {
     return [{ name: "Type audit", prompt: `types:${baseSha}` }];
+  }
+  directFinalPasses(baseSha: string, requestContent: string): readonly FinalPass[] {
+    return [{ name: "Request audit", prompt: `direct:${baseSha}:${requestContent}` }];
   }
   withBrief(prompt: string): string {
     return `brief:${prompt}`;
@@ -140,10 +155,18 @@ describe("PromptBuilder", () => {
     expect(builder.directTestPass("request text")).toBe("directTestPass:request text");
   });
 
-  it("review returns a string without priorFindings", () => {
+  it("direct prompt helpers return strings", () => {
+    const builder = new MockPromptBuilder();
+    expect(builder.directVerify("abc123", "request text")).toBe("directVerify:abc123:request text:none");
+    expect(builder.directReview("request text", "abc123", true)).toBe("directReview:request text:abc123:true");
+    expect(builder.directCompleteness("request text", "abc123")).toBe("directCompleteness:request text:abc123");
+    expect(builder.directGap("request text")).toBe("directGap:request text");
+  });
+
+  it("review returns a string without follow-up mode", () => {
     const builder = new MockPromptBuilder();
     expect(builder.review("content", "abc123")).toBe(
-      "review:content:abc123:none",
+      "review:content:abc123:false",
     );
   });
 
@@ -166,11 +189,10 @@ describe("PromptBuilder", () => {
     );
   });
 
-
-  it("review returns a string with priorFindings", () => {
+  it("review returns a string with follow-up mode", () => {
     const builder = new MockPromptBuilder();
-    expect(builder.review("content", "abc123", "prior")).toBe(
-      "review:content:abc123:prior",
+    expect(builder.review("content", "abc123", true)).toBe(
+      "review:content:abc123:true",
     );
   });
 
@@ -206,6 +228,14 @@ describe("PromptBuilder", () => {
     expect(typeof passes[0].prompt).toBe("string");
     expect(passes[0].name).toBe("Type audit");
     expect(passes[0].prompt).toBe("types:abc123");
+  });
+
+  it("directFinalPasses returns readonly FinalPass[] with name and prompt", () => {
+    const builder = new MockPromptBuilder();
+    const passes = builder.directFinalPasses("abc123", "request text");
+    expect(passes).toHaveLength(1);
+    expect(passes[0].name).toBe("Request audit");
+    expect(passes[0].prompt).toBe("direct:abc123:request text");
   });
 
   it("withBrief returns a string", () => {

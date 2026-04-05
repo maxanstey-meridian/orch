@@ -20,24 +20,24 @@ describe("Replan lifecycle", () => {
       config: { skills: { gap: null, verify: null, review: null } },
     });
 
-    // Two plan agents will be spawned (one per plan attempt)
-    spawner.onNextSpawn("plan", okResult({ assistantText: "plan v1", planText: "plan v1" }));
-    spawner.onNextSpawn("plan", okResult({ assistantText: "plan v2", planText: "plan v2" }));
-
     // Gate: reject first, accept second
     hud.queueAskAnswer("r"); // reject plan v1
     hud.queueAskAnswer("y"); // accept plan v2
 
-    // TDD executes the accepted plan
-    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented" }));
+    // TDD plans twice, then executes the accepted plan.
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "plan v1", planText: "plan v1" }),
+      okResult({ assistantText: "plan v2", planText: "plan v2" }),
+      okResult({ assistantText: "implemented" }),
+    );
     spawner.onNextSpawn("review");
 
     await uc.execute([makeGroup("G1", [makeSlice(1)])]);
 
     expect(persistence.current.lastCompletedSlice).toBe(1);
 
-    // Two plan agents were spawned
-    expect(spawner.agentsForRole("plan").length).toBe(2);
+    expect(spawner.agentsForRole("plan").length).toBe(0);
 
     // TDD received exactly one execute prompt (not two)
     const tdd = spawner.lastAgent("tdd");
@@ -50,18 +50,18 @@ describe("Replan lifecycle", () => {
       config: { skills: { gap: null, verify: null, review: null }, maxReplans: 2 },
     });
 
-    // Plan agents for each attempt
-    spawner.onNextSpawn("plan", okResult({ assistantText: "plan v1", planText: "v1" }));
-    spawner.onNextSpawn("plan", okResult({ assistantText: "plan v2", planText: "v2" }));
-    // Force-accept spawns another plan agent
-    spawner.onNextSpawn("plan", okResult({ assistantText: "plan v3", planText: "v3" }));
-
     // Reject twice (hit maxReplans), then force-accept skips the gate
     hud.queueAskAnswer("r"); // reject v1
     hud.queueAskAnswer("r"); // reject v2
     // No third answer needed — force-accept bypasses gate
 
-    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented" }));
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "plan v1", planText: "v1" }),
+      okResult({ assistantText: "plan v2", planText: "v2" }),
+      okResult({ assistantText: "v3", planText: "v3" }),
+      okResult({ assistantText: "implemented" }),
+    );
     spawner.onNextSpawn("review");
 
     await uc.execute([makeGroup("G1", [makeSlice(1)])]);
@@ -78,13 +78,15 @@ describe("Replan lifecycle", () => {
       config: { skills: { gap: null, verify: null, review: null } },
     });
 
-    spawner.onNextSpawn("plan", okResult({ assistantText: "plan", planText: "the plan" }));
-
     // Gate: edit with guidance (two askUser calls: first "e" for edit, then the guidance)
     hud.queueAskAnswer("e");
     hud.queueAskAnswer("add error handling for edge cases");
 
-    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented with error handling" }));
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "plan", planText: "the plan" }),
+      okResult({ assistantText: "implemented with error handling" }),
+    );
     spawner.onNextSpawn("review");
 
     await uc.execute([makeGroup("G1", [makeSlice(1)])]);

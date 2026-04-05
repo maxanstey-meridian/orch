@@ -14,7 +14,7 @@ const createCorruptQueueError = (queuePath: string): Error =>
 
 const LOCK_OWNER_FILE = "owner.json";
 const lockRetryDelayMs = 10;
-const staleLockAgeMs = 5_000;
+const ownerlessStaleLockAgeMs = 30_000;
 const pendingMutations = new Map<string, Promise<void>>();
 
 const sleep = async (ms: number): Promise<void> =>
@@ -138,7 +138,7 @@ const isStaleLock = async (lockPath: string): Promise<boolean> => {
     return !isProcessAlive(lockMetadata.pid);
   }
 
-  return Date.now() - lockStats.mtimeMs >= staleLockAgeMs;
+  return Date.now() - lockStats.mtimeMs >= ownerlessStaleLockAgeMs;
 };
 
 const clearStaleLock = async (lockPath: string): Promise<boolean> => {

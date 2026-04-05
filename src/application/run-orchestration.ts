@@ -76,6 +76,7 @@ export class RunOrchestration {
   tddAgent: AgentHandle | null = null;
   reviewAgent: AgentHandle | null = null;
   verifyAgent: AgentHandle | null = null;
+  gapAgent: AgentHandle | null = null;
   retryDelayMs = 5_000;
   usageProbeDelayMs = 60_000;
   usageProbeMaxDelayMs = 300_000;
@@ -229,6 +230,19 @@ export class RunOrchestration {
     });
   }
 
+  private async clearDeferredEvaluatorSessions(): Promise<void> {
+    if (this.verifyAgent) {
+      this.verifyAgent.kill();
+      this.verifyAgent = null;
+    }
+    if (this.gapAgent) {
+      this.gapAgent.kill();
+      this.gapAgent = null;
+    }
+    this.state = advanceState(this.state, { kind: "groupAgentsCleared" });
+    await this.persistence.save(this.state);
+  }
+
   private async setPendingBase(
     pass: "verify" | "completeness" | "review" | "gap",
     sha: string | undefined,
@@ -245,6 +259,7 @@ export class RunOrchestration {
   }
 
   private async respawnTierSensitiveAgents(): Promise<void> {
+    await this.clearDeferredEvaluatorSessions();
     if (this.tddAgent) {
       this.tddAgent.kill();
     }
@@ -352,40 +367,7 @@ export class RunOrchestration {
     fixSummary?: string,
   ): string {
     if (unit.kind === "direct") {
-      return this.prompts.withBrief(
-        `Verify the changes since commit ${verifyBaseSha}. Context: TDD implementation of the direct request.\n\n${
-          fixSummary ? `## Fix summary from the builder\n${fixSummary}\n\n` : ""
-        }## Direct request\n${unit.content}\n\n## Instructions
-1. Review the changed code and run the verification commands you judge necessary.
-2. You MUST end with a short human summary followed by a machine-readable \`### VERIFY_JSON\` block in the exact format below.
-3. Do not replace the structured block with prose. You may include prose before it, but the block is mandatory.
-
-## Required output format
-
-### VERIFY_JSON
-\`\`\`json
-{
-  "status": "PASS|FAIL|PASS_WITH_WARNINGS",
-  "checks": [
-    { "check": "<command or check name>", "status": "PASS|FAIL|WARN|SKIPPED" }
-  ],
-  "sliceLocalFailures": ["<failure caused by the current execution unit>"],
-  "outOfScopeFailures": ["<failure not owned by the current execution unit>"],
-  "preExistingFailures": ["<failure that already existed before these changes>"],
-  "runnerIssue": "<runner instability or hung process summary>" | null,
-  "retryable": true,
-  "summary": "<one concise summary sentence>"
-}
-\`\`\`
-
-Rules:
-- \`sliceLocalFailures\` are the ONLY failures the builder should be asked to fix.
-- Put unrelated failures in \`outOfScopeFailures\`, not \`sliceLocalFailures\`.
-- Put already-failing checks in \`preExistingFailures\`.
-- Use \`runnerIssue\` for hung runners, crashed tooling, or unstable infrastructure rather than blaming the builder.
-- If the direct request is clean, use PASS or PASS_WITH_WARNINGS and leave \`sliceLocalFailures\` empty.
-- "No findings" prose alone is NOT sufficient; you must include the JSON block above.`,
-      );
+      return this.prompts.directVerify(verifyBaseSha, unit.content, fixSummary);
     }
 
     if (unit.kind === "group") {
@@ -398,92 +380,18 @@ Rules:
   private reviewPromptForUnit(
     unit: ExecutionUnit,
     reviewBaseSha: string,
-    priorFindings?: string,
+    followUp = false,
   ): string {
     if (unit.kind !== "direct") {
-      return this.prompts.review(unit.content, reviewBaseSha, priorFindings);
+      return this.prompts.review(unit.content, reviewBaseSha, followUp);
     }
 
-    return `Review the code changed since commit ${reviewBaseSha}. Judge the code on its own merits — correctness, types, structure — not just whether it matches a plan.
-
-${
-  priorFindings
-    ? `## Prior review findings
-Your previous review flagged these issues — verify each one was addressed. If any were ignored or only partially fixed, re-flag them:
-
-${priorFindings}
-
-## Review pass discipline
-This is likely your final useful review pass for this direct request.
-Re-check the prior findings carefully and only add a new issue if it is clearly material and was genuinely missed before.
-Batch related issues into one finding when they share a root cause or would be fixed by the same change.
-Do not pad the review with speculative, cosmetic, or low-value nits just to say something new.
-Do not hold back a material issue for a later pass.
-
-`
-    : `## Review pass discipline
-Assume you may only get one useful review pass for this direct request.
-Surface the highest-signal issues now.
-Batch related issues into one finding when they share a root cause or would be fixed by the same change.
-Do not pad the review with speculative, cosmetic, or low-value nits.
-Do not hold back a material issue for a later pass.
-
-`
-}## What to look for
-- Bugs: incorrect runtime behavior, off-by-one, swallowed errors, race conditions
-- Type fidelity: runtime values disagreeing with declared types, \`any\`/\`unknown\` as value carriers
-- Dead code: new exports with zero consumers introduced by the change
-- Structural: duplicated logic, parallel state, mixed concerns introduced by the change
-- Names: identifiers that no longer match their scope or purpose after the change
-- Enum/value completeness: new variants not handled in all consumers
-- Over-engineering: deps bags, wrapper types, or indirection layers that exist "for testability" but add complexity with no real benefit
-- Test resilience: new tests that mock the system under test, tests that would pass even if the feature were removed, tests that assert mock call arguments instead of observable outcomes
-
-## What NOT to flag
-- Style, formatting, cosmetic preferences
-- Test coverage gaps (separate pass handles this)
-- Harmless redundancy that aids readability
-- Threshold values tuned empirically
-- Test style preferences
-
-## Direct request
-${unit.content}
-
-If all changes are correct and well-structured, respond with exactly: REVIEW_CLEAN`;
+    return this.prompts.directReview(unit.content, reviewBaseSha, followUp);
   }
 
   private completenessPromptForUnit(unit: ExecutionUnit, baseSha: string): string {
     if (unit.kind === "direct") {
-      return this.prompts.withBrief(
-        `You are a completeness checker. A builder just implemented the direct request below as one bounded increment. Your job is to verify that EVERY stated requirement in the request was actually implemented — not whether the code is clean, but whether it does what was asked.
-
-## Direct request
-${unit.content}
-
-## How to check
-
-1. Run \`git diff --name-only ${baseSha}..HEAD\` to see what changed.
-2. Read the changed files — the FULL files, not just diffs.
-3. For EACH concrete requirement in the direct request above, check:
-   - **Is it implemented?** Find the code that does it. Cite the file and line.
-   - **Does it match the request's intent?** If the request says "filter by X" but the code "includes everything and also X", that is WRONG — the direct request is the authority.
-   - **Is there a test?** Find a test that would fail if this requirement were removed.
-4. Check ARCHITECTURAL requirements separately from functional ones:
-   - If the request says "use function X" or "call Y from domain layer", verify the import exists and the function is actually called. Grep for it.
-   - If the request says "phase transitions use transition()" or "state advances use advanceState()", those are HARD REQUIREMENTS — not suggestions. Code that manages state a different way is MISSING the requirement even if tests pass.
-   - The request's specified approach IS the requirement. An equivalent alternative that the builder chose instead is a DIVERGENT finding.
-
-## Output format
-
-For each requirement, output one line:
-- ✅ **<requirement>** — implemented at \`file:line\`, tested in \`test-file\`
-- ❌ **<requirement>** — MISSING: <what's wrong or missing>
-- ⚠️ **<requirement>** — DIVERGENT: <how it differs from the request's intent>
-
-If everything is complete and matches the request, respond with exactly: DIRECT_COMPLETE
-
-If anything is missing or divergent, list ALL issues. Do not stop at the first one.`,
-      );
+      return this.prompts.directCompleteness(unit.content, baseSha);
     }
 
     if (unit.kind === "group") {
@@ -498,32 +406,7 @@ If anything is missing or divergent, list ALL issues. Do not stop at the first o
       return this.prompts.withBrief(this.prompts.gap(groupContent, groupBaseSha));
     }
 
-    return this.prompts.withBrief(
-      `You are a gap-finder for a direct-mode builder run. A bounded direct request has just been implemented and reviewed.
-
-Your job is to find missing test coverage and unhandled edge cases — NOT code style, naming, or architecture.
-
-Assume this may be the only useful gap pass for this direct request.
-Report only the highest-signal gaps that are likely to allow a real regression, request mismatch, or unguarded reachable behavior to ship.
-Batch related variants into one gap when a single representative test or small cluster of tests would cover them.
-Do not drip-feed narrower versions of the same underlying issue across multiple passes.
-Do not hold back a material finding for later, and do not invent marginal findings just to avoid saying NO_GAPS_FOUND.
-
-## What to look for
-- Untested edge cases and boundary conditions
-- Reachable behaviors in the direct request with no regression coverage
-- Empty inputs, null inputs, and off-by-one scenarios
-- Integration paths inside the direct request that have no test coverage
-
-## Direct request
-${this.currentDirectRequestContent}
-
-If you find gaps, list each one as:
-- **Gap:** <what's missing>
-- **Suggested test:** <one-line description of the test to add>
-
-If everything is well covered, respond with exactly: NO_GAPS_FOUND`,
-    );
+    return this.prompts.directGap(this.currentDirectRequestContent);
   }
 
   private gapFixPrompt(groupContent: string, gapText: string): string {
@@ -546,41 +429,11 @@ Add tests for each gap. Do NOT refactor or change existing code unless a test ex
   }
 
   private finalPassesForRun(runBaseSha: string): readonly FinalPass[] {
-    const passes = this.prompts.finalPasses(runBaseSha);
     if (this.currentDirectRequestContent === null) {
-      return passes;
+      return this.prompts.finalPasses(runBaseSha);
     }
 
-    return passes.map((pass) => {
-      if (pass.name === "Plan completeness") {
-        return {
-          name: "Request completeness",
-          prompt: `You are verifying that the implementation matches the direct request.
-
-Verify the changes since commit ${runBaseSha} against the direct request below.
-
-## Direct request
-${this.currentDirectRequestContent}
-
-For each requested behavior, verify:
-1. Was it implemented?
-2. Were the specified edge cases handled?
-3. Is there a test for each specified behavior?
-
-Report:
-- **Missing:** requested behaviors with no implementation
-- **Untested:** behaviors that exist but have no test coverage
-- **Divergent:** implementations that differ from the request
-
-If everything matches, respond with exactly: NO_ISSUES_FOUND`,
-        };
-      }
-
-      return {
-        name: pass.name,
-        prompt: `${pass.prompt}\n\n## Direct request\n${this.currentDirectRequestContent}\n\nJudge findings against the direct request, not a plan slice, group, or generated plan artifact.`,
-      };
-    });
+    return this.prompts.directFinalPasses(runBaseSha, this.currentDirectRequestContent);
   }
 
   private finalFixPrompt(pass: FinalPass, findings: string): string {
@@ -1114,6 +967,8 @@ Rules:
       ...this.state,
       currentPhase: undefined,
       completedAt: this.state.completedAt ?? new Date().toISOString(),
+      verifySession: undefined,
+      gapSession: undefined,
     };
     await this.persistence.save(this.state);
   }
@@ -1122,20 +977,36 @@ Rules:
     return this.state.currentSlice ?? this.state.lastCompletedSlice ?? defaultSliceNumber;
   }
 
-  private providerForRole(role: "tdd" | "review"): Provider {
+  private providerForRole(role: "tdd" | "review" | "verify" | "gap"): Provider {
     return this.config.agentConfig[role].provider;
   }
 
-  private sessionForRole(role: "tdd" | "review"): PersistedAgentSession | undefined {
-    const session = role === "tdd" ? this.state.tddSession : this.state.reviewSession;
+  private sessionForRole(
+    role: "tdd" | "review" | "verify" | "gap",
+  ): PersistedAgentSession | undefined {
+    const session =
+      role === "tdd"
+        ? this.state.tddSession
+        : role === "review"
+          ? this.state.reviewSession
+          : role === "verify"
+            ? this.state.verifySession
+            : this.state.gapSession;
     if (session?.provider !== this.providerForRole(role)) {
       return undefined;
     }
     return session;
   }
 
-  private currentSession(role: "tdd" | "review"): PersistedAgentSession {
-    const agent = role === "tdd" ? this.tddAgent : this.reviewAgent;
+  private currentSession(role: "tdd" | "review" | "verify" | "gap"): PersistedAgentSession {
+    const agent =
+      role === "tdd"
+        ? this.tddAgent
+        : role === "review"
+          ? this.reviewAgent
+          : role === "verify"
+            ? this.verifyAgent
+            : this.gapAgent;
     if (!agent) {
       throw new Error(`Missing ${role} agent`);
     }
@@ -1166,15 +1037,71 @@ Rules:
     await this.persistence.save(this.state);
   }
 
+  private async respawnVerify(): Promise<void> {
+    if (this.verifyAgent) {
+      this.verifyAgent.kill();
+    }
+    this.verifyAgent = this.spawnAgent("verify", {
+      resumeSessionId: this.sessionForRole("verify")?.id,
+      cwd: this.config.cwd,
+    });
+    this.pipeToSink(this.verifyAgent, "verify");
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "verify",
+      session: this.currentSession("verify"),
+    });
+    await this.persistence.save(this.state);
+  }
+
+  private async respawnGap(): Promise<void> {
+    if (this.gapAgent) {
+      this.gapAgent.kill();
+    }
+    this.gapAgent = this.spawnAgent("gap", {
+      resumeSessionId: this.sessionForRole("gap")?.id,
+      cwd: this.config.cwd,
+    });
+    this.pipeToSink(this.gapAgent, "gap");
+    this.state = advanceState(this.state, {
+      kind: "agentSpawned",
+      role: "gap",
+      session: this.currentSession("gap"),
+    });
+    await this.persistence.save(this.state);
+  }
+
+  private async ensureGroupScopedAgent(role: "verify" | "gap"): Promise<AgentHandle> {
+    const existing = role === "verify" ? this.verifyAgent : this.gapAgent;
+    if (existing) {
+      return existing;
+    }
+
+    if (role === "verify") {
+      await this.respawnVerify();
+      return this.verifyAgent!;
+    }
+
+    await this.respawnGap();
+    return this.gapAgent!;
+  }
+
   private async validateOrRefreshResumedAgent(
-    role: "tdd" | "review",
+    role: "tdd" | "review" | "verify" | "gap",
   ): Promise<"resumed" | "fresh" | "none"> {
     const session = this.sessionForRole(role);
     if (!session) {
       return "none";
     }
 
-    const agent = role === "tdd" ? this.tddAgent : this.reviewAgent;
+    const agent =
+      role === "tdd"
+        ? this.tddAgent
+        : role === "review"
+          ? this.reviewAgent
+          : role === "verify"
+            ? this.verifyAgent
+            : this.gapAgent;
     if (!agent) {
       throw new Error(`Missing ${role} agent`);
     }
@@ -1189,8 +1116,12 @@ Rules:
       );
       if (role === "tdd") {
         await this.respawnTdd();
-      } else {
+      } else if (role === "review") {
         await this.respawnReview();
+      } else if (role === "verify") {
+        await this.respawnVerify();
+      } else {
+        await this.respawnGap();
       }
       return "fresh";
     }
@@ -1205,6 +1136,9 @@ Rules:
     }
     if (this.verifyAgent) {
       this.verifyAgent.kill();
+    }
+    if (this.gapAgent) {
+      this.gapAgent.kill();
     }
     this.progressSink.teardown();
   }
@@ -1232,6 +1166,15 @@ Rules:
         this.state.reviewSession.provider !== this.providerForRole("review")
       ) {
         this.state = { ...this.state, reviewSession: undefined };
+      }
+      if (
+        this.state.verifySession &&
+        this.state.verifySession.provider !== this.providerForRole("verify")
+      ) {
+        this.state = { ...this.state, verifySession: undefined };
+      }
+      if (this.state.gapSession && this.state.gapSession.provider !== this.providerForRole("gap")) {
+        this.state = { ...this.state, gapSession: undefined };
       }
 
       // Spawn initial agents
@@ -1606,28 +1549,24 @@ Rules:
 
     // ── Plan phase ──
     const planPrompt = this.prompts.plan(sliceContent, sliceNumber);
-    const planAgent = this.spawnAgent("plan", { cwd: this.config.cwd });
-    this.pipeToSink(planAgent, "plan");
-    this.progressSink.logBadge("plan", "planning...");
+    this.progressSink.logBadge("tdd", "planning...");
     await this.enterPhase("plan", sliceNumber);
     const planResult = await this.withRetry(
-      () => planAgent.send(planPrompt),
-      planAgent,
-      "plan",
+      () => this.tddAgent!.send(planPrompt),
+      this.tddAgent!,
+      "tdd",
       "plan",
     );
 
     const plan = planResult.planText ?? planResult.assistantText ?? "";
 
     if (this.sliceSkipFlag) {
-      planAgent.kill();
       this.phase = { kind: "Idle" };
       return { tddResult: planResult, skipped: true, planText: plan };
     }
 
     const hardInterruptGuidance = this.hardInterruptPending;
     if (hardInterruptGuidance) {
-      planAgent.kill();
       this.phase = { kind: "Idle" };
       return {
         tddResult: planResult,
@@ -1636,8 +1575,6 @@ Rules:
         planText: plan,
       };
     }
-
-    planAgent.kill();
 
     this.phase = transition(this.phase, { kind: "PlanReady", planText: plan });
 
@@ -1794,7 +1731,6 @@ Rules:
 
   async reviewFix(unit: ExecutionUnit, baseSha: string): Promise<void> {
     let reviewSha = baseSha;
-    let priorFindings: string | undefined;
 
     for (let cycle = 1; cycle <= this.config.maxReviewCycles; cycle++) {
       if (this.sliceSkipFlag) {
@@ -1810,7 +1746,7 @@ Rules:
         activeAgentActivity: `reviewing (cycle ${cycle})...`,
       });
 
-      const reviewPromptText = this.reviewPromptForUnit(unit, reviewSha, priorFindings);
+      const reviewPromptText = this.reviewPromptForUnit(unit, reviewSha, cycle > 1);
       const reviewPrompt = this.reviewIsFirst
         ? this.prompts.withBrief(reviewPromptText)
         : reviewPromptText;
@@ -1830,7 +1766,6 @@ Rules:
       }
 
       this.phase = transition(this.phase, { kind: "ReviewIssues" });
-      priorFindings = reviewText;
       const preFixSha = await this.git.captureRef();
       const fixPrompt =
         unit.kind === "direct"
@@ -1958,10 +1893,7 @@ Rules:
   async verify(unit: ExecutionUnit, verifyBaseSha: string): Promise<boolean> {
     this.progressSink.updateProgress({ activeAgent: "VFY", activeAgentActivity: "verifying..." });
 
-    if (!this.verifyAgent) {
-      this.verifyAgent = this.spawnAgent("verify", { cwd: this.config.cwd });
-      this.pipeToSink(this.verifyAgent, "verify");
-    }
+    const verifyAgent = await this.ensureGroupScopedAgent("verify");
 
     if (this.phase.kind === "CompletenessCheck") {
       this.phase = transition(this.phase, { kind: "CompletenessOk" });
@@ -1971,8 +1903,8 @@ Rules:
     this.progressSink.logBadge("verify", "verifying...");
     await this.enterPhase("verify", unit.sliceNumber);
     const verifyResult = await this.withRetry(
-      () => this.verifyAgent!.send(verifyPrompt),
-      this.verifyAgent,
+      () => verifyAgent.send(verifyPrompt),
+      verifyAgent,
       "verify",
       "verify",
     );
@@ -2040,8 +1972,8 @@ Rules:
       this.progressSink.logBadge("verify", "verifying...");
       await this.enterPhase("verify", unit.sliceNumber);
       const reVerifyResult = await this.withRetry(
-        () => this.verifyAgent!.send(this.verifyPromptForUnit(unit, verifyBaseSha, fixSummary)),
-        this.verifyAgent!,
+        () => verifyAgent.send(this.verifyPromptForUnit(unit, verifyBaseSha, fixSummary)),
+        verifyAgent,
         "verify",
         "re-verify",
       );
@@ -2156,10 +2088,10 @@ Rules:
 
     const groupContent = group.slices.map((s) => s.content).join("\n\n---\n\n");
     const gapPrompt = this.gapPromptForRun(groupContent, groupBaseSha);
+    const gapAgent = await this.ensureGroupScopedAgent("gap");
+    const maxGapCycles = Math.min(this.config.maxReviewCycles, 2);
 
-    for (let cycle = 1; cycle <= this.config.maxReviewCycles; cycle++) {
-      const gapAgent = this.spawnAgent("gap", { cwd: this.config.cwd });
-      this.pipeToSink(gapAgent, "gap");
+    for (let cycle = 1; cycle <= maxGapCycles; cycle++) {
       this.progressSink.logBadge("gap", "filling gaps...");
       await this.enterPhase(
         "gap",
@@ -2171,7 +2103,6 @@ Rules:
         "gap",
         "gap",
       );
-      gapAgent.kill();
 
       const gapText = gapResult.assistantText ?? "";
 

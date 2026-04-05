@@ -2407,7 +2407,13 @@ describe("main execution preference wiring", () => {
       }),
       expect.any(Object),
     );
-    const config = createContainer.mock.calls[0]?.[0];
+    const config = ((createContainer.mock.calls as unknown) as Array<[{
+      stateFile: string;
+      logPath: string;
+    }]>)[0]?.[0];
+    if (!config) {
+      throw new Error("Expected createContainer to be called");
+    }
     expect(config.stateFile).toBe(expectedStateFile);
     expect(config.logPath).toBe(expectedLogPath);
     expect(config.stateFile).not.toContain(`${externalTreePath}/.orch/`);
@@ -2493,7 +2499,13 @@ describe("main execution preference wiring", () => {
       }),
       expect.any(Object),
     );
-    const config = createContainer.mock.calls[0]?.[0];
+    const config = ((createContainer.mock.calls as unknown) as Array<[{
+      stateFile: string;
+      logPath: string;
+    }]>)[0]?.[0];
+    if (!config) {
+      throw new Error("Expected createContainer to be called");
+    }
     expect(config.stateFile).toBe(expectedStateFile);
     expect(config.logPath).toBe(expectedLogPath);
     expect(config.stateFile).not.toContain(`${externalTreePath}/.orch/`);

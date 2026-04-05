@@ -40,6 +40,8 @@ export type OrchestratorState = {
   readonly pendingGapBaseSha?: string;
   readonly tddSession?: PersistedAgentSession;
   readonly reviewSession?: PersistedAgentSession;
+  readonly verifySession?: PersistedAgentSession;
+  readonly gapSession?: PersistedAgentSession;
   readonly worktree?: {
     readonly path: string;
     readonly branch: string;
@@ -56,9 +58,10 @@ export type StateEvent =
   | { readonly kind: "groupDone"; readonly groupName: string }
   | {
       readonly kind: "agentSpawned";
-      readonly role: "tdd" | "review";
+      readonly role: "tdd" | "review" | "verify" | "gap";
       readonly session: PersistedAgentSession;
     }
+  | { readonly kind: "groupAgentsCleared" }
   | {
       readonly kind: "sliceImplemented";
       readonly sliceNumber: number;
@@ -122,9 +125,22 @@ export const advanceState = (state: OrchestratorState, event: StateEvent): Orche
     case "groupDone":
       return { ...state, currentPhase: undefined, lastCompletedGroup: event.groupName };
     case "agentSpawned":
-      return event.role === "tdd"
-        ? { ...state, tddSession: event.session }
-        : { ...state, reviewSession: event.session };
+      switch (event.role) {
+        case "tdd":
+          return { ...state, tddSession: event.session };
+        case "review":
+          return { ...state, reviewSession: event.session };
+        case "verify":
+          return { ...state, verifySession: event.session };
+        case "gap":
+          return { ...state, gapSession: event.session };
+      }
+    case "groupAgentsCleared":
+      return {
+        ...state,
+        verifySession: undefined,
+        gapSession: undefined,
+      };
     case "sliceImplemented":
       return {
         ...state,

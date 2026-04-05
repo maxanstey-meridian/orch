@@ -46,18 +46,20 @@ describe("Interrupt lifecycle", () => {
       config: { skills: { gap: null, verify: null, review: null } },
     });
 
-    // Plan agent: returns plan, hud accepts
-    spawner.onNextSpawn("plan", okResult({ assistantText: "plan", planText: "the plan" }));
     hud.queueAskAnswer("y"); // accept plan
 
-    // First TDD: during execute prompt, trigger hard interrupt
-    spawner.onNextSpawn("tdd", (prompt) => {
-      if (prompt.includes("[EXEC:")) {
+    // First TDD: plan, then during execute prompt trigger hard interrupt.
+    spawner.onNextSpawn(
+      "tdd",
+      (prompt) => {
+        return okResult({ assistantText: "plan", planText: "the plan" });
+      },
+      (prompt) => {
         hud.simulateKey("i");
         hud.simulateInterruptSubmit("use factory pattern instead", "interrupt");
-      }
-      return okResult({ assistantText: "done" });
-    });
+        return okResult({ assistantText: "done" });
+      },
+    );
 
     // Dead-session fallback now detects hardInterrupt and returns it directly.
     // Main loop (line 220) respawns TDD and sends guidance.
@@ -83,15 +85,12 @@ describe("Interrupt lifecycle", () => {
       config: { skills: { gap: null, verify: null, review: null } },
     });
 
-    // Plan: trigger interrupt during plan phase (checked at line 327-337)
-    spawner.onNextSpawn("plan", () => {
+    // Builder planning: trigger interrupt during plan phase.
+    spawner.onNextSpawn("tdd", () => {
       hud.simulateKey("i");
       hud.simulateInterruptSubmit("rethink this", "interrupt");
       return okResult({ assistantText: "plan", planText: "plan" });
     });
-
-    // First TDD (will be killed by interrupt)
-    spawner.onNextSpawn("tdd");
 
     // Respawned TDD after interrupt
     spawner.onNextSpawn("tdd", okResult({ assistantText: "done after rethink" }));

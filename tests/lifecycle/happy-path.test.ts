@@ -70,17 +70,13 @@ describe("Happy path lifecycle", () => {
     git.setHasChanges(true);
     git.setDiffStats({ added: 50, removed: 10, total: 60 });
 
-    // Plan agent: returns a plan
-    spawner.onNextSpawn("plan", okResult({ assistantText: "Here is the plan", planText: "plan text" }));
-
     // HUD: accept the plan, then confirm nothing else
     hud.queueAskAnswer("y");
 
-    // TDD agent: returns successful implementation (spawned as long-lived, gets rules + execute)
+    // TDD agent plans then implements in the same long-lived session.
     spawner.onNextSpawn("tdd",
-      okResult(), // rules reminder (sendQuiet)
+      okResult({ assistantText: "Here is the plan", planText: "plan text" }), // slice planning
       okResult({ assistantText: "implemented slice 1" }), // tddExecute
-      okResult({ assistantText: "summary done" }), // slice summary
     );
 
     // Review agent: returns clean review (long-lived, gets rules + review)
@@ -111,7 +107,7 @@ describe("Happy path lifecycle", () => {
     expect(persistence.saveHistory.some((state) => state.currentPhase === "review")).toBe(true);
 
     // Agents were spawned for the right roles
-    expect(spawner.agentsForRole("plan").length).toBeGreaterThanOrEqual(1);
+    expect(spawner.agentsForRole("plan").length).toBe(0);
     expect(spawner.agentsForRole("tdd").length).toBe(1);
     expect(spawner.agentsForRole("verify").length).toBe(1);
     expect(spawner.agentsForRole("review").length).toBe(1);
@@ -391,16 +387,18 @@ describe("Happy path lifecycle", () => {
     );
     spawner.onNextSpawn("review");
     spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
-    spawner.onNextSpawn("gap", okResult({ assistantText: "Gap 1" }));
-    spawner.onNextSpawn("gap", okResult({ assistantText: "Gap 2" }));
-    spawner.onNextSpawn("gap", okResult({ assistantText: "NO_GAPS_FOUND" }));
+    spawner.onNextSpawn(
+      "gap",
+      okResult({ assistantText: "Gap 1" }),
+      okResult({ assistantText: "NO_GAPS_FOUND" }),
+    );
 
     await uc.execute([makeGroup("G1", [makeSlice(1)])]);
 
     expect(persistence.current.lastCompletedSlice).toBe(1);
     expect(
       persistence.saveHistory.filter((state) => state.currentPhase === "gap").length,
-    ).toBeGreaterThanOrEqual(3);
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it("auto mode retries final-pass findings until the pass is clean", async () => {
@@ -451,8 +449,11 @@ describe("Happy path lifecycle", () => {
     spawner.onNextSpawn("completeness",
       okResult({ assistantText: "SLICE_COMPLETE" }),
     );
-    spawner.onNextSpawn("gap", okResult({ assistantText: "Missing queue coverage in follow-up path" }));
-    spawner.onNextSpawn("gap", okResult({ assistantText: "NO_GAPS_FOUND" }));
+    spawner.onNextSpawn(
+      "gap",
+      okResult({ assistantText: "Missing queue coverage in follow-up path" }),
+      okResult({ assistantText: "NO_GAPS_FOUND" }),
+    );
     spawner.onNextSpawn("final", okResult({ assistantText: "Found issue in final pass output" }));
     spawner.onNextSpawn("final", okResult({ assistantText: "NO_ISSUES_FOUND" }));
 
@@ -470,10 +471,10 @@ describe("Happy path lifecycle", () => {
       config: { skills: { gap: null } },
     });
 
-    spawner.onNextSpawn("plan", okResult({ assistantText: "Here is the plan", planText: "plan text" }));
     hud.queueAskAnswer("y");
     spawner.onNextSpawn(
       "tdd",
+      okResult({ assistantText: "Here is the plan", planText: "plan text" }),
       () => {
         throw new Error("tdd execute crashed");
       },

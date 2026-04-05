@@ -92,10 +92,7 @@ export const checkWorktreeResume = async (
     };
   }
 
-  if (
-    state.worktree &&
-    (state.worktree.managed ? branchFlag !== undefined : true)
-  ) {
+  if (state.worktree && (state.worktree.managed ? branchFlag !== undefined : true)) {
     const status = await verifyWorktree(state.worktree.path, state.worktree.branch);
     if (status.ok) {
       if (state.lastCompletedSlice != null && state.lastCompletedSlice > 0) {

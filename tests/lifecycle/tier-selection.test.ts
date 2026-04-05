@@ -43,11 +43,17 @@ describe("Execution-unit tier selection", () => {
       { completeness: "skip", verify: "skip", review: "skip", gap: "defer", reason: "slice 2 boundary" },
     );
 
-    spawner.onNextSpawn("plan", okResult({ assistantText: "plan 1", planText: "plan 1" }));
-    spawner.onNextSpawn("plan", okResult({ assistantText: "plan 2", planText: "plan 2" }));
     spawner.onNextSpawn("tdd");
-    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented 1" }));
-    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented 2" }));
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "plan 1", planText: "plan 1" }),
+      okResult({ assistantText: "implemented 1" }),
+    );
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "plan 2", planText: "plan 2" }),
+      okResult({ assistantText: "implemented 2" }),
+    );
     spawner.onNextSpawn("review");
     spawner.onNextSpawn("review");
     spawner.onNextSpawn("review");
@@ -73,11 +79,7 @@ describe("Execution-unit tier selection", () => {
       "review large",
     ]);
 
-    const planSpawns = spawner.spawned.filter((spawn) => spawn.role === "plan");
-    expect(planSpawns.map((spawn) => spawn.opts?.systemPrompt)).toEqual([
-      "plan small",
-      "plan large",
-    ]);
+    expect(spawner.agentsForRole("plan")).toHaveLength(0);
 
     expect(persistence.current.activeTier).toBe("large");
   });
@@ -107,15 +109,17 @@ describe("Execution-unit tier selection", () => {
       reason: "resume boundary",
     });
 
-    spawner.onNextSpawn("plan", okResult({ assistantText: "plan 2", planText: "plan 2" }));
-    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented 2" }));
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "plan 2", planText: "plan 2" }),
+      okResult({ assistantText: "implemented 2" }),
+    );
     spawner.onNextSpawn("review");
 
     await uc.execute([makeGroup("G1", [makeSlice(1), makeSlice(2)])]);
 
     expect(tierSelector.inputs).toEqual([]);
 
-    const planSpawn = spawner.spawned.find((spawn) => spawn.role === "plan");
-    expect(planSpawn?.opts?.systemPrompt).toBe("plan small");
+    expect(spawner.agentsForRole("plan")).toHaveLength(0);
   });
 });

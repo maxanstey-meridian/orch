@@ -18,14 +18,19 @@ export abstract class PromptBuilder {
   abstract groupedTestPass(groupName: string, groupContent: string): string;
   abstract directExecute(requestContent: string): string;
   abstract directTestPass(requestContent: string): string;
+  abstract directVerify(baseSha: string, requestContent: string, fixSummary?: string): string;
+  abstract directReview(requestContent: string, baseSha: string, followUp?: boolean): string;
+  abstract directCompleteness(requestContent: string, baseSha: string): string;
+  abstract directGap(requestContent: string): string;
   abstract verify(baseSha: string, sliceNumber: number, fixSummary?: string): string;
   abstract groupedVerify(baseSha: string, groupName: string, fixSummary?: string): string;
-  abstract review(content: string, baseSha: string, priorFindings?: string): string;
+  abstract review(content: string, baseSha: string, followUp?: boolean): string;
   abstract completeness(sliceContent: string, baseSha: string, sliceNumber: number): string;
   abstract groupedCompleteness(groupContent: string, baseSha: string, groupName: string): string;
   abstract gap(groupContent: string, baseSha: string): string;
   abstract commitSweep(groupName: string): string;
   abstract finalPasses(baseSha: string): readonly FinalPass[];
+  abstract directFinalPasses(baseSha: string, requestContent: string): readonly FinalPass[];
   abstract withBrief(prompt: string): string;
   abstract rulesReminder(role: "tdd" | "review"): string;
 }

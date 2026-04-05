@@ -107,7 +107,7 @@ export const buildPlanPrompt = (
   fullPlan?: string,
   sliceNumber?: number,
 ): string =>
-  `You are a planning agent. Explore the codebase and produce a step-by-step TDD execution plan for the following slice.
+  `Before implementing this slice, produce a concise execution brief for yourself as the builder.
 ${
   fullPlan
     ? `
@@ -125,14 +125,15 @@ ${sliceContent}
 
 ## Instructions
 1. Read the relevant files to understand current state.
-2. Output numbered RED→GREEN cycles. Each cycle: one failing test, then minimal code to pass.
-3. Do NOT write any code — plan only.
+2. Output a numbered implementation brief for this slice only.
+3. Do NOT write any code in this response.
 4. The plan describes the INTENT. If existing code does something different from what the plan describes, the plan is the authority — plan to change the existing code, not to preserve it.
 5. Future-slice wiring stays deferred. Do not turn later planned integration into a requirement for the current slice unless the plan explicitly says to do it now.
 6. Compatibility/fallback behavior must be stated, not invented. If the slice does not explicitly preserve legacy behavior, plan explicit invalid handling rather than silent reinterpretation.
+7. Include test obligations, but do not force fake RED→GREEN ceremony.
 
 ## Enrichment
-As you explore, capture the context you discover so the implementing agent doesn't have to re-explore. Include in your output:
+As you explore, capture only the context that will save real re-exploration during implementation. Include in your output:
 - **relatedFiles**: paths the implementing agent should read beyond the primary files
 - **keyContext**: what the agent needs to know about the current state of the code (how things are wired, what patterns exist)
 - **dependsOn**: if this slice depends on output from a prior slice, note which slice and what specifically
@@ -204,14 +205,11 @@ ${planAuthority}
 ${fixDiscipline}`;
   }
 
-  return `Implement the following plan slice using strict RED→GREEN TDD cycles.
+  return `Implement the following plan slice as the builder.
 
-The plan slice contains numbered cycles with RED and GREEN blocks. Follow them in order:
-1. Write the test described in RED. Run tests. Confirm it fails.
-2. Write the minimal code described in GREEN. Run tests. Confirm it passes.
-3. Move to the next cycle. Do NOT skip ahead or batch.
-
-If the plan slice does not contain explicit cycles, decompose it into behaviours yourself and apply the same process: one failing test, then minimal code to pass, repeat.
+Work through the slice as one bounded implementation task.
+Use the plan as the authority for what to build, do not turn it into fake RED→GREEN ceremony, write real regression
+guards, run the relevant tests, and only claim completion after the code and tests are actually green.
 ${planContext}
 ## Plan Slice
 ${sliceContent}
@@ -263,9 +261,9 @@ export const buildVerifyPrompt = (
   executionUnitLabel: string,
   fixSummary?: string,
 ): string =>
-  `Verify the changes since commit ${baseSha}. Context: TDD implementation of ${executionUnitLabel}.
+  `Verify the changes since commit ${baseSha}. Context: builder implementation of ${executionUnitLabel}.
 
-${fixSummary ? `## Fix summary from the TDD bot\n${fixSummary}\n\n` : ""}## Instructions
+${fixSummary ? `## Fix summary from the builder\n${fixSummary}\n\n` : ""}## Instructions
 1. Review the changed code and run the verification commands you judge necessary.
 2. You MUST end with a short human summary followed by a machine-readable \`### VERIFY_JSON\` block in the exact format below.
 3. Do not replace the structured block with prose. You may include prose before it, but the block is mandatory.
@@ -296,6 +294,47 @@ Rules:
 - If the current execution unit is clean, use PASS or PASS_WITH_WARNINGS and leave \`sliceLocalFailures\` empty.
 - "No findings" prose alone is NOT sufficient; you must include the JSON block above.`;
 
+export const buildDirectVerifyPrompt = (
+  baseSha: string,
+  requestContent: string,
+  fixSummary?: string,
+): string =>
+  `Verify the changes since commit ${baseSha}. Context: builder implementation of the direct request.
+
+${fixSummary ? `## Fix summary from the builder\n${fixSummary}\n\n` : ""}## Direct request
+${requestContent}
+
+## Instructions
+1. Review the changed code and run the verification commands you judge necessary.
+2. You MUST end with a short human summary followed by a machine-readable \`### VERIFY_JSON\` block in the exact format below.
+3. Do not replace the structured block with prose. You may include prose before it, but the block is mandatory.
+
+## Required output format
+
+### VERIFY_JSON
+\`\`\`json
+{
+  "status": "PASS|FAIL|PASS_WITH_WARNINGS",
+  "checks": [
+    { "check": "<command or check name>", "status": "PASS|FAIL|WARN|SKIPPED" }
+  ],
+  "sliceLocalFailures": ["<failure caused by the current execution unit>"],
+  "outOfScopeFailures": ["<failure not owned by the current execution unit>"],
+  "preExistingFailures": ["<failure that already existed before these changes>"],
+  "runnerIssue": "<runner instability or hung process summary>" | null,
+  "retryable": true,
+  "summary": "<one concise summary sentence>"
+}
+\`\`\`
+
+Rules:
+- \`sliceLocalFailures\` are the ONLY failures the builder should be asked to fix.
+- Put unrelated failures in \`outOfScopeFailures\`, not \`sliceLocalFailures\`.
+- Put already-failing checks in \`preExistingFailures\`.
+- Use \`runnerIssue\` for hung runners, crashed tooling, or unstable infrastructure rather than blaming the builder.
+- If the direct request is clean, use PASS or PASS_WITH_WARNINGS and leave \`sliceLocalFailures\` empty.
+- "No findings" prose alone is NOT sufficient; you must include the JSON block above.`;
+
 export const buildCompletenessPrompt = (
   sliceContent: string,
   baseSha: string,
@@ -313,7 +352,7 @@ ${fullPlan}
     : "";
 
   if (hasCriteriaSection(sliceContent)) {
-    return `You are a completeness checker. A TDD bot just implemented a plan slice. Your job is to verify that EVERY criterion and concrete requirement in the slice was actually implemented — not whether the code is clean, but whether it does what was asked.
+    return `You are a completeness checker. A builder just implemented a plan slice. Your job is to verify that EVERY criterion and concrete requirement in the slice was actually implemented — not whether the code is clean, but whether it does what was asked.
 
 ${planContext}
 ## Slice ${sliceNumber ?? "N"} (the slice that was just implemented)
@@ -333,7 +372,7 @@ ${sliceContent}
 6. Check ARCHITECTURAL requirements separately from functional ones:
    - If the plan says "use function X" or "call Y from domain layer", verify the import exists and the function is actually called. Grep for it.
    - If the plan says "phase transitions use transition()" or "state advances use advanceState()", those are HARD REQUIREMENTS — not suggestions. Code that manages state a different way (e.g. manual object spreads instead of advanceState) is MISSING the requirement even if tests pass.
-   - The plan's specified approach IS the requirement. An equivalent alternative that the TDD bot chose instead is a DIVERGENT finding.
+   - The plan's specified approach IS the requirement. An equivalent alternative that the builder chose instead is a DIVERGENT finding.
 
 ## Output format
 
@@ -352,7 +391,7 @@ If everything is complete and matches the plan, respond with exactly: SLICE_COMP
 If anything is missing or divergent, list ALL issues. Do not stop at the first one.`;
   }
 
-  return `You are a completeness checker. A TDD bot just implemented a plan slice. Your job is to verify that EVERY requirement in the slice was actually implemented — not whether the code is clean, but whether it does what was asked.
+  return `You are a completeness checker. A builder just implemented a plan slice. Your job is to verify that EVERY requirement in the slice was actually implemented — not whether the code is clean, but whether it does what was asked.
 
 ${planContext}
 ## Slice ${sliceNumber ?? "N"} (the slice that was just implemented)
@@ -369,7 +408,7 @@ ${sliceContent}
 4. Check ARCHITECTURAL requirements separately from functional ones:
    - If the plan says "use function X" or "call Y from domain layer", verify the import exists and the function is actually called. Grep for it.
    - If the plan says "phase transitions use transition()" or "state advances use advanceState()", those are HARD REQUIREMENTS — not suggestions. Code that manages state a different way (e.g. manual object spreads instead of advanceState) is MISSING the requirement even if tests pass.
-   - The plan's specified approach IS the requirement. An equivalent alternative that the TDD bot chose instead is a DIVERGENT finding.
+   - The plan's specified approach IS the requirement. An equivalent alternative that the builder chose instead is a DIVERGENT finding.
 
 ## Output format
 
@@ -382,6 +421,36 @@ If everything is complete and matches the plan, respond with exactly: SLICE_COMP
 
   If anything is missing or divergent, list ALL issues. Do not stop at the first one.`;
 };
+
+export const buildDirectCompletenessPrompt = (requestContent: string, baseSha: string): string =>
+  `You are a completeness checker. A builder just implemented the direct request below as one bounded increment. Your job is to verify that EVERY stated requirement in the request was actually implemented — not whether the code is clean, but whether it does what was asked.
+
+## Direct request
+${requestContent}
+
+## How to check
+
+1. Run \`git diff --name-only ${baseSha}..HEAD\` to see what changed.
+2. Read the changed files — the FULL files, not just diffs.
+3. For EACH concrete requirement in the direct request above, check:
+   - **Is it implemented?** Find the code that does it. Cite the file and line.
+   - **Does it match the request's intent?** If the request says "filter by X" but the code "includes everything and also X", that is WRONG — the direct request is the authority.
+   - **Is there a test?** Find a test that would fail if this requirement were removed.
+4. Check ARCHITECTURAL requirements separately from functional ones:
+   - If the request says "use function X" or "call Y from domain layer", verify the import exists and the function is actually called. Grep for it.
+   - If the request says "phase transitions use transition()" or "state advances use advanceState()", those are HARD REQUIREMENTS — not suggestions. Code that manages state a different way is MISSING the requirement even if tests pass.
+   - The request's specified approach IS the requirement. An equivalent alternative that the builder chose instead is a DIVERGENT finding.
+
+## Output format
+
+For each requirement, output one line:
+- ✅ **<requirement>** — implemented at \`file:line\`, tested in \`test-file\`
+- ❌ **<requirement>** — MISSING: <what's wrong or missing>
+- ⚠️ **<requirement>** — DIVERGENT: <how it differs from the request's intent>
+
+If everything is complete and matches the request, respond with exactly: DIRECT_COMPLETE
+
+If anything is missing or divergent, list ALL issues. Do not stop at the first one.`;
 
 export const buildGroupedCompletenessPrompt = (
   groupContent: string,
@@ -495,7 +564,7 @@ A feature that exists but isn't wired in is not delivered.`;
 export const buildReviewPrompt = (
   sliceContent: string,
   baseSha: string,
-  priorFindings?: string,
+  followUp = false,
 ): string => {
   const criteriaCheck = hasCriteriaSection(sliceContent)
     ? `
@@ -514,7 +583,26 @@ ${sliceContent}`;
 
   return `Review the code changed since commit ${baseSha}. Judge the code on its own merits — correctness, types, structure — not just whether it matches the plan.
 
-${priorFindings ? `## Prior review findings\nYour previous review flagged these issues — verify each one was addressed. If any were ignored or only partially fixed, re-flag them:\n\n${priorFindings}\n\n## Review pass discipline\nThis is likely your final useful review pass for this slice.\nRe-check the prior findings carefully and only add a new issue if it is clearly material and was genuinely missed before.\nBatch related issues into one finding when they share a root cause or would be fixed by the same change.\nDo not pad the review with speculative, cosmetic, or low-value nits just to say something new.\nDo not hold back a material issue for a later pass.\n\n` : `## Review pass discipline\nAssume you may only get one useful review pass for this slice.\nSurface the highest-signal issues now.\nBatch related issues into one finding when they share a root cause or would be fixed by the same change.\nDo not pad the review with speculative, cosmetic, or low-value nits.\nDo not hold back a material issue for a later pass.\n\n`}${buildReviewPreamble(baseSha)}
+${
+  followUp
+    ? `## Review pass discipline
+This is a follow-up review in the same conversation.
+Re-check the concerns you already raised from memory before surfacing anything new.
+Only report issues that are still open or genuinely new and material.
+Batch related issues into one finding when they share a root cause or would be fixed by the same change.
+Do not pad the review with speculative, cosmetic, or low-value nits just to say something new.
+Do not hold back a material issue for a later pass.
+
+`
+    : `## Review pass discipline
+Assume you may only get one useful review pass for this slice.
+Surface the highest-signal issues now.
+Batch related issues into one finding when they share a root cause or would be fixed by the same change.
+Do not pad the review with speculative, cosmetic, or low-value nits.
+Do not hold back a material issue for a later pass.
+
+`
+}${buildReviewPreamble(baseSha)}
 
 ## What to look for
 - Bugs: incorrect runtime behavior, off-by-one, swallowed errors, race conditions
@@ -541,6 +629,54 @@ ${planSliceSection}
 If all changes are correct and well-structured, respond with exactly: REVIEW_CLEAN`;
 };
 
+export const buildDirectReviewPrompt = (
+  requestContent: string,
+  baseSha: string,
+  followUp = false,
+): string =>
+  `Review the code changed since commit ${baseSha}. Judge the code on its own merits — correctness, types, structure — not just whether it matches a request.
+
+${
+  followUp
+    ? `## Review pass discipline
+This is a follow-up review in the same conversation.
+Re-check the concerns you already raised from memory before surfacing anything new.
+Only report issues that are still open or genuinely new and material.
+Batch related issues into one finding when they share a root cause or would be fixed by the same change.
+Do not pad the review with speculative, cosmetic, or low-value nits just to say something new.
+Do not hold back a material issue for a later pass.
+
+`
+    : `## Review pass discipline
+Assume you may only get one useful review pass for this direct request.
+Surface the highest-signal issues now.
+Batch related issues into one finding when they share a root cause or would be fixed by the same change.
+Do not pad the review with speculative, cosmetic, or low-value nits.
+Do not hold back a material issue for a later pass.
+
+`
+}## What to look for
+- Bugs: incorrect runtime behavior, off-by-one, swallowed errors, race conditions
+- Type fidelity: runtime values disagreeing with declared types, \`any\`/\`unknown\` as value carriers
+- Dead code: new exports with zero consumers introduced by the change
+- Structural: duplicated logic, parallel state, mixed concerns introduced by the change
+- Names: identifiers that no longer match their scope or purpose after the change
+- Enum/value completeness: new variants not handled in all consumers
+- Over-engineering: deps bags, wrapper types, or indirection layers that exist "for testability" but add complexity with no real benefit
+- Test resilience: new tests that mock the system under test, tests that would pass even if the feature were removed, tests that assert mock call arguments instead of observable outcomes
+
+## What NOT to flag
+- Style, formatting, cosmetic preferences
+- Test coverage gaps (separate pass handles this)
+- Harmless redundancy that aids readability
+- Threshold values tuned empirically
+- Test style preferences
+
+## Direct request
+${requestContent}
+
+If all changes are correct and well-structured, respond with exactly: REVIEW_CLEAN`;
+
 export const buildGapPrompt = (groupContent: string, baseSha: string): string => {
   const criteriaPriority = hasCriteriaSection(groupContent)
     ? `
@@ -549,14 +685,17 @@ If a criterion can be broken by removing its key implementation line while the t
 `
     : "";
 
-  return `You are a gap-finder for a TDD pipeline. A group of slices has just been implemented and reviewed.
+  return `You are a gap-finder for a builder pipeline. A group of slices has just been implemented and reviewed.
 
-Your job is to find **missing test coverage and unhandled edge cases** — NOT code style, naming, or architecture.
+Your job is to find **material missing test coverage and materially unguarded reachable behavior** — NOT code style, naming, or architecture.
 
+You are re-checking the SAME group in the SAME conversation unless the orchestrator explicitly reset you for a new group.
+First ask whether concerns you already raised are now adequately covered.
 Assume this may be the only useful gap pass for this group.
 Report only the **highest-signal** gaps that are likely to allow a real regression, plan mismatch, or unguarded reachable behavior to ship.
 Batch related variants into one gap when a single representative test or small cluster of tests would cover them.
 Do not drip-feed narrower versions of the same underlying issue across multiple passes.
+Do not turn one representative missing guard into a sequence of smaller follow-up assertions.
 Do not hold back a material finding for later, and do not invent marginal findings just to avoid saying NO_GAPS_FOUND.
 
 ${criteriaPriority}
@@ -564,12 +703,11 @@ ${criteriaPriority}
 ${buildReviewPreamble(baseSha)}
 
 ## What to look for
-- Untested edge cases and boundary conditions
-- Combinations of features built in this group that have no test coverage
-  (e.g. arrays of enums, nullable records, nested compositions)
-- Integration paths between slices with no coverage
-- Off-by-one scenarios, empty inputs, null inputs
-- Any behaviour described in the plan that has no corresponding test
+- Behaviours promised by the plan with no meaningful regression guard
+- Reachable integration paths between slices with no representative coverage
+- Criteria whose key implementation could regress without a test failure
+- Public/runtime contract mismatches that tests would not catch
+- Only those edge cases a real caller is likely to hit and care about
 
 ## What NOT to report
 - Code style, formatting, naming — already reviewed
@@ -578,6 +716,8 @@ ${buildReviewPreamble(baseSha)}
 - Pure branch-coverage nits once a representative regression guard already exists
 - Multiple variants of the same missing-coverage theme when one bundled finding would cover them
 - Low-value hardening ideas that do not materially increase confidence in the shipped behavior
+- Alternate-path assertions for behavior that is already meaningfully guarded
+- Wiring-only assertions when a representative end-to-end guard already proves the behavior
 
 ## Test resilience check
 
@@ -598,9 +738,10 @@ For each test file changed in this group, evaluate:
 Report unguarded features as gaps, same format as coverage gaps.
 
 ## Prioritisation and batching rules
-- Report at most 3 gaps.
+- Report every genuine gap you find. Do not artificially cap your output, and do not pad with marginal findings.
 - Prefer reachable runtime defects, public contract mismatches, missing end-to-end coverage for newly added behavior, and unguarded integration paths over narrow branch-coverage follow-ups.
 - If several findings share one root cause or would be solved by the same test cluster, collapse them into one gap.
+- If a previous gap was fixed well enough that only smaller variants remain, treat that theme as closed.
 - If the remaining issues are only minor hardening or diminishing-return coverage ideas, respond with exactly: NO_GAPS_FOUND
 
 ## Group plan
@@ -612,6 +753,39 @@ If you find gaps, list each one as:
 
 If everything is well covered, respond with exactly: NO_GAPS_FOUND`;
 };
+
+export const buildDirectGapPrompt = (requestContent: string): string =>
+  `You are a gap-finder for a direct-mode builder run. A bounded direct request has just been implemented and reviewed.
+
+Your job is to find only material missing test coverage and materially unguarded reachable behavior — NOT code style, naming, or architecture.
+
+You are re-checking the SAME direct request in the SAME conversation unless the orchestrator explicitly reset you.
+Assume this may be the only useful gap pass for this direct request.
+Report only the highest-signal gaps that are likely to allow a real regression, request mismatch, or unguarded reachable behavior to ship.
+Batch related variants into one gap when a single representative test or small cluster of tests would cover them.
+Do not drip-feed narrower versions of the same underlying issue across multiple passes.
+Do not turn one representative missing guard into a sequence of smaller follow-up assertions.
+Do not hold back a material finding for later, and do not invent marginal findings just to avoid saying NO_GAPS_FOUND.
+
+## What to look for
+- Behaviours promised by the direct request with no meaningful regression guard
+- Reachable runtime paths inside the request with no representative coverage
+- Only those edge cases a real caller is likely to hit and care about
+- Public/runtime contract mismatches that tests would not catch
+
+## What NOT to report
+- Alternate-path or wiring-only assertions when a representative end-to-end guard already proves the behavior
+- Pure branch-coverage nits once a representative guard exists
+- Low-value hardening ideas that do not materially increase confidence
+
+## Direct request
+${requestContent}
+
+If you find gaps, list each one as:
+- **Gap:** <what's missing>
+- **Suggested test:** <one-line description of the test to add>
+
+If everything is well covered, respond with exactly: NO_GAPS_FOUND`;
 
 export const buildFinalPasses = (
   baseSha: string,
@@ -672,3 +846,38 @@ ${buildReviewPreamble(baseSha)}
 If everything integrates cleanly, respond with exactly: NO_ISSUES_FOUND`,
   },
 ];
+
+export const buildDirectFinalPasses = (
+  baseSha: string,
+  requestContent: string,
+): { name: string; prompt: string }[] =>
+  buildFinalPasses(baseSha, requestContent).map((pass) => {
+    if (pass.name === "Plan completeness") {
+      return {
+        name: "Request completeness",
+        prompt: `You are verifying that the implementation matches the direct request.
+
+Verify the changes since commit ${baseSha} against the direct request below.
+
+## Direct request
+${requestContent}
+
+For each requested behavior, verify:
+1. Was it implemented?
+2. Were the specified edge cases handled?
+3. Is there a test for each specified behavior?
+
+Report:
+- **Missing:** requested behaviors with no implementation
+- **Untested:** behaviors that exist but have no test coverage
+- **Divergent:** implementations that differ from the request
+
+If everything matches, respond with exactly: NO_ISSUES_FOUND`,
+      };
+    }
+
+    return {
+      name: pass.name,
+      prompt: `${pass.prompt}\n\n## Direct request\n${requestContent}\n\nJudge findings against the direct request, not a plan slice, group, or generated plan artifact.`,
+    };
+  });

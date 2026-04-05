@@ -35,11 +35,10 @@ describe("log writer lifecycle", () => {
     });
 
     git.setHasChanges(true);
-    spawner.onNextSpawn("plan", okResult({ assistantText: "plan", planText: "plan" }));
     hud.queueAskAnswer("y");
     spawner.onNextSpawn("tdd",
+      okResult({ assistantText: "plan", planText: "plan" }),
       okResult({ assistantText: "implemented slice 1" }),
-      okResult({ assistantText: "summary done" }),
     );
     spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
     spawner.onNextSpawn("verify", okResult({ assistantText: VERIFY_PASS }));
@@ -57,11 +56,10 @@ describe("log writer lifecycle", () => {
     });
 
     git.setHasChanges(true);
-    spawner.onNextSpawn("plan", okResult({ assistantText: "plan", planText: "plan" }));
     hud.queueAskAnswer("y");
     spawner.onNextSpawn("tdd",
+      okResult({ assistantText: "plan", planText: "plan" }),
       okResult({ assistantText: "implemented slice 1" }),
-      okResult({ assistantText: "summary done" }),
     );
     spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
     spawner.onNextSpawn("verify", okResult({ assistantText: VERIFY_PASS }));
@@ -78,11 +76,10 @@ describe("log writer lifecycle", () => {
     });
 
     git.setHasChanges(true);
-    spawner.onNextSpawn("plan", okResult({ assistantText: "plan", planText: "plan" }));
     hud.queueAskAnswer("y");
     spawner.onNextSpawn("tdd",
+      okResult({ assistantText: "plan", planText: "plan" }),
       okResult({ assistantText: "implemented slice 1" }),
-      okResult({ assistantText: "summary done" }),
     );
     spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
     spawner.onNextSpawn("verify", okResult({ assistantText: VERIFY_PASS }));

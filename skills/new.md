@@ -268,7 +268,7 @@ Identifies missing test coverage and unhandled edge cases. Last line of defence.
 - If coverage is adequate, say so. Don't invent marginal findings.
 - Report highest-signal gaps only. Batch related variants.
 - When criteria exist, prioritise missing regression guards for criteria.
-- Report at most 3 gaps.
+- Report every genuine gap you find. Do not artificially cap your output, and do not pad with marginal findings.
 
 ### What to look for
 

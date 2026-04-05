@@ -10,6 +10,10 @@ import {
   buildTddPrompt,
   buildDirectExecutePrompt,
   buildDirectTestPassPrompt,
+  buildDirectVerifyPrompt,
+  buildDirectReviewPrompt,
+  buildDirectCompletenessPrompt,
+  buildDirectGapPrompt,
   buildVerifyPrompt,
   buildReviewPrompt,
   buildCompletenessPrompt,
@@ -17,6 +21,7 @@ import {
   buildCommitSweepPrompt,
   buildGapPrompt,
   buildFinalPasses,
+  buildDirectFinalPasses,
 } from "./plan/prompts.js";
 
 export class DefaultPromptBuilder extends PromptBuilder {
@@ -106,6 +111,22 @@ ${groupContent}`;
     return _withBrief(buildDirectTestPassPrompt(requestContent), this.brief);
   }
 
+  directVerify(baseSha: string, requestContent: string, fixSummary?: string): string {
+    return _withBrief(buildDirectVerifyPrompt(baseSha, requestContent, fixSummary), this.brief);
+  }
+
+  directReview(requestContent: string, baseSha: string, followUp = false): string {
+    return buildDirectReviewPrompt(requestContent, baseSha, followUp);
+  }
+
+  directCompleteness(requestContent: string, baseSha: string): string {
+    return _withBrief(buildDirectCompletenessPrompt(requestContent, baseSha), this.brief);
+  }
+
+  directGap(requestContent: string): string {
+    return _withBrief(buildDirectGapPrompt(requestContent), this.brief);
+  }
+
   verify(baseSha: string, sliceNumber: number, fixSummary?: string): string {
     return _withBrief(buildVerifyPrompt(baseSha, `Slice ${sliceNumber}`, fixSummary), this.brief);
   }
@@ -114,8 +135,8 @@ ${groupContent}`;
     return _withBrief(buildVerifyPrompt(baseSha, `Group ${groupName}`, fixSummary), this.brief);
   }
 
-  review(content: string, baseSha: string, priorFindings?: string): string {
-    return buildReviewPrompt(content, baseSha, priorFindings);
+  review(content: string, baseSha: string, followUp = false): string {
+    return buildReviewPrompt(content, baseSha, followUp);
   }
 
   completeness(sliceContent: string, baseSha: string, sliceNumber: number): string {
@@ -136,6 +157,10 @@ ${groupContent}`;
 
   finalPasses(baseSha: string): readonly FinalPass[] {
     return buildFinalPasses(baseSha, this.planContent);
+  }
+
+  directFinalPasses(baseSha: string, requestContent: string): readonly FinalPass[] {
+    return buildDirectFinalPasses(baseSha, requestContent);
   }
 
   withBrief(prompt: string): string {

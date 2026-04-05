@@ -31,4 +31,11 @@ else.
 - Trivial input variations covered by an equivalent test
 - Branch-coverage nits when a representative guard exists
 
-Report every genuine gap. Don't cap, don't pad. If coverage is adequate, output `GAP_CLEAN`.
+## Completeness over rationing
+
+Report every genuine gap you find. Do not artificially cap your output — if there are 7 real gaps, report 7. Holding
+back findings forces unnecessary re-runs: the builder fixes what you reported, gap runs again, finds what you held
+back, the builder fixes those, gap runs again. Three rounds for what should have been one.
+
+Equally, do not pad. If there is 1 gap, report 1. If coverage is adequate, say so and output `NO_GAPS_FOUND`. The goal
+is one definitive pass, not a drip-feed.

@@ -35,14 +35,12 @@ describe("Skip lifecycle", () => {
       config: { skills: { gap: null } },
     });
 
-    // Plan agent: when send() is called, trigger skip via the HUD key
-    spawner.onNextSpawn("plan", (prompt) => {
+    // Builder planning: when the planning prompt is sent, trigger skip via the HUD key.
+    spawner.onNextSpawn("tdd", (prompt) => {
       hud.simulateKey("s");
       return okResult({ assistantText: "plan text", planText: "plan" });
     });
 
-    // TDD + review agents (long-lived)
-    spawner.onNextSpawn("tdd");
     spawner.onNextSpawn("review");
 
     const groups = [makeGroup("G1", [makeSlice(1)])];
@@ -101,13 +99,12 @@ describe("Skip lifecycle", () => {
       config: { skills: { gap: null } },
     });
 
-    // Plan agent: trigger skip when the plan prompt is sent (we're in Planning phase)
-    spawner.onNextSpawn("plan", (_prompt) => {
+    // Builder planning: trigger skip when the planning prompt is sent (we're in Planning phase)
+    spawner.onNextSpawn("tdd", (_prompt) => {
       hud.simulateKey("s");
       return okResult({ assistantText: "plan", planText: "plan" });
     });
 
-    spawner.onNextSpawn("tdd");
     spawner.onNextSpawn("review");
 
     const groups = [makeGroup("G1", [makeSlice(1)])];
@@ -122,12 +119,11 @@ describe("Skip lifecycle", () => {
       config: { skills: { gap: null } },
     });
 
-    spawner.onNextSpawn("plan", () => {
+    spawner.onNextSpawn("tdd", () => {
       hud.simulateKey("s");
       return okResult({ assistantText: "plan", planText: "plan" });
     });
 
-    spawner.onNextSpawn("tdd");
     spawner.onNextSpawn("review");
 
     const groups = [makeGroup("G1", [makeSlice(1)])];

@@ -53,6 +53,8 @@ const stateSchema = z
     pendingGapBaseSha: z.string().min(1).optional(),
     tddSession: persistedAgentSessionSchema.optional(),
     reviewSession: persistedAgentSessionSchema.optional(),
+    verifySession: persistedAgentSessionSchema.optional(),
+    gapSession: persistedAgentSessionSchema.optional(),
     tddSessionId: z.string().min(1).optional(),
     reviewSessionId: z.string().min(1).optional(),
     worktree: z
