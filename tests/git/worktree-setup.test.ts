@@ -194,6 +194,38 @@ describe("resolveWorktree", () => {
     expect(saveState).not.toHaveBeenCalled();
   });
 
+  it("reuses persisted external worktree state even when the same --tree path is passed again", async () => {
+    const worktree = {
+      path: "/external-checkouts/feature-branch",
+      branch: "feature/external-tree",
+      baseSha: "deadbeef",
+      managed: false,
+    };
+    const state = { lastCompletedSlice: 2, worktree };
+
+    const result = await resolveWorktree({
+      branchName: undefined,
+      cwd: "/repo",
+      treePath: "/external-checkouts/feature-branch",
+      activePlanId: "abc123",
+      state,
+      stateFile: "/repo/.orch/state/plan-abc123.json",
+      log: noop,
+    });
+
+    expect(result.cwd).toBe("/external-checkouts/feature-branch");
+    expect(result.skipStash).toBe(true);
+    expect(result.worktreeInfo).toEqual({
+      path: "/external-checkouts/feature-branch",
+      branch: "feature/external-tree",
+    });
+    expect(result.updatedState.worktree).toEqual(worktree);
+    expect(createWorktree).not.toHaveBeenCalled();
+    expect(captureCurrentBranch).not.toHaveBeenCalled();
+    expect(captureRef).not.toHaveBeenCalled();
+    expect(saveState).not.toHaveBeenCalled();
+  });
+
   it("reuses existing worktree from state even when --branch is passed again", async () => {
     const worktree = {
       path: "/repo/.orch/trees/abc123",

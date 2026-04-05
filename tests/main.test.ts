@@ -2371,7 +2371,7 @@ describe("main execution preference wiring", () => {
     const externalTreePath = join(tempDir, "existing-tree");
     await mkdir(externalTreePath, { recursive: true });
 
-    const { createContainer, resolveWorktree } = await runMainWithWorkPlanMocks(
+    const { createContainer, resolveWorktree, planPath } = await runMainWithWorkPlanMocks(
       ["--tree", externalTreePath],
       {
         resolveWorktreeResult: {
@@ -2388,23 +2388,30 @@ describe("main execution preference wiring", () => {
         treePath: externalTreePath,
       }),
     );
+    const { realpathSync } = await import("fs");
+    const expectedOrchDir = join(realpathSync(tempDir), ".orch");
+    const expectedStateFile = statePathForPlan(expectedOrchDir, resolvePlanId(planPath));
+    const expectedLogPath = logPathForPlan(expectedOrchDir, resolvePlanId(planPath));
     expect(createContainer).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: externalTreePath,
+        stateFile: expectedStateFile,
+        logPath: expectedLogPath,
       }),
       expect.any(Object),
     );
+    const config = createContainer.mock.calls[0]?.[0];
+    expect(config.stateFile).toBe(expectedStateFile);
+    expect(config.logPath).toBe(expectedLogPath);
+    expect(config.stateFile).not.toContain(`${externalTreePath}/.orch/`);
+    expect(config.logPath).not.toContain(`${externalTreePath}/.orch/`);
   });
 
   it("passes --tree through direct inventory execution and uses the selected tree as cwd", async () => {
     const externalTreePath = join(tempDir, "existing-tree");
     await mkdir(externalTreePath, { recursive: true });
 
-    const {
-      createContainer,
-      resolveWorktree,
-      stateFile,
-    } = await runMainWithInventoryPlanMocks({
+    const { createContainer, resolveWorktree } = await runMainWithInventoryPlanMocks({
       args: ["--quick", "--tree", externalTreePath],
       generatedPlanId: "direct42",
       resolveWorktreeResult: {
@@ -2422,6 +2429,10 @@ describe("main execution preference wiring", () => {
       },
     });
 
+    const { realpathSync } = await import("fs");
+    const expectedOrchDir = join(realpathSync(tempDir), ".orch");
+    const expectedStateFile = statePathForPlan(expectedOrchDir, "direct42");
+    const expectedLogPath = logPathForPlan(expectedOrchDir, "direct42");
     expect(resolveWorktree).toHaveBeenCalledWith(
       expect.objectContaining({
         treePath: externalTreePath,
@@ -2430,12 +2441,16 @@ describe("main execution preference wiring", () => {
     expect(createContainer).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: externalTreePath,
-        stateFile: expect.stringMatching(/\.orch\/state\/plan-direct42\.json$/),
-        logPath: expect.stringMatching(/\.orch\/logs\/plan-direct42\.log$/),
+        stateFile: expectedStateFile,
+        logPath: expectedLogPath,
       }),
       expect.any(Object),
     );
-    expect(stateFile).toMatch(/\.orch\/state\/plan-direct42\.json$/);
+    const config = createContainer.mock.calls[0]?.[0];
+    expect(config.stateFile).toBe(expectedStateFile);
+    expect(config.logPath).toBe(expectedLogPath);
+    expect(config.stateFile).not.toContain(`${externalTreePath}/.orch/`);
+    expect(config.logPath).not.toContain(`${externalTreePath}/.orch/`);
   });
 
   it("errors when --work override conflicts with the loaded plan mode", async () => {
