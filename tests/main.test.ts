@@ -1253,6 +1253,7 @@ const runMainWithWorkPlanMocks = async (
     planContent?: string;
     preloadedState?: Record<string, unknown>;
     assertGitRepoImplementation?: (cwd: string) => Promise<void>;
+    checkWorktreeResumeResult?: { ok: true } | { ok: false; message: string };
     resolveWorktreeResult?: {
       cwd: string;
       worktreeInfo: { path: string; branch: string } | null;
@@ -1284,6 +1285,9 @@ const runMainWithWorkPlanMocks = async (
       skipStash: true,
       updatedState: {},
     },
+  );
+  const checkWorktreeResume = vi.fn().mockResolvedValue(
+    options?.checkWorktreeResumeResult ?? { ok: true },
   );
   const stashBackup = vi.fn().mockResolvedValue(false);
   const complexityTriageSpawnerFactory = vi.fn(() => () => ({
@@ -1351,7 +1355,7 @@ const runMainWithWorkPlanMocks = async (
     ]),
   }));
   vi.doMock("#infrastructure/git/worktree.js", () => ({
-    checkWorktreeResume: vi.fn().mockResolvedValue({ ok: true }),
+    checkWorktreeResume,
     runCleanup: vi.fn(),
   }));
   vi.doMock("#infrastructure/git/worktree-setup.js", () => ({
@@ -1442,6 +1446,7 @@ const runMainWithWorkPlanMocks = async (
     planPath,
     runFingerprint,
     resolveWorktree,
+    checkWorktreeResume,
     stateFile,
     stashBackup,
     complexityTriageSpawnerFactory,
@@ -2408,6 +2413,45 @@ describe("main execution preference wiring", () => {
     expect(config.stateFile).not.toContain(`${externalTreePath}/.orch/`);
     expect(config.logPath).not.toContain(`${externalTreePath}/.orch/`);
     expect(stashBackup).not.toHaveBeenCalled();
+  });
+
+  it("passes --tree through checkWorktreeResume and exits before execution when resume validation fails", async () => {
+    const externalTreePath = join(tempDir, "existing-tree");
+    await mkdir(externalTreePath, { recursive: true });
+    const externalState = {
+      worktree: {
+        path: externalTreePath,
+        branch: "feature/existing",
+        baseSha: "deadbeef",
+        managed: false,
+      },
+      lastCompletedSlice: 1,
+    };
+
+    const {
+      checkWorktreeResume,
+      resolveWorktree,
+      createContainer,
+      exit,
+    } = await runMainWithWorkPlanMocks(["--tree", externalTreePath], {
+      preloadedState: externalState,
+      checkWorktreeResumeResult: {
+      ok: false,
+      message: "resume mismatch",
+      },
+    });
+
+    expect(checkWorktreeResume).toHaveBeenCalledWith(
+      undefined,
+      externalTreePath,
+      expect.objectContaining({
+        lastCompletedSlice: 1,
+        worktree: externalState.worktree,
+      }),
+    );
+    expect(resolveWorktree).not.toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
   });
 
   it("passes --tree through direct inventory execution and uses the selected tree as cwd", async () => {

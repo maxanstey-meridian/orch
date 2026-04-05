@@ -244,6 +244,24 @@ describe("checkWorktreeResume", () => {
     });
   });
 
+  it("returns ok when an external tree with completed slices has advanced beyond baseSha", async () => {
+    const externalTreePath = join(repoDir, "external-progressed");
+    exec(`git worktree add ${externalTreePath}`, repoDir);
+    const baseSha = exec("git rev-parse HEAD", externalTreePath);
+    const branch = exec("git branch --show-current", externalTreePath);
+    execSync("echo progressed > file.txt", { cwd: externalTreePath });
+    exec("git add file.txt", externalTreePath);
+    exec('git commit -m "progressed"', externalTreePath);
+    const state = {
+      worktree: { path: externalTreePath, branch, baseSha, managed: false },
+      lastCompletedSlice: 1,
+    };
+
+    const result = await checkWorktreeResume(undefined, externalTreePath, state);
+
+    expect(result).toEqual({ ok: true });
+  });
+
   it("errors when a branchless external resume has completed slices but HEAD is still at baseSha", async () => {
     const externalTreePath = join(repoDir, "external-branchless-stale");
     exec(`git worktree add ${externalTreePath}`, repoDir);
