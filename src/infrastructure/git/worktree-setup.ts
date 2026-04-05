@@ -101,6 +101,16 @@ export const resolveWorktree = async (opts: ResolveWorktreeOpts): Promise<Worktr
 
   // checkWorktreeResume already verified the worktree exists and is on the right branch
   if (state.worktree) {
+    if (
+      state.worktree.managed &&
+      branchName !== undefined &&
+      branchName !== state.worktree.branch
+    ) {
+      throw new Error(
+        `Managed worktree resume branch mismatch: expected ${state.worktree.branch}, got ${branchName}.`,
+      );
+    }
+
     return {
       cwd: state.worktree.path,
       worktreeInfo: { path: state.worktree.path, branch: state.worktree.branch },

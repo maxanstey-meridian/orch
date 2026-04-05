@@ -237,12 +237,13 @@ describe("MainView", () => {
     app.unmount();
   });
 
-  it("keeps the fixed key hint row visible while selection moves", async () => {
+  it("updates the key hint row as selection moves across row types", async () => {
     const app = render(
       <MainView
         model={makeModel({
           active: [makeRun({ id: "run-active", pid: 321 })],
           queued: [makeQueueEntry({ id: "queue-1" })],
+          completed: [makeRun({ id: "run-done", status: "completed" })],
         })}
         onOpenDetail={vi.fn()}
         onOpenTail={vi.fn()}
@@ -254,7 +255,12 @@ describe("MainView", () => {
     app.stdin.write("\u001B[B");
     await flushEffects();
 
-    expect(app.lastFrame()).toContain("↑↓ navigate  ⏎ detail  f tail  q queue  k kill");
+    expect(app.lastFrame()).toContain("↑↓ navigate  q queue  k delete");
+
+    app.stdin.write("\u001B[B");
+    await flushEffects();
+
+    expect(app.lastFrame()).toContain("↑↓ navigate  ⏎ detail  f tail  q queue  k delete");
 
     app.unmount();
   });
@@ -397,6 +403,34 @@ describe("MainView", () => {
     app.stdin.write("d");
     await flushEffects();
 
+    expect(onDelete).toHaveBeenCalledWith("queue-entry-456");
+
+    app.unmount();
+  });
+
+  it("invokes deletion for the selected queued row when k is pressed", async () => {
+    const onDelete = vi.fn();
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const app = render(
+      <MainView
+        model={makeModel({
+          active: [makeRun({ id: "run-active" })],
+          queued: [makeQueueEntry({ id: "queue-entry-456" })],
+        })}
+        onOpenDetail={vi.fn()}
+        onOpenTail={vi.fn()}
+        onDelete={onDelete}
+      />,
+    );
+
+    app.stdin.write("\u001B[B");
+    await flushEffects();
+    expect(app.lastFrame()).toContain("> ○ queue-");
+
+    app.stdin.write("k");
+    await flushEffects();
+
+    expect(killSpy).not.toHaveBeenCalled();
     expect(onDelete).toHaveBeenCalledWith("queue-entry-456");
 
     app.unmount();

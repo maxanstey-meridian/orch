@@ -136,6 +136,25 @@ describe("checkWorktreeResume", () => {
     expect((result as { message: string }).message).toContain("--reset");
   });
 
+  it("errors when a managed worktree resume passes a different --branch value", async () => {
+    const state = {
+      worktree: {
+        path: "/tmp/tree-" + Date.now(),
+        branch: "orch/x",
+        baseSha: "abc",
+        managed: true,
+      },
+    };
+
+    const result = await checkWorktreeResume("orch/y", undefined, state);
+
+    expect(result).toEqual({
+      ok: false,
+      message:
+        "Previous run used --branch orch/x. Pass --branch orch/x again to resume, or --reset to start fresh.",
+    });
+  });
+
   it("returns ok for an external tree without requiring --branch", async () => {
     const externalTreePath = join(repoDir, "external-tree");
     exec(`git worktree add ${externalTreePath}`, repoDir);

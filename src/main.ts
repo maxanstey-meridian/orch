@@ -875,11 +875,9 @@ export const main = async (runtime: MainRuntime = {}) => {
     void exitWithCleanup(143);
   });
 
-  const prepareExecutionWorktree = async (
-    opts: {
-      readonly requireResumeCheck: boolean;
-    },
-  ): Promise<
+  const prepareExecutionWorktree = async (opts: {
+    readonly requireResumeCheck: boolean;
+  }): Promise<
     | { readonly aborted: true }
     | {
         readonly aborted: false;

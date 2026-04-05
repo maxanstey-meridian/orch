@@ -71,6 +71,10 @@ type SectionRows = {
   readonly rows: RenderableRow[];
 };
 
+const activeRunKeyBarText = "↑↓ navigate  ⏎ detail  f tail  q queue  k kill";
+const completedRunKeyBarText = "↑↓ navigate  ⏎ detail  f tail  q queue  k delete";
+const queuedRowKeyBarText = "↑↓ navigate  q queue  k delete";
+
 const isErrorWithCode = (value: unknown): value is { readonly code: string } =>
   typeof value === "object" && value !== null && "code" in value && typeof value.code === "string";
 
@@ -103,6 +107,22 @@ const buildSections = (model: DashboardModel): SectionRows[] => [
     })),
   },
 ];
+
+const keyBarTextForRow = (row: RenderableRow | undefined): string => {
+  if (row === undefined) {
+    return activeRunKeyBarText;
+  }
+
+  if (row.kind === "queue") {
+    return queuedRowKeyBarText;
+  }
+
+  if (row.run.status === "active") {
+    return activeRunKeyBarText;
+  }
+
+  return completedRunKeyBarText;
+};
 
 export const MainView = ({
   model,
@@ -158,21 +178,28 @@ export const MainView = ({
       return;
     }
 
-    if (input === "k" && selectedRow?.kind === "run") {
-      if (selectedRow.run.status === "active" && selectedRow.run.pid > 0) {
-        try {
-          process.kill(selectedRow.run.pid, "SIGTERM");
-        } catch (error) {
-          if (isErrorWithCode(error) && error.code === "ESRCH") {
-            return;
-          }
+    if (input === "k") {
+      if (selectedRow?.kind === "run") {
+        if (selectedRow.run.status === "active" && selectedRow.run.pid > 0) {
+          try {
+            process.kill(selectedRow.run.pid, "SIGTERM");
+          } catch (error) {
+            if (isErrorWithCode(error) && error.code === "ESRCH") {
+              return;
+            }
 
-          throw error;
+            throw error;
+          }
+          return;
         }
-        return;
+
+        if (selectedRow.run.status !== "active") {
+          onDelete?.(selectedRow.id);
+          return;
+        }
       }
 
-      if (selectedRow.run.status !== "active") {
+      if (selectedRow?.kind === "queue") {
         onDelete?.(selectedRow.id);
         return;
       }
@@ -224,7 +251,7 @@ export const MainView = ({
           sections[2]?.rows.map(renderSectionRow)
         )}
       </Section>
-      <KeyBar />
+      <KeyBar text={keyBarTextForRow(selectedRow)} />
     </Box>
   );
 };

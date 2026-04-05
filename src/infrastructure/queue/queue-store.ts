@@ -15,6 +15,7 @@ const createCorruptQueueError = (queuePath: string): Error =>
 const lockRetryDelayMs = 10;
 const ownerlessStaleLockAgeMs = 30_000;
 const pendingMutations = new Map<string, Promise<void>>();
+const LOCK_OWNER_FILE = "owner.json";
 
 const sleep = async (ms: number): Promise<void> =>
   new Promise((resolvePromise) => {
@@ -100,7 +101,7 @@ const readLockMetadata = async (
       (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "EISDIR")
     ) {
       try {
-        const raw = await readFile(lockPath, "utf8");
+        const raw = await readFile(join(lockPath, LOCK_OWNER_FILE), "utf8");
         const parsed: unknown = JSON.parse(raw);
         return isLockMetadata(parsed) ? parsed : undefined;
       } catch (legacyError) {

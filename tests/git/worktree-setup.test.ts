@@ -324,7 +324,7 @@ describe("resolveWorktree", () => {
     expect(createWorktree).not.toHaveBeenCalled();
   });
 
-  it("reuses existing worktree even when --branch specifies a different branch name", async () => {
+  it("rejects reusing an existing managed worktree when --branch specifies a different branch name", async () => {
     const worktree = {
       path: "/repo/.orch/trees/abc123",
       branch: "orch/abc123",
@@ -332,20 +332,23 @@ describe("resolveWorktree", () => {
       managed: true,
     };
 
-    const result = await resolveWorktree({
-      branchName: "orch/different-branch",
-      cwd: "/repo",
-      treePath: undefined,
-      worktreeSetup: ["pnpm install"],
-      activePlanId: "abc123",
-      state: { worktree },
-      stateFile: "/repo/.orch/state/plan-abc123.json",
-      log: noop,
-    });
+    await expect(
+      resolveWorktree({
+        branchName: "orch/different-branch",
+        cwd: "/repo",
+        treePath: undefined,
+        worktreeSetup: ["pnpm install"],
+        activePlanId: "abc123",
+        state: { worktree },
+        stateFile: "/repo/.orch/state/plan-abc123.json",
+        log: noop,
+      }),
+    ).rejects.toThrow(
+      "Managed worktree resume branch mismatch: expected orch/abc123, got orch/different-branch.",
+    );
 
     expect(createWorktree).not.toHaveBeenCalled();
-    expect(result.cwd).toBe("/repo/.orch/trees/abc123");
-    expect(result.worktreeInfo).toEqual({ path: "/repo/.orch/trees/abc123", branch: "orch/abc123" });
+    expect(saveState).not.toHaveBeenCalled();
     expect(execFile).not.toHaveBeenCalled();
     expect(removeWorktree).not.toHaveBeenCalled();
   });

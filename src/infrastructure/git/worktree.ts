@@ -80,6 +80,13 @@ export const checkWorktreeResume = async (
         message: `Previous run used --branch ${state.worktree.branch}. Pass --branch again to resume, or --reset to start fresh.`,
       };
     }
+
+    if (branchFlag !== state.worktree.branch) {
+      return {
+        ok: false,
+        message: `Previous run used --branch ${state.worktree.branch}. Pass --branch ${state.worktree.branch} again to resume, or --reset to start fresh.`,
+      };
+    }
   } else if (branchFlag) {
     return {
       ok: false,

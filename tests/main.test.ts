@@ -2981,6 +2981,48 @@ describe("main execution preference wiring", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it("rejects direct --work resume when managed state is resumed with a different --branch value", async () => {
+    const directPlanPath = join(tempDir, "artifacts", "direct-work.json");
+    const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));
+    const managedState = {
+      worktree: {
+        path: join(tempDir, ".orch", "trees", "abc123"),
+        branch: "orch/direct-managed",
+        baseSha: "feedface",
+        managed: true,
+      },
+      lastCompletedSlice: 1,
+    };
+
+    const {
+      checkWorktreeResume,
+      createContainer,
+      exit,
+      resolveWorktree,
+    } = await runMainWithWorkPlanMocks(["--branch", "orch/other-branch"], {
+      planPath: directPlanPath,
+      planContent: directPlan,
+      preloadedState: managedState,
+      checkWorktreeResumeResult: {
+        ok: false,
+        message:
+          "Previous run used --branch orch/direct-managed. Pass --branch orch/direct-managed again to resume, or --reset to start fresh.",
+      },
+    });
+
+    expect(checkWorktreeResume).toHaveBeenCalledWith(
+      "orch/other-branch",
+      undefined,
+      expect.objectContaining({
+        lastCompletedSlice: 1,
+        worktree: managedState.worktree,
+      }),
+    );
+    expect(resolveWorktree).not.toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it("rejects direct --work resume when the selected external tree changes", async () => {
     const directPlanPath = join(tempDir, "artifacts", "direct-work.json");
     const directPlan = buildDirectArtifactPlan(join(tempDir, "inventory.md"));

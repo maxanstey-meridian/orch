@@ -575,6 +575,32 @@ describe("DashboardApp", () => {
     app.unmount();
   });
 
+  it("removes the selected queued row from the queue store when k is pressed", async () => {
+    removeFromQueueMock.mockResolvedValue(undefined);
+    useDashboardDataMock.mockReturnValue(
+      makeHookResult({
+        model: makeModel({
+          active: [makeRun({ id: "run-active" })],
+          queued: [makeQueueEntry({ id: "queue-entry-456" })],
+        }),
+      }),
+    );
+
+    const app = renderDashboardApp();
+
+    app.stdin.write("\u001B[B");
+    await flushEffects();
+    expect(app.lastFrame()).toContain("> ○ queue-");
+
+    app.stdin.write("k");
+    await flushEffects();
+
+    expect(removeFromQueueMock).toHaveBeenCalledWith("/tmp/queue.json", "queue-entry-456");
+    expect(app.lastFrame()).not.toContain("queue-");
+
+    app.unmount();
+  });
+
   it("keeps a deleted completed row hidden without touching the queue store", async () => {
     removeRunFromRegistryMock.mockResolvedValue(undefined);
     useDashboardDataMock.mockReturnValue(
