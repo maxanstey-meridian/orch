@@ -3,7 +3,7 @@ import type { ExecFileException } from "child_process";
 import type { LogFn } from "#ui/display.js";
 import { loadState, saveState, type OrchestratorState } from "../state/state.js";
 import { captureCurrentBranch, captureRef } from "./git.js";
-import { createWorktree } from "./worktree.js";
+import { createWorktree, removeWorktree } from "./worktree.js";
 
 type WorktreeResult = {
   readonly cwd: string;
@@ -113,7 +113,16 @@ export const resolveWorktree = async (opts: ResolveWorktreeOpts): Promise<Worktr
       mergePersistedState(stateFile, state),
     ]);
     const treePath = await createWorktree(cwd, activePlanId, branchName);
-    await runWorktreeSetupCommands(worktreeSetup, treePath);
+    try {
+      await runWorktreeSetupCommands(worktreeSetup, treePath);
+    } catch (error) {
+      try {
+        await removeWorktree(treePath, cwd);
+      } catch {
+        // Best-effort rollback only — preserve the original setup error.
+      }
+      throw error;
+    }
     const worktree = { path: treePath, branch: branchName, baseSha, managed: true };
     const updatedState: OrchestratorState = { ...persistedState, worktree };
     await saveState(stateFile, updatedState);

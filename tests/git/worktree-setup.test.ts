@@ -6,6 +6,7 @@ vi.mock("child_process", () => ({
 
 vi.mock("../../src/infrastructure/git/worktree.js", () => ({
   createWorktree: vi.fn(),
+  removeWorktree: vi.fn(),
 }));
 
 vi.mock("../../src/infrastructure/git/git.js", () => ({
@@ -19,7 +20,7 @@ vi.mock("../../src/infrastructure/state/state.js", () => ({
 }));
 
 import { resolveWorktree } from "#infrastructure/git/worktree-setup.js";
-import { createWorktree } from "#infrastructure/git/worktree.js";
+import { createWorktree, removeWorktree } from "#infrastructure/git/worktree.js";
 import { captureCurrentBranch, captureRef } from "#infrastructure/git/git.js";
 import { loadState, saveState } from "#infrastructure/state/state.js";
 import { execFile } from "child_process";
@@ -151,6 +152,7 @@ describe("resolveWorktree", () => {
     expect(captureRef).toHaveBeenCalledWith("/repo-existing-tree");
     expect(createWorktree).not.toHaveBeenCalled();
     expect(execFile).not.toHaveBeenCalled();
+    expect(removeWorktree).not.toHaveBeenCalled();
   });
 
   it("persists external tree metadata onto the current saved state instead of stale state input", async () => {
@@ -218,6 +220,7 @@ describe("resolveWorktree", () => {
     expect(captureRef).not.toHaveBeenCalled();
     expect(saveState).not.toHaveBeenCalled();
     expect(execFile).not.toHaveBeenCalled();
+    expect(removeWorktree).not.toHaveBeenCalled();
   });
 
   it("reuses persisted external worktree state even when the same --tree path is passed again", async () => {
@@ -252,6 +255,7 @@ describe("resolveWorktree", () => {
     expect(captureRef).not.toHaveBeenCalled();
     expect(saveState).not.toHaveBeenCalled();
     expect(execFile).not.toHaveBeenCalled();
+    expect(removeWorktree).not.toHaveBeenCalled();
   });
 
   it("reuses existing worktree from state even when --branch is passed again", async () => {
@@ -276,6 +280,7 @@ describe("resolveWorktree", () => {
     expect(createWorktree).not.toHaveBeenCalled();
     expect(result.cwd).toBe("/repo/.orch/trees/abc123");
     expect(execFile).not.toHaveBeenCalled();
+    expect(removeWorktree).not.toHaveBeenCalled();
   });
 
   it("does not call saveState when createWorktree rejects", async () => {
@@ -341,6 +346,7 @@ describe("resolveWorktree", () => {
     expect(result.cwd).toBe("/repo/.orch/trees/abc123");
     expect(result.worktreeInfo).toEqual({ path: "/repo/.orch/trees/abc123", branch: "orch/abc123" });
     expect(execFile).not.toHaveBeenCalled();
+    expect(removeWorktree).not.toHaveBeenCalled();
   });
 
   it("fresh creation preserves existing state fields in updatedState", async () => {
@@ -407,6 +413,7 @@ describe("resolveWorktree", () => {
       expect.any(Function),
     );
     expect(saveState).toHaveBeenCalledTimes(1);
+    expect(removeWorktree).not.toHaveBeenCalled();
   });
 
   it("aborts managed worktree setup on the first failing command and does not persist state", async () => {
@@ -454,12 +461,45 @@ describe("resolveWorktree", () => {
     ).rejects.toThrow("stdout line\nstderr line");
 
     expect(execFile).toHaveBeenCalledTimes(4);
+    expect(removeWorktree).toHaveBeenCalledTimes(2);
+    expect(removeWorktree).toHaveBeenNthCalledWith(1, "/repo/.orch/trees/abc123", "/repo");
+    expect(removeWorktree).toHaveBeenNthCalledWith(2, "/repo/.orch/trees/abc123", "/repo");
     expect(execFile).not.toHaveBeenCalledWith(
       expect.any(String),
       ["-lc", "echo third"],
       expect.anything(),
       expect.any(Function),
     );
+    expect(saveState).not.toHaveBeenCalled();
+  });
+
+  it("preserves the original setup error when rollback removal also fails", async () => {
+    vi.mocked(createWorktree).mockResolvedValue("/repo/.orch/trees/abc123");
+    vi.mocked(captureRef).mockResolvedValue("deadbeef");
+    vi.mocked(removeWorktree).mockRejectedValue(new Error("cleanup failed"));
+    const failingImplementation: NonNullable<ExecFileImplementation> = (
+      ...args: ExecFileArgs
+    ) => {
+      const error = new Error("command failed");
+      completeExecFileCall(args[3], error, "stdout line", "stderr line");
+      return {} as ReturnType<typeof execFile>;
+    };
+    mockedExecFile.mockImplementation(failingImplementation);
+
+    await expect(
+      resolveWorktree({
+        branchName: "orch/abc123",
+        cwd: "/repo",
+        treePath: undefined,
+        worktreeSetup: ["echo broken"],
+        activePlanId: "abc123",
+        state: {},
+        stateFile: "/repo/.orch/state/plan-abc123.json",
+        log: noop,
+      }),
+    ).rejects.toThrow("Worktree setup command failed: echo broken\nstdout line\nstderr line");
+
+    expect(removeWorktree).toHaveBeenCalledWith("/repo/.orch/trees/abc123", "/repo");
     expect(saveState).not.toHaveBeenCalled();
   });
 });
