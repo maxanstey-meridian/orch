@@ -94,6 +94,7 @@ export const createTestHarness = (opts?: {
     triager,
   );
   uc.retryDelayMs = 0;
+  uc.minAgentDurationMs = 0;
 
   if (opts?.state) {
     persistence.current = opts.state;

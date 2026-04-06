@@ -1,11 +1,4 @@
 {
-  "skills": {
-    "tdd": "skills/tdd.md",
-    "review": "skills/deep-review.md",
-    "verify": "skills/verify.md",
-    "plan": "skills/plan.md",
-    "gap": "skills/gap.md"
-  },
   "rules": {},
   "config": {
     "maxReviewCycles": 3,

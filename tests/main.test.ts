@@ -4057,6 +4057,8 @@ ${JSON.stringify({
 \`\`\``,
       })),
     };
+    (orch as any).retryDelayMs = 0;
+    (orch as any).minAgentDurationMs = 0;
     (orch as any).agents = {
       spawn: vi.fn().mockReturnValue(makeTestAgent()),
     };

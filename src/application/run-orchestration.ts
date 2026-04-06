@@ -78,6 +78,7 @@ export class RunOrchestration {
   verifyAgent: AgentHandle | null = null;
   gapAgent: AgentHandle | null = null;
   retryDelayMs = 5_000;
+  minAgentDurationMs = 3_000;
   usageProbeDelayMs = 60_000;
   usageProbeMaxDelayMs = 300_000;
   tddIsFirst = true;
@@ -2143,6 +2144,25 @@ Rules:
       }
     }
 
+    // Final gap check — did the last TDD cycle actually resolve everything?
+    this.progressSink.logBadge("gap", "final verification...");
+    await this.enterPhase(
+      "gap",
+      this.currentSliceNumber(group.slices[group.slices.length - 1]?.number ?? 0),
+    );
+    const finalGapResult = await this.withRetry(
+      () => gapAgent.send(gapPrompt),
+      gapAgent,
+      "gap",
+      "gap-final",
+    );
+    const finalGapText = finalGapResult.assistantText ?? "";
+
+    if (finalGapResult.exitCode !== 0 || finalGapText.includes("NO_GAPS_FOUND")) {
+      this.phase = transition(this.phase, { kind: "GapDone" });
+      return;
+    }
+
     throw new IncompleteRunError(`${group.name} gap analysis failed after retry budget`);
   }
 
@@ -2204,11 +2224,29 @@ Rules:
   ): Promise<AgentResult> {
     let attempt = 0;
     while (true) {
+      const start = Date.now();
       const result = await fn();
+      const elapsed = Date.now() - start;
+
       if (!agent.alive) {
         return result;
       }
       const apiError = detectApiError(result, agent.stderr);
+
+      if (!apiError && elapsed < this.minAgentDurationMs) {
+        attempt++;
+        if (attempt > maxRetries) {
+          throw new Error(
+            `Agent returned in ${elapsed}ms without doing work after ${maxRetries} retries (${label})`,
+          );
+        }
+        this.progressSink.setActivity(
+          `agent returned too quickly (${elapsed}ms), retrying ${attempt}/${maxRetries}...`,
+        );
+        await new Promise((r) => setTimeout(r, delayMs * attempt));
+        continue;
+      }
+
       if (!apiError) {
         return result;
       }

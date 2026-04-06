@@ -262,6 +262,7 @@ it("runs the direct smoke request against a temp repo with real file edits and g
     triager,
   );
   uc.retryDelayMs = 0;
+  uc.minAgentDurationMs = 0;
   tierSelector.queueResult({
     tier: "medium",
     reason: "smoke execution-unit tier",
