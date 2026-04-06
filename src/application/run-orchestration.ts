@@ -1072,6 +1072,34 @@ Rules:
     await this.persistence.save(this.state);
   }
 
+  private async respawnRole(role: AgentRole): Promise<void> {
+    if (role === "tdd") {
+      await this.respawnTdd();
+    } else if (role === "review") {
+      await this.respawnReview();
+    } else if (role === "verify") {
+      await this.respawnVerify();
+    } else {
+      await this.respawnGap();
+    }
+  }
+
+  private agentForRole(role: AgentRole): AgentHandle | null {
+    if (role === "tdd") {
+      return this.tddAgent;
+    }
+    if (role === "review") {
+      return this.reviewAgent;
+    }
+    if (role === "verify") {
+      return this.verifyAgent;
+    }
+    if (role === "gap") {
+      return this.gapAgent;
+    }
+    return null;
+  }
+
   private async ensureGroupScopedAgent(role: "verify" | "gap"): Promise<AgentHandle> {
     const existing = role === "verify" ? this.verifyAgent : this.gapAgent;
     if (existing) {
@@ -2222,16 +2250,30 @@ Rules:
     maxRetries = 2,
     delayMs = this.retryDelayMs,
   ): Promise<AgentResult> {
+    let currentAgent = agent;
     let attempt = 0;
     while (true) {
       const start = Date.now();
       const result = await fn();
       const elapsed = Date.now() - start;
 
-      if (!agent.alive) {
-        return result;
+      if (!currentAgent.alive) {
+        // Intentional kill (hard interrupt, quit) — don't retry, let caller handle
+        if (this.hardInterruptPending || this.quitRequested) {
+          return result;
+        }
+        attempt++;
+        if (attempt > maxRetries) {
+          throw new Error(`Agent died after ${maxRetries} respawn attempts (${label})`);
+        }
+        this.logOrch(`${role} agent died during ${label}; respawning ${attempt}/${maxRetries}...`);
+        this.progressSink.setActivity(`${role} agent died, respawning ${attempt}/${maxRetries}...`);
+        await this.respawnRole(role);
+        currentAgent = this.agentForRole(role)!;
+        await new Promise((r) => setTimeout(r, delayMs * attempt));
+        continue;
       }
-      const apiError = detectApiError(result, agent.stderr);
+      const apiError = detectApiError(result, currentAgent.stderr);
 
       if (!apiError && elapsed < this.minAgentDurationMs) {
         attempt++;
