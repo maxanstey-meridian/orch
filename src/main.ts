@@ -28,6 +28,7 @@ import {
 } from "#infrastructure/cli/cli-args.js";
 import { parseSubcommand } from "#infrastructure/cli/subcommands.js";
 import { loadAndResolveOrchrConfig, buildOrchrSummary } from "#infrastructure/config/orchrc.js";
+import { auditContextInBackground } from "#infrastructure/context/context-auditor.js";
 import { mergePlannerContextUpdates } from "#infrastructure/context/context-merge.js";
 import { saveRepoContext } from "#infrastructure/context/context-store.js";
 import { aggregateDashboard } from "#infrastructure/dashboard/data-aggregator.js";
@@ -734,6 +735,9 @@ export const main = async (runtime: MainRuntime = {}) => {
     forceRefresh: !skipFingerprint,
   });
 
+  // Fire-and-forget: verify planner/detector context entries in the background
+  auditContextInBackground(orchDir, fingerprintCwd);
+
   // 3. Resolve plan path — generate from inventory or use existing
   const provider = parseProviderFlag(args);
   const agentConfig = resolveAllAgentConfigs(orchrc.agents, provider);
@@ -791,6 +795,7 @@ export const main = async (runtime: MainRuntime = {}) => {
               if (generatedDoc.contextUpdates !== undefined) {
                 const merged = mergePlannerContextUpdates(context, generatedDoc.contextUpdates);
                 saveRepoContext(orchDir, merged);
+                auditContextInBackground(orchDir, fingerprintCwd);
               }
             } catch {
               // Context merge is best-effort — don't block planning

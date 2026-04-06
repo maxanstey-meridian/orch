@@ -12,7 +12,7 @@ export type RepoContextData = {
   readonly conventions?: RepoContextDictionary;
 };
 
-export type RepoContextLayerName = "operator" | "detected" | "planner";
+export type RepoContextLayerName = "operator" | "detected" | "planner" | "verified";
 
 export type RepoContextLeafPath = `context.${string}`;
 

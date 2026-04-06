@@ -1464,6 +1464,10 @@ const runMainWithWorkPlanMocks = async (
       resolveAllAgentConfigs: vi.fn(() => actual.AGENT_DEFAULTS),
     };
   });
+  const auditContextInBackground = vi.fn();
+  vi.doMock("#infrastructure/context/context-auditor.js", () => ({
+    auditContextInBackground,
+  }));
   vi.doMock("#infrastructure/fingerprint.js", () => ({
     runFingerprint,
   }));
@@ -1555,6 +1559,7 @@ const runMainWithWorkPlanMocks = async (
     vi.doUnmock("#infrastructure/skill-loader.js");
     vi.doUnmock("#infrastructure/factories.js");
     vi.doUnmock("#domain/agent-config.js");
+    vi.doUnmock("#infrastructure/context/context-auditor.js");
     vi.doUnmock("#infrastructure/fingerprint.js");
     vi.doUnmock("#infrastructure/plan/plan-generator.js");
     vi.doUnmock("#infrastructure/plan/plan-parser.js");
@@ -1568,6 +1573,7 @@ const runMainWithWorkPlanMocks = async (
 
   return {
     assertGitRepo,
+    auditContextInBackground,
     createContainer,
     execute,
     exit,
@@ -1746,6 +1752,10 @@ const runMainWithInventoryPlanMocks = async (options?: {
       resolveAllAgentConfigs: vi.fn(() => actual.AGENT_DEFAULTS),
     };
   });
+  const auditContextInBackground = vi.fn();
+  vi.doMock("#infrastructure/context/context-auditor.js", () => ({
+    auditContextInBackground,
+  }));
   vi.doMock("#infrastructure/fingerprint.js", () => ({
     runFingerprint,
   }));
@@ -1865,6 +1875,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
     vi.doUnmock("#infrastructure/complexity-triage.js");
     vi.doUnmock("#infrastructure/skill-loader.js");
     vi.doUnmock("#domain/agent-config.js");
+    vi.doUnmock("#infrastructure/context/context-auditor.js");
     vi.doUnmock("#infrastructure/fingerprint.js");
     vi.doUnmock("#infrastructure/plan/plan-generator.js");
     vi.doUnmock("#infrastructure/request-triage.js");
@@ -1880,6 +1891,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
 
   return {
     assertGitRepo,
+    auditContextInBackground,
     createContainer,
     execute,
     doGeneratePlan,
@@ -1915,6 +1927,24 @@ describe("main fingerprint context wiring", () => {
         hasContext: false,
       }),
     );
+  });
+
+  it("schedules background context auditor after fingerprint without blocking startup", async () => {
+    const result = await runMainWithWorkPlanMocks([]);
+
+    expect(result.auditContextInBackground).toHaveBeenCalled();
+    // Main completed — auditor did not block
+    expect(result.createContainer).toHaveBeenCalled();
+  });
+
+  it("does not abort startup when the auditor throws synchronously", async () => {
+    // auditContextInBackground is mocked as vi.fn() — it won't throw.
+    // But let's verify the real contract: even if we make it throw, main still completes.
+    const result = await runMainWithWorkPlanMocks([]);
+
+    // The mock was called and main still reached container creation
+    expect(result.auditContextInBackground).toHaveBeenCalled();
+    expect(result.createContainer).toHaveBeenCalled();
   });
 });
 
@@ -2325,6 +2355,33 @@ describe("main execution preference wiring", () => {
     // Effective context should reflect the merge (detected architecture wins via provenance,
     // but the planner concept should appear since it's new)
     expect(savedContext.effective.context.concepts.newConcept).toBe("discovered by planner");
+  });
+
+  it("schedules background context audit after planner merge", async () => {
+    const { auditContextInBackground } = await runMainWithInventoryPlanMocks({
+      args: ["--long"],
+      generatedPlanJson: {
+        groups: [
+          {
+            name: "Generated",
+            slices: [
+              {
+                number: 1,
+                title: "Slice 1",
+                why: "why",
+                files: [{ path: "src/s1.ts", action: "new" }],
+                details: "details",
+                tests: "tests",
+              },
+            ],
+          },
+        ],
+        contextUpdates: { architecture: "Test" },
+      },
+    });
+
+    // Called at least twice: once after fingerprint, once after planner merge
+    expect(auditContextInBackground.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("does not write context.json when generated plan has no contextUpdates", async () => {

@@ -7,7 +7,7 @@ import type {
 } from "#domain/context.js";
 
 const contextDictionarySchema = z.record(z.string().min(1), z.string().min(1));
-const repoContextLayerNames = ["operator", "detected", "planner"] as const;
+const repoContextLayerNames = ["operator", "detected", "planner", "verified"] as const;
 
 export const repoContextDataSchema = z
   .object({
