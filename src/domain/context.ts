@@ -12,12 +12,12 @@ export type RepoContextData = {
   readonly conventions?: RepoContextDictionary;
 };
 
-export type RepoContextLayerName = "operator" | "detected" | "planner" | "verified";
+export type RepoContextSourceName = "operator" | "detected" | "planner" | "verified";
 
 export type RepoContextLeafPath = `context.${string}`;
 
 export type RepoContextEntryProvenance = {
-  readonly source: RepoContextLayerName;
+  readonly source: RepoContextSourceName;
   readonly updatedAt: string;
   readonly supportingFiles?: readonly string[];
   readonly note?: string;

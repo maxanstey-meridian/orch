@@ -10,7 +10,7 @@ import {
   type RepoContextData,
   type RepoContextEntryProvenance,
   type RepoContextLayer,
-  type RepoContextLayerName,
+  type RepoContextSourceName,
 } from "#domain/context.js";
 import { parseProfileMarkdown } from "#ui/init.js";
 import { renderBriefFromContext } from "./context/context-brief.js";
@@ -506,7 +506,7 @@ const buildOperatorContextData = (initProfileMarkdown: string): RepoContextData 
 };
 
 const buildLayerProvenance = (params: {
-  source: RepoContextLayerName;
+  source: RepoContextSourceName;
   context: RepoContextData;
   updatedAt: string;
   supportingFiles: readonly string[];

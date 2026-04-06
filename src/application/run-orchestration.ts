@@ -1092,16 +1092,15 @@ Rules:
   }
 
   private agentForRole(role: RespawnableRole): AgentHandle {
-    if (role === "tdd") {
-      return this.tddAgent!;
+    const agent =
+      role === "tdd" ? this.tddAgent :
+      role === "review" ? this.reviewAgent :
+      role === "verify" ? this.verifyAgent :
+      this.gapAgent;
+    if (!agent) {
+      throw new Error(`Expected ${role} agent to be alive after respawn`);
     }
-    if (role === "review") {
-      return this.reviewAgent!;
-    }
-    if (role === "verify") {
-      return this.verifyAgent!;
-    }
-    return this.gapAgent!;
+    return agent;
   }
 
   private async ensureGroupScopedAgent(role: "verify" | "gap"): Promise<AgentHandle> {
