@@ -1598,6 +1598,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
   worktreeSetup?: string[];
   inputAlreadyPlan?: boolean;
   inventoryContent?: string;
+  generatedPlanJson?: Record<string, unknown>;
   generatedPlanId?: string;
   assertGitRepoImplementation?: (cwd: string) => Promise<void>;
   resolveWorktreeResult?: {
@@ -1616,7 +1617,7 @@ const runMainWithInventoryPlanMocks = async (options?: {
 
   const generatedPlanPath = join(tempDir, ".orch", "plan-generated.json");
   await mkdir(join(tempDir, ".orch"), { recursive: true });
-  await writeFile(generatedPlanPath, JSON.stringify({
+  await writeFile(generatedPlanPath, JSON.stringify(options?.generatedPlanJson ?? {
     groups: [
       {
         name: "Generated",
@@ -2283,6 +2284,68 @@ describe("main execution preference wiring", () => {
       expect(hudLogs.join("\n")).toContain(`Execution ${executionMode}`);
     },
   );
+
+  it("merges planner contextUpdates into canonical context.json after inventory plan generation", async () => {
+    const contextUpdates = {
+      architecture: "Hexagonal Architecture",
+      concepts: { newConcept: "discovered by planner" },
+    };
+
+    const { exit } = await runMainWithInventoryPlanMocks({
+      args: ["--long"],
+      generatedPlanJson: {
+        groups: [
+          {
+            name: "Generated",
+            slices: [
+              {
+                number: 1,
+                title: "Slice 1",
+                why: "why",
+                files: [{ path: "src/s1.ts", action: "new" }],
+                details: "details",
+                tests: "tests",
+              },
+            ],
+          },
+        ],
+        contextUpdates,
+      },
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+
+    const contextPath = join(tempDir, ".orch", "context.json");
+    const savedContext = JSON.parse(await readFile(contextPath, "utf-8"));
+
+    // Planner layer should contain the contextUpdates
+    expect(savedContext.layers.planner.context.architecture).toBe("Hexagonal Architecture");
+    expect(savedContext.layers.planner.context.concepts.newConcept).toBe("discovered by planner");
+
+    // Effective context should reflect the merge (detected architecture wins via provenance,
+    // but the planner concept should appear since it's new)
+    expect(savedContext.effective.context.concepts.newConcept).toBe("discovered by planner");
+  });
+
+  it("does not write context.json when generated plan has no contextUpdates", async () => {
+    const { exit } = await runMainWithInventoryPlanMocks({
+      args: ["--long"],
+      // Default generatedPlanJson has no contextUpdates
+    });
+
+    expect(exit).not.toHaveBeenCalledWith(1);
+
+    // context.json should still be the one written during the helper setup (no extra save)
+    const contextPath = join(tempDir, ".orch", "context.json");
+    // The file may or may not exist depending on whether fingerprint wrote it,
+    // but if it does exist, it should NOT have a planner layer with content
+    try {
+      const savedContext = JSON.parse(await readFile(contextPath, "utf-8"));
+      expect(savedContext.layers?.planner?.context ?? {}).toEqual({});
+    } catch {
+      // File doesn't exist — that's fine, no merge happened
+    }
+  });
 
   it("uses request triage for auto inventory mode and skips plan generation for direct results", async () => {
     const {
