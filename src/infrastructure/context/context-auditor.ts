@@ -64,13 +64,13 @@ export const auditContextEntries = (
       continue;
     }
 
-    // Skip already-verified entries
-    if (entry.source === "verified") {
+    // Skip already-verified entries and any future source types
+    if (entry.source !== "detected" && entry.source !== "planner") {
       continue;
     }
 
     const allFilesMatch = files.every((f) => isFileUnchangedSince(join(cwd, f), entry.updatedAt));
-    const sourceLayer = entry.source as "detected" | "planner";
+    const sourceLayer = entry.source;
 
     if (allFilesMatch) {
       // Promote to verified

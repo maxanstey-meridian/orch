@@ -5,6 +5,13 @@ import type {
 } from "#application/ports/execution-unit-triager.port.js";
 import type { RolePromptResolver } from "#application/ports/role-prompt-resolver.port.js";
 import type { AgentResult, AgentRole } from "#domain/agent-types.js";
+
+type RespawnableRole = "tdd" | "review" | "verify" | "gap";
+
+const RESPAWNABLE_ROLES: readonly RespawnableRole[] = ["tdd", "review", "verify", "gap"];
+
+const isRespawnableRole = (role: AgentRole): role is RespawnableRole =>
+  (RESPAWNABLE_ROLES as readonly string[]).includes(role);
 import { detectApiError } from "#domain/api-errors.js";
 import type { ApiError } from "#domain/api-errors.js";
 import type { OrchestratorConfig, Provider, SkillRole } from "#domain/config.js";
@@ -1072,7 +1079,7 @@ Rules:
     await this.persistence.save(this.state);
   }
 
-  private async respawnRole(role: AgentRole): Promise<void> {
+  private async respawnRole(role: RespawnableRole): Promise<void> {
     if (role === "tdd") {
       await this.respawnTdd();
     } else if (role === "review") {
@@ -1084,20 +1091,17 @@ Rules:
     }
   }
 
-  private agentForRole(role: AgentRole): AgentHandle | null {
+  private agentForRole(role: RespawnableRole): AgentHandle {
     if (role === "tdd") {
-      return this.tddAgent;
+      return this.tddAgent!;
     }
     if (role === "review") {
-      return this.reviewAgent;
+      return this.reviewAgent!;
     }
     if (role === "verify") {
-      return this.verifyAgent;
+      return this.verifyAgent!;
     }
-    if (role === "gap") {
-      return this.gapAgent;
-    }
-    return null;
+    return this.gapAgent!;
   }
 
   private async ensureGroupScopedAgent(role: "verify" | "gap"): Promise<AgentHandle> {
@@ -1939,7 +1943,7 @@ Rules:
     this.progressSink.logBadge("verify", "verifying...");
     await this.enterPhase("verify", unit.sliceNumber);
     const verifyResult = await this.withRetry(
-      () => verifyAgent.send(verifyPrompt),
+      () => this.verifyAgent!.send(verifyPrompt),
       verifyAgent,
       "verify",
       "verify",
@@ -2008,7 +2012,7 @@ Rules:
       this.progressSink.logBadge("verify", "verifying...");
       await this.enterPhase("verify", unit.sliceNumber);
       const reVerifyResult = await this.withRetry(
-        () => verifyAgent.send(this.verifyPromptForUnit(unit, verifyBaseSha, fixSummary)),
+        () => this.verifyAgent!.send(this.verifyPromptForUnit(unit, verifyBaseSha, fixSummary)),
         verifyAgent,
         "verify",
         "re-verify",
@@ -2134,7 +2138,7 @@ Rules:
         this.currentSliceNumber(group.slices[group.slices.length - 1]?.number ?? 0),
       );
       const gapResult = await this.withRetry(
-        () => gapAgent.send(gapPrompt),
+        () => this.gapAgent!.send(gapPrompt),
         gapAgent,
         "gap",
         "gap",
@@ -2179,7 +2183,7 @@ Rules:
       this.currentSliceNumber(group.slices[group.slices.length - 1]?.number ?? 0),
     );
     const finalGapResult = await this.withRetry(
-      () => gapAgent.send(gapPrompt),
+      () => this.gapAgent!.send(gapPrompt),
       gapAgent,
       "gap",
       "gap-final",
@@ -2262,6 +2266,10 @@ Rules:
         if (this.hardInterruptPending || this.quitRequested) {
           return result;
         }
+        // Ephemeral agents (completeness, final, plan, triage) cannot be respawned
+        if (!isRespawnableRole(role)) {
+          throw new Error(`Ephemeral ${role} agent died during ${label} — cannot respawn`);
+        }
         attempt++;
         if (attempt > maxRetries) {
           throw new Error(`Agent died after ${maxRetries} respawn attempts (${label})`);
@@ -2269,7 +2277,7 @@ Rules:
         this.logOrch(`${role} agent died during ${label}; respawning ${attempt}/${maxRetries}...`);
         this.progressSink.setActivity(`${role} agent died, respawning ${attempt}/${maxRetries}...`);
         await this.respawnRole(role);
-        currentAgent = this.agentForRole(role)!;
+        currentAgent = this.agentForRole(role);
         await new Promise((r) => setTimeout(r, delayMs * attempt));
         continue;
       }

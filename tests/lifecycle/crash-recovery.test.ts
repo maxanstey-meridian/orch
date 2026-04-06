@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { AGENT_DEFAULTS } from "#domain/agent-config.js";
+import { IncompleteRunError } from "#domain/errors.js";
 import { createTestHarness, okResult } from "../fakes/harness.js";
 import type { Group, Slice } from "#domain/plan.js";
 
@@ -276,5 +277,86 @@ describe("Crash recovery lifecycle", () => {
     expect(tdd.sentPrompts).toHaveLength(2);
     expect(tdd.sentPrompts[0]).toContain("[GROUP_EXEC:API]");
     expect(tdd.sentPrompts[0]).not.toContain("[GROUP_EXEC:Core]");
+  });
+});
+
+describe("withRetry agent death handling", () => {
+  it("verify agent death respawns and retries on the fresh agent, not the dead one", async () => {
+    const { uc, spawner, persistence } = createTestHarness({
+      config: { skills: { plan: null, gap: null } },
+      auto: true,
+    });
+
+    // TDD succeeds normally
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented" }));
+
+    // First verify agent: dies mid-send
+    spawner.onNextSpawn("verify", (prompt) => {
+      spawner.lastAgent("verify").kill();
+      return okResult({ assistantText: "dying" });
+    });
+
+    // Second verify agent (respawned): succeeds
+    const verifyPassJson = JSON.stringify({
+      status: "PASS",
+      checks: [{ check: "test", status: "PASS" }],
+      sliceLocalFailures: [],
+      outOfScopeFailures: [],
+      preExistingFailures: [],
+      runnerIssue: null,
+      retryable: true,
+      summary: "All checks pass",
+    });
+    spawner.onNextSpawn("verify", okResult({
+      assistantText: `### VERIFY_JSON\n\`\`\`json\n${verifyPassJson}\n\`\`\``,
+    }));
+
+    spawner.onNextSpawn("review");
+
+    await uc.execute([makeGroup("G1", [makeSlice(1)])]);
+
+    // Verify was spawned twice (original + respawn)
+    const verifyAgents = spawner.agentsForRole("verify");
+    expect(verifyAgents.length).toBe(2);
+    expect(verifyAgents[0].alive).toBe(false); // original died
+
+    // The respawned agent received the verify prompt (proves closure uses this.verifyAgent, not stale local)
+    expect(verifyAgents[1].sentPrompts.length).toBe(1);
+    expect(persistence.current.lastCompletedSlice).toBe(1);
+  });
+
+  it("gap agent death respawns and retries on the fresh agent", async () => {
+    const { uc, spawner, persistence, git } = createTestHarness({
+      config: { skills: { plan: null, verify: null, completeness: null, gap: "gap skill" } },
+      auto: true,
+    });
+
+    // Gap analysis requires changes to exist
+    git.changesExist = true;
+
+    // TDD succeeds
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented" }));
+    spawner.onNextSpawn("review");
+
+    // First gap agent: dies mid-send
+    spawner.onNextSpawn("gap", (prompt) => {
+      spawner.lastAgent("gap").kill();
+      return okResult({ assistantText: "dying" });
+    });
+
+    // Second gap agent (respawned): reports no gaps
+    spawner.onNextSpawn("gap", okResult({
+      assistantText: "NO_GAPS_FOUND",
+      exitCode: 0,
+    }));
+
+    await uc.execute([makeGroup("G1", [makeSlice(1)])]);
+
+    const gapAgents = spawner.agentsForRole("gap");
+    expect(gapAgents.length).toBe(2);
+    expect(gapAgents[0].alive).toBe(false);
+    // The respawned agent received the gap prompt (proves closure uses this.gapAgent, not stale local)
+    expect(gapAgents[1].sentPrompts.length).toBeGreaterThanOrEqual(1);
+    expect(persistence.current.lastCompletedSlice).toBe(1);
   });
 });
