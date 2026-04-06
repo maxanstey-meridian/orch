@@ -332,7 +332,7 @@ describe("withRetry agent death handling", () => {
     });
 
     // Gap analysis requires changes to exist
-    git.changesExist = true;
+    git.setHasChanges(true);
 
     // TDD succeeds
     spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented" }));
