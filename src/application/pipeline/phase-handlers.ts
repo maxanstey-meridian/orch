@@ -10,14 +10,35 @@ import type { PhaseEvaluate, PhaseHandler } from "./phase-handler.js";
 
 const DEFAULT_BASE_SHA = "HEAD";
 
-const resolveBaseSha = (ctx: PipelineContext): string => {
+const resolveVerifyBaseSha = (ctx: PipelineContext): string => {
   const state = ctx.state.get();
-  return state.reviewBaseSha
+  return state.pendingVerifyBaseSha
+    ?? state.reviewBaseSha
     ?? state.currentGroupBaseSha
-    ?? state.pendingVerifyBaseSha
-    ?? state.pendingCompletenessBaseSha
-    ?? state.pendingReviewBaseSha
-    ?? state.pendingGapBaseSha
+    ?? DEFAULT_BASE_SHA;
+};
+
+const resolveCompletenessBaseSha = (ctx: PipelineContext): string => {
+  const state = ctx.state.get();
+  return state.pendingCompletenessBaseSha
+    ?? state.reviewBaseSha
+    ?? state.currentGroupBaseSha
+    ?? DEFAULT_BASE_SHA;
+};
+
+const resolveReviewBaseSha = (ctx: PipelineContext): string => {
+  const state = ctx.state.get();
+  return state.pendingReviewBaseSha
+    ?? state.reviewBaseSha
+    ?? state.currentGroupBaseSha
+    ?? DEFAULT_BASE_SHA;
+};
+
+const resolveGapBaseSha = (ctx: PipelineContext): string => {
+  const state = ctx.state.get();
+  return state.pendingGapBaseSha
+    ?? state.reviewBaseSha
+    ?? state.currentGroupBaseSha
     ?? DEFAULT_BASE_SHA;
 };
 
@@ -76,7 +97,7 @@ const buildVerifyPrompt = (
   ctx: PipelineContext,
   fixSummary?: string,
 ): string => {
-  const baseSha = resolveBaseSha(ctx);
+  const baseSha = resolveVerifyBaseSha(ctx);
 
   switch (unit.kind) {
     case "direct":
@@ -89,7 +110,7 @@ const buildVerifyPrompt = (
 };
 
 const buildReviewPrompt = (unit: ExecutionUnit, ctx: PipelineContext): string => {
-  const baseSha = resolveBaseSha(ctx);
+  const baseSha = resolveReviewBaseSha(ctx);
 
   switch (unit.kind) {
     case "direct":
@@ -101,7 +122,7 @@ const buildReviewPrompt = (unit: ExecutionUnit, ctx: PipelineContext): string =>
 };
 
 const buildCompletenessPrompt = (unit: ExecutionUnit, ctx: PipelineContext): string => {
-  const baseSha = resolveBaseSha(ctx);
+  const baseSha = resolveCompletenessBaseSha(ctx);
 
   switch (unit.kind) {
     case "direct":
@@ -118,7 +139,7 @@ const buildGapPrompt = (unit: ExecutionUnit, ctx: PipelineContext): string => {
     return ctx.prompts.directGap(unit.content);
   }
 
-  return ctx.prompts.withBrief(ctx.prompts.gap(unit.content, resolveBaseSha(ctx)));
+  return ctx.prompts.withBrief(ctx.prompts.gap(unit.content, resolveGapBaseSha(ctx)));
 };
 
 const unsupportedUnit = (phaseName: string, unit: ExecutionUnit): never => {
@@ -213,7 +234,7 @@ const verifyEvaluate: PhaseEvaluate = async (unit, result, ctx, phase) => {
 export const planPhase = {
   name: "plan",
   persistedPhase: "plan",
-  agent: "plan",
+  agent: "tdd",
   prompt: (unit, ctx) => {
     if (unit.kind !== "slice") {
       return unsupportedUnit("plan", unit);
@@ -277,7 +298,7 @@ export const gapPhase = {
   agent: "gap",
   prompt: buildGapPrompt,
   isClean: (result) =>
-    result.exitCode !== 0 || result.assistantText.includes("NO_GAPS_FOUND"),
+    result.exitCode === 0 && result.assistantText.includes("NO_GAPS_FOUND"),
   fixPrompt: buildTddFixPrompt,
   maxCycles: 2,
 } satisfies PhaseHandler;

@@ -289,8 +289,8 @@ describe("phase handlers", () => {
     expect(gapPhase.isClean(okResult({ assistantText: "NO_GAPS_FOUND" }))).toBe(true);
   });
 
-  it("gap isClean: true on non-zero exit code", () => {
-    expect(gapPhase.isClean(okResult({ exitCode: 1, assistantText: "tool failed" }))).toBe(true);
+  it("gap isClean: false on non-zero exit code", () => {
+    expect(gapPhase.isClean(okResult({ exitCode: 1, assistantText: "tool failed" }))).toBe(false);
   });
 
   it("gap isClean: false on gap findings text", () => {
@@ -338,6 +338,18 @@ describe("phase handlers", () => {
     verifyPhase.prompt(groupedUnit(makeGroup()), ctx);
 
     expect(promptSpy).toHaveBeenCalledWith("group-sha", "Core", undefined);
+  });
+
+  it("verify prompt prefers the deferred verify base over the ambient group base", () => {
+    const { ctx, prompts } = createContext({
+      currentGroupBaseSha: "group-sha",
+      pendingVerifyBaseSha: "deferred-verify-sha",
+    });
+    const promptSpy = vi.spyOn(prompts, "groupedVerify");
+
+    verifyPhase.prompt(groupedUnit(makeGroup()), ctx);
+
+    expect(promptSpy).toHaveBeenCalledWith("deferred-verify-sha", "Core", undefined);
   });
 
   it("completeness fixPrompt delegates to prompts.tdd with findings", () => {

@@ -68,6 +68,8 @@ const okResult = (overrides?: Partial<AgentResult>): AgentResult => ({
 
 class TestOperatorGate extends OperatorGate {
   readonly confirmNextGroupLabels: string[] = [];
+  readonly askPrompts: string[] = [];
+  private readonly askAnswers: string[] = [];
 
   constructor(
     private readonly answers: {
@@ -97,12 +99,17 @@ class TestOperatorGate extends OperatorGate {
   }
 
   async askUser(_prompt: string): Promise<string> {
-    return "";
+    this.askPrompts.push(_prompt);
+    return this.askAnswers.shift() ?? "";
   }
 
   async confirmNextGroup(groupLabel: string): Promise<boolean> {
     this.confirmNextGroupLabels.push(groupLabel);
     return this.answers.nextGroup ?? true;
+  }
+
+  queueAskAnswer(answer: string): void {
+    this.askAnswers.push(answer);
   }
 }
 
@@ -394,6 +401,35 @@ describe("executeGroups", () => {
     expect(spawner.lastAgent("verify").sentPrompts[0]).toContain("[VERIFY:1]");
   });
 
+  it("direct mode: uses the pre-execution base SHA for boundary passes", async () => {
+    const { ctx, spawner, triager, git } = createHarness({
+      config: {
+        executionMode: "direct",
+        skills: { completeness: null, review: null, gap: null, plan: null },
+      },
+    });
+    triager.queueResult({
+      completeness: "skip",
+      verify: "run_now",
+      review: "skip",
+      gap: "skip",
+      reason: "verify direct diff",
+    });
+    spawner.onNextSpawn(
+      "tdd",
+      () => {
+        git.advanceSha();
+        return okResult({ assistantText: "implemented direct request" });
+      },
+      okResult({ assistantText: "ran direct test pass" }),
+    );
+    spawner.onNextSpawn("verify", okResult({ assistantText: verifyPass() }));
+
+    await executeGroups([makeGroup("G1", 1)], ctx);
+
+    expect(spawner.lastAgent("verify").sentPrompts[0]).toContain("from=sha-0");
+  });
+
   it("boundary policy: defers verify when triage says defer", async () => {
     const { ctx, spawner, triager, git } = createHarness({
       config: {
@@ -401,6 +437,13 @@ describe("executeGroups", () => {
       },
     });
     git.setHasChanges(true);
+    let captureCount = 0;
+    git.onCaptureRef = () => {
+      captureCount += 1;
+      if (captureCount === 2) {
+        git.advanceSha();
+      }
+    };
     triager.queueResult({
       completeness: "skip",
       verify: "defer",
@@ -415,6 +458,7 @@ describe("executeGroups", () => {
 
     expect(spawner.agentsForRole("verify")).toHaveLength(1);
     expect(spawner.lastAgent("verify").sentPrompts[0]).toContain("[GROUP_VERIFY:Core]");
+    expect(spawner.lastAgent("verify").sentPrompts[0]).toContain("from=sha-1");
     expect(spawner.lastAgent("verify").sentPrompts[0]).not.toContain("[VERIFY:1]");
   });
 
@@ -489,20 +533,63 @@ describe("executeGroups", () => {
     expect(persistence.current.lastCompletedSlice).toBeUndefined();
   });
 
+  it("sliced mode: keeps the persisted tier and skips replanning when resuming a slice", async () => {
+    const { ctx, spawner, tierSelector } = createHarness({
+      state: {
+        activeTier: "small",
+        tier: "small",
+        currentPhase: "tdd",
+        currentSlice: 2,
+        currentGroup: "G1",
+        lastCompletedSlice: 1,
+      },
+      config: {
+        skills: { verify: null, review: null, gap: null, completeness: null },
+      },
+    });
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "resumed slice done" }));
+
+    await executeGroups([makeGroup("G1", 1, 2)], ctx);
+
+    expect(tierSelector.inputs).toEqual([]);
+    expect(spawner.agentsForRole("plan")).toHaveLength(0);
+    expect(spawner.lastAgent("tdd").sentPrompts).toEqual([expect.stringContaining("[TDD:2]")]);
+  });
+
+  it("sliced mode: asks the operator for follow-up input when execution needs it", async () => {
+    const { ctx, spawner, gate, persistence } = createHarness({
+      config: {
+        skills: { plan: null, verify: null, review: null, gap: null, completeness: null },
+      },
+    });
+    gate.queueAskAnswer("operator answer");
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "Need context", needsInput: true }),
+      okResult({ assistantText: "implemented after follow-up" }),
+    );
+
+    await executeGroups([makeGroup("G1", 1)], ctx);
+
+    expect(gate.askPrompts).toEqual(["Need context"]);
+    expect(spawner.lastAgent("tdd").sentPrompts[1]).toBe("operator answer");
+    expect(persistence.current.lastCompletedSlice).toBe(1);
+  });
+
   it("skip requested: skips current slice", async () => {
     const { ctx, spawner, persistence } = createHarness({
       config: {
         skills: { verify: null, review: null, gap: null, completeness: null },
       },
     });
-    spawner.onNextSpawn("plan", () => {
+    spawner.onNextSpawn("tdd", () => {
       ctx.interrupts.toggleSkip();
       return okResult({ assistantText: "plan", planText: "plan text" });
     });
 
     await executeGroups([makeGroup("G1", 1)], ctx);
 
-    expect(spawner.agentsForRole("tdd")).toHaveLength(0);
+    expect(spawner.agentsForRole("tdd")).toHaveLength(1);
     expect(persistence.current.lastCompletedSlice).toBeUndefined();
   });
 });

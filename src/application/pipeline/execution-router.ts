@@ -109,7 +109,29 @@ const runPhase = async (
   });
   ctx.log.write(phase.agent, result.assistantText);
 
-  return result;
+  let followUpResult = result;
+  while (followUpResult.needsInput) {
+    if (ctx.interrupts.skipRequested() || ctx.interrupts.quitRequested()) {
+      return followUpResult;
+    }
+
+    const prompt =
+      followUpResult.assistantText.trim()
+      || followUpResult.resultText.trim()
+      || `${phase.name} requires operator input for ${unit.label}`;
+    const answer = await ctx.gate.askUser(prompt);
+
+    followUpResult = await sendWithRetry(
+      phase.agent,
+      answer,
+      `${phase.name} follow-up`,
+      ctx,
+      ctx.progress.createStreamer(phase.agent),
+    );
+    ctx.log.write(phase.agent, followUpResult.assistantText);
+  }
+
+  return followUpResult;
 };
 
 const commitSweep = async (label: string, ctx: PipelineContext): Promise<void> => {
@@ -180,7 +202,12 @@ const prepareTier = async (
   unit: ExecutionUnit,
   currentGroupBaseSha: string | undefined,
   ctx: PipelineContext,
+  resume = false,
 ): Promise<ComplexityTier> => {
+  if (resume) {
+    return ctx.state.get().activeTier ?? ctx.config.tier;
+  }
+
   const selected = await ctx.tierSelector.select({
     mode: ctx.config.executionMode,
     unitKind: unit.kind,
@@ -197,6 +224,17 @@ const isGroupCompleted = (group: Group, ctx: PipelineContext): boolean => {
 
   return state.lastCompletedGroup === group.name
     && (state.lastCompletedSlice ?? 0) >= lastSliceNumber;
+};
+
+const isResumingSlice = (unit: ExecutionUnit, ctx: PipelineContext): boolean => {
+  if (unit.kind !== "slice") {
+    return false;
+  }
+
+  const state = ctx.state.get();
+  return state.currentPhase !== undefined
+    && state.currentGroup === unit.groupName
+    && state.currentSlice === unit.sliceNumber;
 };
 
 const runDirectExecution = async (
@@ -291,7 +329,13 @@ const runPlannedSliceExecution = async (
   unit: ExecutionUnit,
   ctx: PipelineContext,
   forceAccept = false,
+  resume = false,
 ): Promise<void> => {
+  if (resume) {
+    await runSliceExecutionWithoutPlan(unit, ctx);
+    return;
+  }
+
   let operatorGuidance: string | undefined;
   let acceptedPlanText: string | null = null;
 
@@ -364,6 +408,7 @@ const planThenExecute = async (
   unit: ExecutionUnit,
   ctx: PipelineContext,
   forceAccept = false,
+  resume = false,
 ): Promise<void> => {
   switch (unit.kind) {
     case "direct":
@@ -373,11 +418,11 @@ const planThenExecute = async (
       await runGroupedExecution(unit, ctx);
       return;
     case "slice":
-      if (ctx.config.skills.plan === null) {
+      if (resume || ctx.config.skills.plan === null) {
         await runSliceExecutionWithoutPlan(unit, ctx);
         return;
       }
-      await runPlannedSliceExecution(unit, ctx, forceAccept);
+      await runPlannedSliceExecution(unit, ctx, forceAccept, resume);
   }
 };
 
@@ -536,8 +581,13 @@ const runSlicedGroup = async (
     return null;
   }
 
+  const resumeGroup = ctx.state.get().currentGroup === group.name && ctx.state.get().currentPhase !== undefined;
   const firstSliceNumber = group.slices[0]?.number ?? 0;
-  await ctx.state.advance({ kind: "groupStarted", groupName: group.name, sliceNumber: firstSliceNumber });
+  await ctx.state.advance({
+    kind: "groupStarted",
+    groupName: group.name,
+    sliceNumber: resumeGroup ? (ctx.state.get().currentSlice ?? firstSliceNumber) : firstSliceNumber,
+  });
 
   const groupBaseSha = await ctx.git.captureRef();
   await updatePolicyState(ctx.state.get().activeTier ?? ctx.config.tier, groupBaseSha, currentPendingShas(ctx), ctx);
@@ -554,12 +604,18 @@ const runSlicedGroup = async (
     }
 
     const unit = sliceUnit(slice, group.name);
-    ctx.progress.logSliceIntro(slice);
-    await prepareTier(unit, groupBaseSha, ctx);
-    await ctx.state.advance({ kind: "sliceStarted", sliceNumber: slice.number, groupName: group.name });
+    const resume = isResumingSlice(unit, ctx);
+    if (!resume) {
+      ctx.progress.logSliceIntro(slice);
+    }
 
-    const reviewBaseSha = await ctx.git.captureRef();
-    await planThenExecute(unit, ctx);
+    await prepareTier(unit, groupBaseSha, ctx, resume);
+    if (!resume) {
+      await ctx.state.advance({ kind: "sliceStarted", sliceNumber: slice.number, groupName: group.name });
+    }
+
+    const reviewBaseSha = ctx.state.get().reviewBaseSha ?? (await ctx.git.captureRef());
+    await planThenExecute(unit, ctx, false, resume);
 
     if (ctx.interrupts.skipRequested() || ctx.interrupts.quitRequested()) {
       break;
@@ -688,6 +744,7 @@ const runDirectMode = async (
   const representativeSliceNumber = groups[0]?.slices[0]?.number ?? 1;
   const unit = directUnit(ctx.config.planContent, representativeSliceNumber);
   const activeTier = await prepareTier(unit, undefined, ctx);
+  const reviewBaseSha = await ctx.git.captureRef();
 
   await planThenExecute(unit, ctx);
   if (ctx.interrupts.skipRequested() || ctx.interrupts.quitRequested()) {
@@ -702,7 +759,7 @@ const runDirectMode = async (
   await applyBoundaryPolicy(
     {
       unit,
-      reviewBaseSha: await ctx.git.captureRef(),
+      reviewBaseSha,
       activeTier,
       finalBoundary: true,
       moreUnitsInGroup: false,

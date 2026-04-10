@@ -488,7 +488,7 @@ describe("pipelineRunner", () => {
       prompts,
       {
         ...DEFAULT_CONFIG,
-        skills: { ...DEFAULT_SKILLS, gap: "test" },
+        skills: { ...DEFAULT_SKILLS, gap: "test", plan: null },
       },
       progress,
       log,
@@ -536,7 +536,7 @@ describe("pipelineRunner", () => {
       prompts,
       {
         ...DEFAULT_CONFIG,
-        skills: { ...DEFAULT_SKILLS, gap: "test", verify: null },
+        skills: { ...DEFAULT_SKILLS, gap: "test", verify: null, plan: null },
       },
       progress,
       log,
@@ -615,7 +615,7 @@ describe("pipelineRunner", () => {
       prompts,
       {
         ...DEFAULT_CONFIG,
-        skills: { ...DEFAULT_SKILLS, verify: null, gap: null },
+        skills: { ...DEFAULT_SKILLS, verify: null, gap: null, plan: null },
       },
       progress,
       log,
@@ -672,7 +672,7 @@ describe("pipelineRunner", () => {
       {
         ...DEFAULT_CONFIG,
         auto: true,
-        skills: { ...DEFAULT_SKILLS, verify: null, gap: null },
+        skills: { ...DEFAULT_SKILLS, verify: null, gap: null, plan: null },
       },
       progress,
       log,
