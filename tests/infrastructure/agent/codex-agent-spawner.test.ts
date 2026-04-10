@@ -189,14 +189,34 @@ const createFakeAppServer = (): FakeAppServer => {
           params: { error: { message: event.message, codexErrorInfo: "unknown" }, willRetry: false },
         };
       case "approvalRequested":
-        return {
-          method: "item/commandExecution/requestApproval",
-          params: {
-            itemId: event.request.id,
-            reason: event.request.summary,
-            command: event.request.summary,
-          },
-        };
+        switch (event.request.kind) {
+          case "command":
+            return {
+              method: "item/commandExecution/requestApproval",
+              params: {
+                itemId: event.request.id,
+                reason: event.request.summary,
+                command: event.request.summary,
+              },
+            };
+          case "fileChange":
+            return {
+              method: "item/fileChange/requestApproval",
+              params: {
+                itemId: event.request.id,
+                reason: event.request.summary,
+              },
+            };
+          case "permission":
+            return {
+              method: "codex/approvalRequest",
+              params: {
+                id: event.request.id,
+                kind: "permission",
+                summary: event.request.summary,
+              },
+            };
+        }
       case "ignored":
         return { method: "ignored" };
     }
@@ -380,6 +400,97 @@ describe("CodexAgentSpawner", () => {
     });
   });
 
+  it.each([
+    {
+      name: "command rejection",
+      request: { id: "approval-1", kind: "command", summary: "npm test" } as const,
+      decision: { kind: "reject" } as const,
+      expectedGateRequest: {
+        kind: "commandApproval",
+        summary: "npm test",
+        command: "npm test",
+      },
+      expectedResponse: { id: 1000, result: { decision: "cancel" } },
+    },
+    {
+      name: "file change rejection",
+      request: { id: "approval-2", kind: "fileChange", summary: "edit src/app.ts" } as const,
+      decision: { kind: "reject" } as const,
+      expectedGateRequest: {
+        kind: "fileChangeApproval",
+        summary: "edit src/app.ts",
+        files: [],
+      },
+      expectedResponse: { id: 1000, result: { decision: "cancel" } },
+    },
+    {
+      name: "permission rejection",
+      request: { id: "approval-3", kind: "permission", summary: "allow network access" } as const,
+      decision: { kind: "reject" } as const,
+      expectedGateRequest: {
+        kind: "permissionApproval",
+        summary: "allow network access",
+      },
+      expectedResponse: { id: 1000, result: { decision: "cancel" } },
+    },
+  ])("maps $name through the gate and sends a cancellation response", async ({
+    request,
+    decision,
+    expectedGateRequest,
+    expectedResponse,
+  }) => {
+    fake = createFakeAppServer();
+    const gate = new FakeRuntimeInteractionGate();
+    gate.queueDecision(decision);
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
+    const handle = spawner.spawn("tdd");
+
+    fake.setTurnScript([
+      { kind: "approvalRequested", request },
+      { kind: "turnCompleted", resultText: "" },
+    ]);
+
+    await handle.send("go");
+    await tick();
+
+    expect(gate.requests).toEqual([expectedGateRequest]);
+    expect(fake.receivedResponses).toContainEqual(expectedResponse);
+  });
+
+  it("interrupts the active turn when the operator cancels an approval request", async () => {
+    fake = createFakeAppServer();
+    fake.stallTurnAfterStart();
+    const gate = new FakeRuntimeInteractionGate();
+    gate.queueDecision({ kind: "cancel" });
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
+    const handle = spawner.spawn("tdd");
+    const resultPromise = handle.send("go");
+    await tick();
+    fake.stdout.push(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1000,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          itemId: "approval-1",
+          reason: "npm test",
+          command: "npm test",
+        },
+      }) + "\n",
+    );
+    await tick();
+    fake.stdout.push(JSON.stringify({ jsonrpc: "2.0", method: "turn/completed", params: {} }) + "\n");
+    await resultPromise;
+    await tick();
+
+    expect(gate.requests).toEqual([
+      { kind: "commandApproval", summary: "npm test", command: "npm test" },
+    ]);
+    expect(
+      fake.receivedRequests.some((request) => request.method === "turn/interrupt"),
+    ).toBe(true);
+  });
+
   it("auto-approves approval requests when auto mode is enabled", async () => {
     fake = createFakeAppServer();
     const gate = new FakeRuntimeInteractionGate();
@@ -442,6 +553,25 @@ describe("CodexAgentSpawner", () => {
     expect(onText).toHaveBeenNthCalledWith(2, "Second sentence.");
   });
 
+  it("flushes immediately on newlines, preserves trailing text, and collapses repeated blank lines", async () => {
+    fake = createFakeAppServer();
+    const gate = new FakeRuntimeInteractionGate();
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
+    const handle = spawner.spawn("tdd");
+    const onText = vi.fn();
+
+    fake.setTurnScript([
+      { kind: "textDelta", text: "First line\n\n\nSecond" },
+      { kind: "textDelta", text: " line" },
+      { kind: "turnCompleted", resultText: "" },
+    ]);
+
+    await handle.send("go", onText);
+
+    expect(onText).toHaveBeenNthCalledWith(1, "First line\n\n");
+    expect(onText).toHaveBeenNthCalledWith(2, "Second line");
+  });
+
   it("queues pending guidance and prepends it to the next turn prompt", async () => {
     fake = createFakeAppServer();
     const gate = new FakeRuntimeInteractionGate();
@@ -458,6 +588,19 @@ describe("CodexAgentSpawner", () => {
     expect(extractTurnPrompt(turnStart?.params)).toContain("run the slice");
   });
 
+  it("forwards system prompts as developer instructions when starting a fresh thread", async () => {
+    fake = createFakeAppServer();
+    const gate = new FakeRuntimeInteractionGate();
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
+    const handle = spawner.spawn("tdd", { systemPrompt: "follow the coding rules" });
+
+    fake.setTurnScript([{ kind: "turnCompleted", resultText: "" }]);
+    await handle.send("init");
+
+    const threadStart = fake.receivedRequests.find((request) => request.method === "thread/start");
+    expect(threadStart?.params?.developerInstructions).toBe("follow the coding rules");
+  });
+
   it("resumes a session by thread id instead of starting a new thread", async () => {
     fake = createFakeAppServer();
     const gate = new FakeRuntimeInteractionGate();
@@ -470,6 +613,25 @@ describe("CodexAgentSpawner", () => {
     expect(fake.receivedRequests.some((request) => request.method === "thread/start")).toBe(false);
     expect(fake.receivedRequests.some((request) => request.method === "thread/resume")).toBe(true);
     expect(handle.sessionId).toBe("thread-123");
+  });
+
+  it("forwards system prompts as developer instructions when resuming a thread", async () => {
+    fake = createFakeAppServer();
+    const gate = new FakeRuntimeInteractionGate();
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
+    const handle = spawner.spawn("tdd", {
+      resumeSessionId: "thread-123",
+      systemPrompt: "resume with the same operating rules",
+    });
+
+    fake.setTurnScript([{ kind: "turnCompleted", resultText: "" }]);
+    await handle.send("resume");
+
+    const threadResume = fake.receivedRequests.find((request) => request.method === "thread/resume");
+    expect(threadResume?.params?.threadId).toBe("thread-123");
+    expect(threadResume?.params?.developerInstructions).toBe(
+      "resume with the same operating rules",
+    );
   });
 
   it("exposes currentTurnId only while a turn is active", async () => {
@@ -511,6 +673,28 @@ describe("CodexAgentSpawner", () => {
       assistantText: "",
       resultText: "",
       needsInput: false,
+      sessionId: handle.sessionId,
+    });
+  });
+
+  it("sets needsInput when the assistant output clearly asks the operator a question", async () => {
+    fake = createFakeAppServer();
+    const gate = new FakeRuntimeInteractionGate();
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
+    const handle = spawner.spawn("tdd");
+
+    fake.setTurnScript([
+      { kind: "textDelta", text: "How would you like to proceed?" },
+      { kind: "turnCompleted", resultText: "" },
+    ]);
+
+    const result = await handle.send("go");
+
+    expect(result).toEqual({
+      exitCode: 0,
+      assistantText: "How would you like to proceed?",
+      resultText: "How would you like to proceed?",
+      needsInput: true,
       sessionId: handle.sessionId,
     });
   });
