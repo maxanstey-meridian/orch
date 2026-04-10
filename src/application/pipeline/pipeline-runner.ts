@@ -70,12 +70,21 @@ export const pipelineRunner = async (
       break;
     }
 
-    if (!phase.isClean(result) && phase.fixPrompt) {
+    if (!phase.isClean(result)) {
+      if (phase.evaluate) {
+        await phase.evaluate(unit, result, ctx, phase);
+        continue;
+      }
+
+      if (!phase.fixPrompt) {
+        continue;
+      }
+
       await evaluateAndFix({
         evaluatorResult: result,
         fixPromptBuilder: phase.fixPrompt,
         isClean: phase.isClean,
-        maxCycles: phase.maxCycles ?? ctx.config.maxReviewCycles,
+        maxCycles: Math.min(phase.maxCycles ?? ctx.config.maxReviewCycles, ctx.config.maxReviewCycles),
         unit,
         ctx,
         phase,

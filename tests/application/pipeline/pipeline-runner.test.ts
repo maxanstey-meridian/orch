@@ -420,6 +420,35 @@ describe("pipelineRunner", () => {
     expect(spawner.agentsForRole("tdd")).toHaveLength(0);
   });
 
+  it("uses phase-specific evaluate when provided", async () => {
+    useSlowAgentClock();
+    const { spawner, ctx } = createHarness();
+    const unit = sliceUnit(makeSlice(1), "Core");
+    const evaluate = vi.fn<(
+      unitArg: typeof unit,
+      resultArg: AgentResult,
+      ctxArg: typeof ctx,
+      phaseArg: PhaseHandler,
+    ) => Promise<void>>().mockResolvedValue(undefined);
+    const phase: PhaseHandler = {
+      name: "verify",
+      persistedPhase: "verify",
+      agent: "verify",
+      prompt: () => "[VERIFY]",
+      isClean: () => false,
+      fixPrompt: () => "[FIX]",
+      evaluate,
+    };
+    spawner.onNextSpawn("verify", okResult({ assistantText: "dirty findings" }));
+
+    await pipelineRunner(unit, [phase], ctx);
+
+    expect(evaluate).toHaveBeenCalledWith(unit, expect.objectContaining({
+      assistantText: "dirty findings",
+    }), ctx, phase);
+    expect(spawner.agentsForRole("tdd")).toHaveLength(0);
+  });
+
   it("persists phase state after each phase", async () => {
     useSlowAgentClock();
     const { spawner, persistence, ctx } = createHarness();
