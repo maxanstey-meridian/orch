@@ -29,3 +29,20 @@ export const saveRepoContext = (outputDir: string, artifact: RepoContextArtifact
   writeFileSync(filePath, JSON.stringify(validated, null, 2));
   return filePath;
 };
+
+export const updateRepoContext = (
+  outputDir: string,
+  update: (artifact: RepoContextArtifact) => RepoContextArtifact,
+): RepoContextArtifact | null => {
+  const artifact = loadRepoContext(outputDir);
+  if (artifact === null) {
+    return null;
+  }
+
+  const updated = update(artifact);
+  if (updated !== artifact) {
+    saveRepoContext(outputDir, updated);
+  }
+
+  return updated;
+};

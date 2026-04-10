@@ -340,10 +340,7 @@ describe("auditContextInBackground", () => {
 
     saveRepoContext(orchDir, artifact);
 
-    // Run background audit — need to wait for the internal promise
-    auditContextInBackground(orchDir, tempDir);
-    // Give microtask a tick to complete
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await auditContextInBackground(orchDir, tempDir);
 
     const reloaded = loadRepoContext(orchDir);
     expect(reloaded).not.toBeNull();
@@ -352,18 +349,14 @@ describe("auditContextInBackground", () => {
     );
   });
 
-  it("does not throw when context.json does not exist", () => {
-    // Should silently no-op
-    expect(() => auditContextInBackground(orchDir, tempDir)).not.toThrow();
+  it("returns cleanly when context.json does not exist", async () => {
+    await expect(auditContextInBackground(orchDir, tempDir)).resolves.toBeUndefined();
   });
 
-  it("does not throw when the artifact is invalid", async () => {
+  it("rejects when the stored artifact is invalid", async () => {
     // Write invalid JSON to context.json
     writeFileSync(join(orchDir, "context.json"), "not json");
 
-    // Should silently catch the error
-    expect(() => auditContextInBackground(orchDir, tempDir)).not.toThrow();
-    // Give microtask a tick
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect(auditContextInBackground(orchDir, tempDir)).rejects.toThrow();
   });
 });

@@ -13,6 +13,7 @@ export type RepoContextData = {
 };
 
 export type RepoContextSourceName = "operator" | "detected" | "planner" | "verified";
+export type RepoContextAuditableSourceName = Extract<RepoContextSourceName, "detected" | "planner">;
 
 export type RepoContextLeafPath = `context.${string}`;
 

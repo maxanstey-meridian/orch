@@ -1,13 +1,14 @@
 import { statSync } from "fs";
 import { join } from "path";
 import type {
+  RepoContextAuditableSourceName,
   RepoContextArtifact,
   RepoContextEntryProvenance,
   RepoContextLeafPath,
   RepoContextLayers,
 } from "#domain/context.js";
 import { mergeRepoContextLayers } from "#domain/context.js";
-import { tryLoadRepoContext, saveRepoContext } from "./context-store.js";
+import { updateRepoContext } from "./context-store.js";
 
 // ─── File verification ────────────────────────────────────────────────────
 
@@ -20,6 +21,10 @@ const isFileUnchangedSince = (filePath: string, isoTimestamp: string): boolean =
     return false;
   }
 };
+
+const isAuditableSource = (
+  source: RepoContextEntryProvenance["source"],
+): source is RepoContextAuditableSourceName => source === "detected" || source === "planner";
 
 // ─── Core audit logic ─────────────────────────────────────────────────────
 
@@ -65,7 +70,7 @@ export const auditContextEntries = (
     }
 
     // Skip already-verified entries and any future source types
-    if (entry.source !== "detected" && entry.source !== "planner") {
+    if (!isAuditableSource(entry.source)) {
       continue;
     }
 
@@ -111,20 +116,6 @@ export const auditContextEntries = (
 
 // ─── Background wrapper ───────────────────────────────────────────────────
 
-export const auditContextInBackground = (outputDir: string, cwd: string): void => {
-  const run = async (): Promise<void> => {
-    const artifact = tryLoadRepoContext(outputDir);
-    if (artifact === null) {
-      return;
-    }
-
-    const audited = auditContextEntries(artifact, cwd);
-    if (audited !== artifact) {
-      saveRepoContext(outputDir, audited);
-    }
-  };
-
-  run().catch(() => {
-    // Audit errors are contained — never fail foreground work
-  });
+export const auditContextInBackground = async (outputDir: string, cwd: string): Promise<void> => {
+  updateRepoContext(outputDir, (artifact) => auditContextEntries(artifact, cwd));
 };

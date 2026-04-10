@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { resolveAllAgentConfigs } from "#domain/agent-config.js";
 import type { ExecutionMode, ExecutionPreference, OrchestratorConfig } from "#domain/config.js";
+import { hasRepoContextArtifact } from "#domain/context.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
 import type { Group, PlanDocument } from "#domain/plan.js";
 import {
@@ -13,6 +14,7 @@ import {
   parseTreeFlag,
 } from "#infrastructure/cli/cli-args.js";
 import { buildOrchrSummary, loadAndResolveOrchrConfig } from "#infrastructure/config/orchrc.js";
+import { auditContextInBackground } from "#infrastructure/context/context-auditor.js";
 import { runFingerprint } from "#infrastructure/fingerprint.js";
 import { assertGitRepo } from "#infrastructure/git/repo-check.js";
 import { resolveWorktree } from "#infrastructure/git/worktree-setup.js";
@@ -108,6 +110,15 @@ const registerActiveRun = async (
   });
 };
 
+const scheduleContextAudit = (outputDir: string, cwd: string): void => {
+  try {
+    const auditPromise = auditContextInBackground(outputDir, cwd);
+    void auditPromise.catch(() => {});
+  } catch {
+    // Background verification must never abort foreground startup or planning.
+  }
+};
+
 export const main = async (runtime: MainRuntime = {}): Promise<void> => {
   const args = process.argv.slice(2);
   const exit = runtime.exit ?? ((code: number) => process.exit(code));
@@ -129,12 +140,13 @@ export const main = async (runtime: MainRuntime = {}): Promise<void> => {
 
   const orchrc = loadAndResolveOrchrConfig(cwd);
   const orchrcSummary = buildOrchrSummary(orchrc);
-  const { brief } = await runFingerprint({
+  const { brief, context } = await runFingerprint({
     cwd,
     outputDir: orchDir,
     skip: args.includes("--skip-fingerprint"),
     forceRefresh: !args.includes("--skip-fingerprint"),
   });
+  scheduleContextAudit(orchDir, cwd);
 
   const executionMode = executionModeFromPreference(executionPreference, workMode);
   const tier = "medium" as const;
@@ -259,7 +271,7 @@ export const main = async (runtime: MainRuntime = {}): Promise<void> => {
         printStartupBanner(console.log, {
           planPath,
           brief,
-          hasContext: brief.length > 0,
+          hasContext: hasRepoContextArtifact(context),
           executionMode,
           auto,
           interactive: isInteractive,

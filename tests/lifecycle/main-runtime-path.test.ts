@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   agentSpawnerFactorySpy: vi.fn(),
+  auditContextInBackground: vi.fn(),
   assertGitRepo: vi.fn(),
   buildOrchrSummary: vi.fn(),
   buildSkillOverrides: vi.fn(),
@@ -36,6 +37,10 @@ vi.mock("#infrastructure/cli/cli-args.js", () => ({
 vi.mock("#infrastructure/config/orchrc.js", () => ({
   buildOrchrSummary: mocks.buildOrchrSummary,
   loadAndResolveOrchrConfig: mocks.loadAndResolveOrchrConfig,
+}));
+
+vi.mock("#infrastructure/context/context-auditor.js", () => ({
+  auditContextInBackground: mocks.auditContextInBackground,
 }));
 
 vi.mock("#infrastructure/fingerprint.js", () => ({
@@ -117,7 +122,42 @@ beforeEach(async () => {
 
   mocks.assertGitRepo.mockResolvedValue(undefined);
   mocks.buildOrchrSummary.mockReturnValue(undefined);
-  mocks.runFingerprint.mockResolvedValue({ brief: "brief" });
+  mocks.auditContextInBackground.mockResolvedValue(undefined);
+  mocks.runFingerprint.mockResolvedValue({
+    brief: "brief",
+    context: {
+      version: 1,
+      repo: {
+        rootPath: tempDir,
+        repoName: "orch-main-runtime",
+        generatedAt: "2026-04-10T00:00:00.000Z",
+      },
+      layers: {
+        operator: { context: {}, provenance: {} },
+        detected: {
+          context: { architecture: "Clean Architecture" },
+          provenance: {
+            "context.architecture": {
+              source: "detected",
+              updatedAt: "2026-04-10T00:00:00.000Z",
+              supportingFiles: ["package.json"],
+            },
+          },
+        },
+        planner: { context: {}, provenance: {} },
+      },
+      effective: {
+        context: { architecture: "Clean Architecture" },
+        provenance: {
+          "context.architecture": {
+            source: "detected",
+            updatedAt: "2026-04-10T00:00:00.000Z",
+            supportingFiles: ["package.json"],
+          },
+        },
+      },
+    },
+  });
   mocks.parseProviderFlag.mockReturnValue("claude");
   mocks.parseExecutionPreference.mockReturnValue("auto");
   mocks.parseTreeFlag.mockReturnValue(undefined);
@@ -196,6 +236,46 @@ describe("main runtime path", () => {
       }),
     ).rejects.toThrow("createContainer runtime wiring has not been restored yet");
 
+    expect(mocks.agentSpawnerFactorySpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not await the auditor before continuing foreground startup", async () => {
+    mocks.auditContextInBackground.mockReturnValue(new Promise(() => {}));
+    const { main } = await import("../../src/main.js");
+    const currentCwd = process.cwd();
+
+    await expect(
+      main({
+        onSignal: () => process,
+        exit: vi.fn(),
+        registryPath: join(tempDir, ".orch", "runs.json"),
+      }),
+    ).rejects.toThrow("createContainer runtime wiring has not been restored yet");
+
+    expect(mocks.auditContextInBackground).toHaveBeenCalledWith(
+      join(currentCwd, ".orch"),
+      currentCwd,
+    );
+    expect(mocks.agentSpawnerFactorySpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("catches and ignores auditor rejections", async () => {
+    mocks.auditContextInBackground.mockRejectedValue(new Error("audit failed"));
+    const { main } = await import("../../src/main.js");
+    const currentCwd = process.cwd();
+
+    await expect(
+      main({
+        onSignal: () => process,
+        exit: vi.fn(),
+        registryPath: join(tempDir, ".orch", "runs.json"),
+      }),
+    ).rejects.toThrow("createContainer runtime wiring has not been restored yet");
+
+    expect(mocks.auditContextInBackground).toHaveBeenCalledWith(
+      join(currentCwd, ".orch"),
+      currentCwd,
+    );
     expect(mocks.agentSpawnerFactorySpy).toHaveBeenCalledTimes(1);
   });
 });
