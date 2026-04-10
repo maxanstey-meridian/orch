@@ -513,6 +513,90 @@ describe("withRetry", () => {
     expect(spawner.agentsForRole("tdd")).toHaveLength(3);
   });
 
+  it("stops probing for usage availability after quit is requested", async () => {
+    const { pool, spawner, interrupts, gate, progress, log, context } = createHarness({
+      config: { auto: true },
+    });
+    const agent = await pool.ensure("tdd");
+    spawner.onNextSpawn("tdd", okResult({ exitCode: 1, resultText: "usage limit exceeded" }));
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "OK" }));
+    const fn = vi.fn(async () => {
+      if (fn.mock.calls.length === 1) {
+        return okResult({
+          exitCode: 1,
+          resultText: "usage limit exceeded",
+          sessionId: agent.sessionId,
+        });
+      }
+      return okResult({ assistantText: "after probe", sessionId: agent.sessionId });
+    });
+
+    vi.useFakeTimers();
+    const run = withRetry(fn, agent, "tdd", "TDD", {
+      pool,
+      interrupts,
+      gate,
+      progress,
+      log,
+      persistence: context.persistence,
+      config: { ...DEFAULT_CONFIG, auto: true },
+      stateAccessor: context.state,
+      minDurationMs: 0,
+      delayMs: 0,
+      usageProbeDelayMs: 1,
+      usageProbeMaxDelayMs: 1,
+    }).catch(() => undefined);
+
+    await vi.advanceTimersByTimeAsync(1);
+    interrupts.requestQuit();
+    await vi.advanceTimersByTimeAsync(2);
+    await run;
+
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops probing for usage availability after a hard interrupt is requested", async () => {
+    const { pool, spawner, interrupts, gate, progress, log, context } = createHarness({
+      config: { auto: true },
+    });
+    const agent = await pool.ensure("tdd");
+    spawner.onNextSpawn("tdd", okResult({ exitCode: 1, resultText: "usage limit exceeded" }));
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "OK" }));
+    const fn = vi.fn(async () => {
+      if (fn.mock.calls.length === 1) {
+        return okResult({
+          exitCode: 1,
+          resultText: "usage limit exceeded",
+          sessionId: agent.sessionId,
+        });
+      }
+      return okResult({ assistantText: "after probe", sessionId: agent.sessionId });
+    });
+
+    vi.useFakeTimers();
+    const run = withRetry(fn, agent, "tdd", "TDD", {
+      pool,
+      interrupts,
+      gate,
+      progress,
+      log,
+      persistence: context.persistence,
+      config: { ...DEFAULT_CONFIG, auto: true },
+      stateAccessor: context.state,
+      minDurationMs: 0,
+      delayMs: 0,
+      usageProbeDelayMs: 1,
+      usageProbeMaxDelayMs: 1,
+    }).catch(() => undefined);
+
+    await vi.advanceTimersByTimeAsync(1);
+    interrupts.setHardInterrupt("stop probing");
+    await vi.advanceTimersByTimeAsync(2);
+    await run;
+
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
   it("gates to operator on non-retryable error when auto mode is disabled", async () => {
     const { pool, interrupts, gate, progress, log, persistence, config, context } = createHarness();
     const agent = await pool.ensure("tdd");
@@ -543,6 +627,70 @@ describe("withRetry", () => {
     expect(result.assistantText).toBe("retried");
     expect(gate.creditCalls).toHaveLength(1);
     expect(gate.creditCalls[0]?.label).toBe("TDD");
+  });
+
+  it("throws after repeated dead respawns exhaust maxRetries", async () => {
+    const { pool, spawner, interrupts, gate, progress, log, persistence, config, context } =
+      createHarness();
+    const firstAgent = await pool.ensure("tdd");
+    let activeAgent = firstAgent;
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "respawn one" }));
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "respawn two" }));
+
+    const originalRespawn = pool.respawn.bind(pool);
+    vi.spyOn(pool, "respawn").mockImplementation(async (role) => {
+      const respawned = await originalRespawn(role);
+      activeAgent = respawned;
+      return respawned;
+    });
+    const fn = vi.fn(async () => {
+      activeAgent.kill();
+      return okResult({ assistantText: "died again", sessionId: activeAgent.sessionId });
+    });
+
+    await expect(
+      withRetry(fn, firstAgent, "tdd", "verify", {
+        pool,
+        interrupts,
+        gate,
+        progress,
+        log,
+        persistence,
+        config,
+        stateAccessor: context.state,
+        minDurationMs: 0,
+        delayMs: 0,
+        maxRetries: 1,
+      }),
+    ).rejects.toThrow(IncompleteRunError);
+
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws after repeated retryable API errors exhaust maxRetries", async () => {
+    const { pool, interrupts, gate, progress, log, persistence, config, context } = createHarness();
+    const agent = await pool.ensure("tdd");
+    const fn = vi.fn(async () =>
+      okResult({ exitCode: 1, resultText: "529 overloaded", sessionId: agent.sessionId }),
+    );
+
+    await expect(
+      withRetry(fn, agent, "tdd", "TDD", {
+        pool,
+        interrupts,
+        gate,
+        progress,
+        log,
+        persistence,
+        config,
+        stateAccessor: context.state,
+        minDurationMs: 0,
+        delayMs: 0,
+        maxRetries: 1,
+      }),
+    ).rejects.toThrow(IncompleteRunError);
+
+    expect(fn).toHaveBeenCalledTimes(2);
   });
 
   it("throws CreditExhaustedError when operator quits", async () => {

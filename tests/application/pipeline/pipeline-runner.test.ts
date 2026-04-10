@@ -354,6 +354,35 @@ describe("pipelineRunner", () => {
     expect(spawner.lastAgent("tdd").sentPrompts).toEqual(["[FIX] dirty findings"]);
   });
 
+  it("does not enter evaluateAndFix when quit is requested during a dirty phase", async () => {
+    useSlowAgentClock();
+    const { spawner, git, ctx } = createHarness();
+    const unit = sliceUnit(makeSlice(1), "Core");
+    const phase: PhaseHandler = {
+      name: "review",
+      persistedPhase: "review",
+      agent: "review",
+      prompt: () => "[REVIEW]",
+      isClean: (result) => result.assistantText.includes("clean"),
+      fixPrompt: (_unit, findings) => `[FIX] ${findings}`,
+    };
+    git.setHasChanges(true);
+    spawner.onNextSpawn(
+      "review",
+      () => {
+        ctx.interrupts.requestQuit();
+        return okResult({ assistantText: "dirty findings" });
+      },
+      okResult({ assistantText: "clean now" }),
+    );
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "fixed" }));
+
+    await pipelineRunner(unit, [phase], ctx);
+
+    expect(spawner.agentsForRole("tdd")).toHaveLength(0);
+    expect(spawner.lastAgent("review").sentPrompts).toEqual(["[REVIEW]"]);
+  });
+
   it("skips evaluateAndFix when isClean returns true", async () => {
     useSlowAgentClock();
     const { spawner, ctx } = createHarness();
@@ -545,5 +574,119 @@ describe("pipelineRunner", () => {
     ).rejects.toThrow("Skipped Core slice 1");
 
     expect(persistence.current.lastCompletedSlice).toBeUndefined();
+  });
+
+  it("RunOrchestration honors minAgentDurationMs and retryDelayMs overrides", async () => {
+    const { spawner, persistence, gate, git, prompts, progress, log } = createHarness();
+    const uc = new RunOrchestration(
+      spawner,
+      persistence,
+      gate,
+      git,
+      prompts,
+      {
+        ...DEFAULT_CONFIG,
+        skills: { ...DEFAULT_SKILLS, verify: null, gap: null },
+      },
+      progress,
+      log,
+      new FakeRolePromptResolver(),
+      new TestExecutionUnitTierSelector(),
+      new TestExecutionUnitTriager(),
+    );
+    uc.minAgentDurationMs = 0;
+    uc.retryDelayMs = 0;
+    const nowSpy = vi.spyOn(Date, "now");
+    [0, 1, 10_000, 15_000, 20_000, 25_000].forEach((value) => {
+      nowSpy.mockReturnValueOnce(value);
+    });
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented" }));
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+    spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
+    vi.useFakeTimers();
+
+    let settled = false;
+    const run = uc.execute([
+      {
+        name: "Core",
+        slices: [makeSlice(1)],
+      },
+    ]);
+    void run.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(1);
+    const settledWithoutDefaultRetryDelay = settled;
+    await vi.runAllTimersAsync();
+
+    await expect(run).resolves.toBeUndefined();
+
+    expect(settledWithoutDefaultRetryDelay).toBe(true);
+    expect(spawner.agentsForRole("tdd")).toHaveLength(1);
+  });
+
+  it("RunOrchestration honors usage probe delay overrides", async () => {
+    useSlowAgentClock();
+    const { spawner, persistence, gate, git, prompts, progress, log } = createHarness();
+    const uc = new RunOrchestration(
+      spawner,
+      persistence,
+      gate,
+      git,
+      prompts,
+      {
+        ...DEFAULT_CONFIG,
+        auto: true,
+        skills: { ...DEFAULT_SKILLS, verify: null, gap: null },
+      },
+      progress,
+      log,
+      new FakeRolePromptResolver(),
+      new TestExecutionUnitTierSelector(),
+      new TestExecutionUnitTriager(),
+    );
+    uc.minAgentDurationMs = 0;
+    uc.retryDelayMs = 0;
+    uc.usageProbeDelayMs = 1;
+    uc.usageProbeMaxDelayMs = 1;
+
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ exitCode: 1, resultText: "usage limit exceeded" }),
+      okResult({ assistantText: "implemented after probe" }),
+    );
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "OK" }));
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+    spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
+
+    vi.useFakeTimers();
+    let settled = false;
+    const run = uc.execute([
+      {
+        name: "Core",
+        slices: [makeSlice(1)],
+      },
+    ]);
+    void run.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(5);
+    const settledWithinOverrideWindow = settled;
+    await vi.runAllTimersAsync();
+    await run;
+
+    expect(settledWithinOverrideWindow).toBe(true);
   });
 });
