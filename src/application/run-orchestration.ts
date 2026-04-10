@@ -55,6 +55,10 @@ export class RunOrchestration {
     private readonly triager: ExecutionUnitTriager,
   ) {}
 
+  private logOrchestrator(text: string): void {
+    this.logWriter.write("ORCH", text);
+  }
+
   async execute(groups: readonly Group[]): Promise<void> {
     this.state = await this.persistence.load();
 
@@ -95,11 +99,18 @@ export class RunOrchestration {
           }
         },
       },
-      () => {},
+      (handle, role) => {
+        handle.pipe(
+          (text) => {
+            this.logWriter.write(role, text);
+          },
+          () => {},
+        );
+      },
       (role) => this.prompts.rulesReminder(role),
     );
 
-    ctx = createPipelineContext({
+    const baseContext = createPipelineContext({
       config: this.config,
       initialState: ctxState,
       git: this.git,
@@ -118,16 +129,65 @@ export class RunOrchestration {
       usageProbeMaxDelayMs: this.usageProbeMaxDelayMs,
     });
 
-    await executeGroups(groups, ctx);
+    ctx = {
+      ...baseContext,
+      progress: {
+        registerInterrupts: () => baseContext.progress.registerInterrupts(),
+        updateProgress: (update) => baseContext.progress.updateProgress(update),
+        setActivity: (summary) => baseContext.progress.setActivity(summary),
+        log: (text) => baseContext.progress.log(text),
+        logExecutionMode: (executionMode) => baseContext.progress.logExecutionMode(executionMode),
+        createStreamer: (role) => {
+          const progressStreamer = baseContext.progress.createStreamer(role);
+          return (text: string) => {
+            progressStreamer(text);
+            this.logWriter.write(role, text);
+          };
+        },
+        logSliceIntro: (slice) => baseContext.progress.logSliceIntro(slice),
+        logBadge: (role, phase) => baseContext.progress.logBadge(role, phase),
+        clearSkipping: () => baseContext.progress.clearSkipping(),
+        teardown: () => baseContext.progress.teardown(),
+      },
+      state: {
+        get: () => baseContext.state.get(),
+        set: (state) => baseContext.state.set(state),
+        advance: async (event) => {
+          switch (event.kind) {
+            case "sliceStarted":
+              this.logOrchestrator(`Starting slice ${event.sliceNumber} (${event.groupName})`);
+              break;
+            case "phaseEntered":
+              this.logOrchestrator(`Entered phase ${event.phase} for slice ${event.sliceNumber}`);
+              break;
+            case "sliceDone":
+              this.logOrchestrator(`Completed slice ${event.sliceNumber}`);
+              break;
+          }
 
-    this.state = ctx.state.get();
-    this.hardInterruptPending = interrupts.hardInterrupt();
+          await baseContext.state.advance(event);
+        },
+      },
+    };
 
-    if (interrupts.skipRequested()) {
-      const currentGroup = this.state.currentGroup ?? groups[0]?.name ?? "current";
-      const currentSlice = this.state.currentSlice ?? groups[0]?.slices[0]?.number ?? 1;
-      this.sliceSkipFlag = false;
-      throw new IncompleteRunError(`Skipped ${currentGroup} slice ${currentSlice}`);
+    try {
+      await executeGroups(groups, ctx);
+
+      this.state = ctx.state.get();
+      this.hardInterruptPending = interrupts.hardInterrupt();
+
+      if (interrupts.skipRequested()) {
+        const currentGroup = this.state.currentGroup ?? groups[0]?.name ?? "current";
+        const currentSlice = this.state.currentSlice ?? groups[0]?.slices[0]?.number ?? 1;
+        this.sliceSkipFlag = false;
+        throw new IncompleteRunError(`Skipped ${currentGroup} slice ${currentSlice}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logOrchestrator(`Execution failed: ${message}`);
+      throw error;
+    } finally {
+      await this.logWriter.close();
     }
   }
 }

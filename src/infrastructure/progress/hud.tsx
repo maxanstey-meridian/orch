@@ -166,7 +166,7 @@ export const HudView = ({
     const padded = prompt + " ".repeat(Math.max(0, columns - prompt.length));
     return (
       <>
-        <Static items={items}>{(line, index) => <Text key={index}>{line}</Text>}</Static>
+        <Static items={[...items]}>{(line, index) => <Text key={index}>{line}</Text>}</Static>
         <Text> </Text>
         <Text bold color="green">
           {padded}
@@ -182,7 +182,7 @@ export const HudView = ({
     const padded = prompt + " ".repeat(Math.max(0, columns - prompt.length));
     return (
       <>
-        <Static items={items}>{(line, index) => <Text key={index}>{line}</Text>}</Static>
+        <Static items={[...items]}>{(line, index) => <Text key={index}>{line}</Text>}</Static>
         <Text> </Text>
         <Text bold color={color}>
           {padded}
@@ -195,7 +195,7 @@ export const HudView = ({
   const padded = ` ${status}${" ".repeat(Math.max(0, columns - status.length - 2))} `;
   return (
     <>
-      <Static items={items}>{(line, index) => <Text key={index}>{line}</Text>}</Static>
+      <Static items={[...items]}>{(line, index) => <Text key={index}>{line}</Text>}</Static>
       <Text> </Text>
       <Text bold inverse>
         {padded}

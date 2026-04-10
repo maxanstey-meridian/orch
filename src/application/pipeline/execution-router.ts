@@ -500,6 +500,32 @@ const applyBoundaryPolicy = async (
   options: BoundaryPolicyOptions,
   ctx: PipelineContext,
 ): Promise<BoundaryTriageResult> => {
+  const hasChanges = await ctx.git.hasChanges(options.reviewBaseSha);
+  const completenessOnly =
+    ctx.config.skills.completeness !== null
+    && ctx.config.skills.verify === null
+    && ctx.config.skills.review === null
+    && ctx.config.skills.gap === null;
+
+  if (!hasChanges && completenessOnly) {
+    const skipped: BoundaryTriageResult = {
+      completeness: "skip",
+      verify: "skip",
+      review: "skip",
+      gap: "skip",
+      reason: "no completeness check needed without code changes",
+    };
+
+    await updatePolicyState(
+      options.activeTier,
+      ctx.state.get().currentGroupBaseSha,
+      currentPendingShas(ctx),
+      ctx,
+    );
+
+    return skipped;
+  }
+
   const diff = await ctx.git.getDiff(options.reviewBaseSha);
   const diffStats = await ctx.git.measureDiff(options.reviewBaseSha);
   const previousPending = currentPendingShas(ctx);

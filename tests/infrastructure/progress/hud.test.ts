@@ -122,9 +122,9 @@ describe("InkProgressSink", () => {
   it("registerInterrupts wires guide, interrupt, skip, and quit callbacks", () => {
     const hud = new FakeHud();
     const sink = new InkProgressSink(hud);
-    const guide = vi.fn<[string], void>();
-    const interrupt = vi.fn<[string], void>();
-    const quit = vi.fn<[], void>();
+    const guide = vi.fn<(text: string) => void>();
+    const interrupt = vi.fn<(text: string) => void>();
+    const quit = vi.fn<() => void>();
 
     let skipState = false;
     const handler = sink.registerInterrupts();
