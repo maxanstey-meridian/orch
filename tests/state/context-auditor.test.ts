@@ -211,12 +211,10 @@ describe("auditContextEntries", () => {
     expect(result).toBe(artifact);
   });
 
-  it("skips already-verified entries", async () => {
+  it("marks a verified planner entry stale when supporting files diverge later", async () => {
     const filePath = join(tempDir, "src", "main.ts");
     await mkdir(join(tempDir, "src"), { recursive: true });
     writeFileSync(filePath, "content");
-    const oldTime = new Date("2025-06-01T00:00:00.000Z");
-    utimesSync(filePath, oldTime, oldTime);
 
     const provenance: Record<RepoContextLeafPath, RepoContextEntryProvenance> = {
       "context.keyFiles.src/main.ts": {
@@ -238,8 +236,52 @@ describe("auditContextEntries", () => {
 
     const result = auditContextEntries(artifact, tempDir);
 
-    // Should return same reference — nothing to do
-    expect(result).toBe(artifact);
+    const plannerProv = result.layers.planner.provenance["context.keyFiles.src/main.ts"];
+    expect(plannerProv).toBeDefined();
+    expect(plannerProv!.source).toBe("planner");
+    expect(plannerProv!.note).toBe("stale: supporting file changed");
+  });
+
+  it("audits shadowed detected entries even when planner wins effective precedence", async () => {
+    await mkdir(join(tempDir, "src"), { recursive: true });
+
+    const plannerPath = join(tempDir, "src", "main.ts");
+    writeFileSync(plannerPath, "planner");
+    const oldTime = new Date("2025-06-01T00:00:00.000Z");
+    utimesSync(plannerPath, oldTime, oldTime);
+
+    const artifact = makeArtifact({
+      layers: {
+        planner: {
+          context: { architecture: "Planner architecture" },
+          provenance: {
+            "context.architecture": {
+              source: "planner",
+              updatedAt: pastTimestamp,
+              supportingFiles: ["src/main.ts"],
+            },
+          },
+        },
+        detected: {
+          context: { architecture: "Detected architecture" },
+          provenance: {
+            "context.architecture": {
+              source: "detected",
+              updatedAt: pastTimestamp,
+              supportingFiles: ["src/missing.ts"],
+            },
+          },
+        },
+      },
+    });
+
+    const result = auditContextEntries(artifact, tempDir);
+
+    expect(result.layers.planner.provenance["context.architecture"]!.source).toBe("verified");
+    expect(result.layers.detected.provenance["context.architecture"]!.source).toBe("detected");
+    expect(result.layers.detected.provenance["context.architecture"]!.note).toBe(
+      "stale: supporting file changed",
+    );
   });
 
   it("handles mixed entries: promotes valid, stales invalid, preserves unrelated", async () => {

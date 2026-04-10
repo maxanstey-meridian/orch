@@ -1,7 +1,6 @@
 import { statSync } from "fs";
 import { join } from "path";
 import type {
-  RepoContextAuditableSourceName,
   RepoContextArtifact,
   RepoContextEntryProvenance,
   RepoContextLeafPath,
@@ -22,9 +21,37 @@ const isFileUnchangedSince = (filePath: string, isoTimestamp: string): boolean =
   }
 };
 
-const isAuditableSource = (
-  source: RepoContextEntryProvenance["source"],
-): source is RepoContextAuditableSourceName => source === "detected" || source === "planner";
+type AuditableLayerName = "detected" | "planner";
+type MutableLayers = {
+  [K in keyof RepoContextLayers]: {
+    context: RepoContextLayers[K]["context"];
+    provenance: Record<RepoContextLeafPath, RepoContextEntryProvenance>;
+  };
+};
+
+const verifiedNote = "verified: supporting files unchanged";
+const staleNote = "stale: supporting file changed";
+
+const syncLayerEntry = (
+  layers: MutableLayers,
+  layerName: AuditableLayerName,
+  leafPath: RepoContextLeafPath,
+  nextEntry: RepoContextEntryProvenance,
+): boolean => {
+  const currentEntry = layers[layerName].provenance[leafPath];
+  if (
+    currentEntry?.source === nextEntry.source &&
+    currentEntry.note === nextEntry.note &&
+    currentEntry.updatedAt === nextEntry.updatedAt &&
+    JSON.stringify(currentEntry.supportingFiles ?? []) ===
+      JSON.stringify(nextEntry.supportingFiles ?? [])
+  ) {
+    return false;
+  }
+
+  layers[layerName].provenance[leafPath] = nextEntry;
+  return true;
+};
 
 // ─── Core audit logic ─────────────────────────────────────────────────────
 
@@ -34,13 +61,7 @@ export const auditContextEntries = (
 ): RepoContextArtifact => {
   let changed = false;
 
-  // Build mutable copies of layer provenance
-  const updatedLayers: {
-    [K in keyof RepoContextLayers]: {
-      context: RepoContextLayers[K]["context"];
-      provenance: Record<RepoContextLeafPath, RepoContextEntryProvenance>;
-    };
-  } = {
+  const updatedLayers: MutableLayers = {
     operator: {
       context: artifact.layers.operator.context,
       provenance: { ...artifact.layers.operator.provenance },
@@ -55,45 +76,31 @@ export const auditContextEntries = (
     },
   };
 
-  for (const [path, entry] of Object.entries(artifact.effective.provenance)) {
-    const leafPath = path as RepoContextLeafPath;
-
-    // Skip operator entries — they're authoritative
-    if (entry.source === "operator") {
-      continue;
-    }
-
-    // Skip entries without supporting files — nothing to verify
-    const files = entry.supportingFiles;
-    if (files === undefined || files.length === 0) {
-      continue;
-    }
-
-    // Skip already-verified entries and any future source types
-    if (!isAuditableSource(entry.source)) {
-      continue;
-    }
-
-    const allFilesMatch = files.every((f) => isFileUnchangedSince(join(cwd, f), entry.updatedAt));
-    const sourceLayer = entry.source;
-
-    if (allFilesMatch) {
-      // Promote to verified
-      changed = true;
-      updatedLayers[sourceLayer].provenance[leafPath] = {
-        ...entry,
-        source: "verified",
-        note: "verified: supporting files unchanged",
-      };
-    } else {
-      // Mark stale — only if not already stale
-      if (!entry.note?.startsWith("stale:")) {
-        changed = true;
-        updatedLayers[sourceLayer].provenance[leafPath] = {
-          ...entry,
-          note: "stale: supporting file changed",
-        };
+  for (const layerName of ["detected", "planner"] as const) {
+    for (const [path, entry] of Object.entries(artifact.layers[layerName].provenance)) {
+      const leafPath = path as RepoContextLeafPath;
+      const files = entry.supportingFiles;
+      if (files === undefined || files.length === 0) {
+        continue;
       }
+
+      const allFilesMatch = files.every((f) => isFileUnchangedSince(join(cwd, f), entry.updatedAt));
+      if (allFilesMatch) {
+        changed =
+          syncLayerEntry(updatedLayers, layerName, leafPath, {
+            ...entry,
+            source: "verified",
+            note: verifiedNote,
+          }) || changed;
+        continue;
+      }
+
+      changed =
+        syncLayerEntry(updatedLayers, layerName, leafPath, {
+          ...entry,
+          source: layerName,
+          note: staleNote,
+        }) || changed;
     }
   }
 
