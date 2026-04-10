@@ -30,6 +30,10 @@ const sendWithRetry = async (
     persistence: ctx.persistence,
     config: ctx.config,
     stateAccessor: ctx.state,
+    delayMs: ctx.retryDelayMs,
+    minDurationMs: ctx.minAgentDurationMs,
+    usageProbeDelayMs: ctx.usageProbeDelayMs,
+    usageProbeMaxDelayMs: ctx.usageProbeMaxDelayMs,
   });
 };
 
@@ -61,6 +65,10 @@ export const pipelineRunner = async (
       sliceNumber: unit.sliceNumber,
     });
     ctx.log.write(phase.agent, result.assistantText);
+
+    if (ctx.interrupts.skipRequested() || ctx.interrupts.quitRequested()) {
+      break;
+    }
 
     if (!phase.isClean(result) && phase.fixPrompt) {
       await evaluateAndFix({

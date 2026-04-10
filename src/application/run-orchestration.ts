@@ -291,6 +291,10 @@ export class RunOrchestration {
       interrupts,
       triager: this.triager,
       tierSelector: this.tierSelector,
+      retryDelayMs: this.retryDelayMs,
+      minAgentDurationMs: this.minAgentDurationMs,
+      usageProbeDelayMs: this.usageProbeDelayMs,
+      usageProbeMaxDelayMs: this.usageProbeMaxDelayMs,
     });
 
     let lastUnit: ExecutionUnit | null = null;

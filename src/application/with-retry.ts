@@ -46,6 +46,9 @@ export type WithRetryOpts = {
   readonly stateAccessor: StateAccessor;
 };
 
+const shouldAbortForInterrupt = (opts: WithRetryOpts): boolean =>
+  opts.interrupts.hardInterrupt() !== null || opts.interrupts.quitRequested();
+
 const waitForUsageAvailability = async (
   apiError: ApiError,
   role: AgentRole,
@@ -61,6 +64,10 @@ const waitForUsageAvailability = async (
 
   let attempt = 0;
   while (true) {
+    if (shouldAbortForInterrupt(opts)) {
+      return false;
+    }
+
     const waitMs = Math.min(probeDelayMs * 2 ** attempt, probeMaxDelayMs);
     opts.progress.setActivity(
       `usage limited; probing ${role} again in ${Math.round(waitMs / 1000)}s`,
@@ -68,9 +75,16 @@ const waitForUsageAvailability = async (
     await opts.persistence.save(opts.stateAccessor.get());
     await sleep(waitMs);
 
+    if (shouldAbortForInterrupt(opts)) {
+      return false;
+    }
+
     const probe = opts.pool.spawnDetached(role);
     try {
       const probeResult = await probe.send(PROBE_PROMPT);
+      if (shouldAbortForInterrupt(opts)) {
+        return false;
+      }
       const probeError = detectApiError(probeResult, probe.stderr);
       if (probeError === null) {
         opts.progress.setActivity(`usage available again; retrying ${label}...`);
@@ -104,7 +118,7 @@ export const withRetry = async (
     const elapsed = Date.now() - start;
 
     if (!currentAgent.alive) {
-      if (opts.interrupts.hardInterrupt() !== null || opts.interrupts.quitRequested()) {
+      if (shouldAbortForInterrupt(opts)) {
         return result;
       }
 
@@ -147,6 +161,10 @@ export const withRetry = async (
     if (!apiError.retryable) {
       if (await waitForUsageAvailability(apiError, role, label, opts)) {
         continue;
+      }
+
+      if (shouldAbortForInterrupt(opts)) {
+        return result;
       }
 
       await opts.persistence.save(opts.stateAccessor.get());

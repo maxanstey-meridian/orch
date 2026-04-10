@@ -30,6 +30,10 @@ export type PipelineContext = {
   readonly interrupts: InterruptState;
   readonly triager: ExecutionUnitTriager;
   readonly tierSelector: ExecutionUnitTierSelector;
+  readonly retryDelayMs?: number;
+  readonly minAgentDurationMs?: number;
+  readonly usageProbeDelayMs?: number;
+  readonly usageProbeMaxDelayMs?: number;
 };
 
 export type CreatePipelineContextOptions = {
@@ -45,6 +49,10 @@ export type CreatePipelineContextOptions = {
   readonly interrupts: InterruptState;
   readonly triager: ExecutionUnitTriager;
   readonly tierSelector: ExecutionUnitTierSelector;
+  readonly retryDelayMs?: number;
+  readonly minAgentDurationMs?: number;
+  readonly usageProbeDelayMs?: number;
+  readonly usageProbeMaxDelayMs?: number;
 };
 
 export const createPipelineContext = (options: CreatePipelineContextOptions): PipelineContext => {
@@ -74,5 +82,9 @@ export const createPipelineContext = (options: CreatePipelineContextOptions): Pi
     interrupts: options.interrupts,
     triager: options.triager,
     tierSelector: options.tierSelector,
+    retryDelayMs: options.retryDelayMs,
+    minAgentDurationMs: options.minAgentDurationMs,
+    usageProbeDelayMs: options.usageProbeDelayMs,
+    usageProbeMaxDelayMs: options.usageProbeMaxDelayMs,
   };
 };

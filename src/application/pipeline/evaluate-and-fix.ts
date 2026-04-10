@@ -41,6 +41,10 @@ const sendWithRetry = async (
     persistence: ctx.persistence,
     config: ctx.config,
     stateAccessor: ctx.state,
+    delayMs: ctx.retryDelayMs,
+    minDurationMs: ctx.minAgentDurationMs,
+    usageProbeDelayMs: ctx.usageProbeDelayMs,
+    usageProbeMaxDelayMs: ctx.usageProbeMaxDelayMs,
   });
 };
 
@@ -56,7 +60,7 @@ export const evaluateAndFix = async (input: EvaluateAndFixInput): Promise<void> 
   let findings = input.evaluatorResult.assistantText;
 
   for (let cycle = 0; cycle < input.maxCycles; cycle++) {
-    if (input.ctx.interrupts.skipRequested()) {
+    if (input.ctx.interrupts.skipRequested() || input.ctx.interrupts.quitRequested()) {
       return;
     }
 
@@ -65,7 +69,7 @@ export const evaluateAndFix = async (input: EvaluateAndFixInput): Promise<void> 
 
     await sendWithRetry("tdd", fixPrompt, `${input.phase.name} fix`, input.ctx);
 
-    if (input.ctx.interrupts.skipRequested()) {
+    if (input.ctx.interrupts.skipRequested() || input.ctx.interrupts.quitRequested()) {
       return;
     }
 
@@ -76,7 +80,7 @@ export const evaluateAndFix = async (input: EvaluateAndFixInput): Promise<void> 
 
     await commitSweep(input.unit, input.ctx);
 
-    if (input.ctx.interrupts.skipRequested()) {
+    if (input.ctx.interrupts.skipRequested() || input.ctx.interrupts.quitRequested()) {
       return;
     }
 
@@ -90,6 +94,10 @@ export const evaluateAndFix = async (input: EvaluateAndFixInput): Promise<void> 
     );
 
     if (input.isClean(reevaluated)) {
+      return;
+    }
+
+    if (input.ctx.interrupts.skipRequested() || input.ctx.interrupts.quitRequested()) {
       return;
     }
 
