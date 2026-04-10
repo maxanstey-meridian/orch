@@ -4,6 +4,7 @@ import type { PipelineContext } from "#application/pipeline-context.js";
 import type { AgentResult, AgentRole } from "#domain/agent-types.js";
 import { IncompleteRunError } from "#domain/errors.js";
 import type { Group } from "#domain/plan.js";
+import type { PersistedPhase } from "#domain/state.js";
 import {
   shouldDeferPass,
   shouldRunPass,
@@ -31,6 +32,7 @@ type BoundaryPolicyOptions = {
   readonly activeTier: ComplexityTier;
   readonly finalBoundary: boolean;
   readonly moreUnitsInGroup: boolean;
+  readonly resumeFrom?: BoundaryPassName;
 };
 
 type PersistedPendingShas = {
@@ -41,6 +43,7 @@ type PersistedPendingShas = {
 };
 
 const BOUNDARY_PASSES = ["completeness", "verify", "review", "gap"] as const satisfies readonly BoundaryPassName[];
+type SliceResumePhase = Exclude<PersistedPhase, "final">;
 
 const boundaryPhaseFor = (pass: BoundaryPassName): PhaseHandler => {
   switch (pass) {
@@ -54,6 +57,14 @@ const boundaryPhaseFor = (pass: BoundaryPassName): PhaseHandler => {
       return gapPhase;
   }
 };
+
+const boundaryPassIndex = (pass: BoundaryPassName): number => BOUNDARY_PASSES.indexOf(pass);
+
+const isBoundaryPassName = (phase: PersistedPhase): phase is BoundaryPassName =>
+  BOUNDARY_PASSES.includes(phase as BoundaryPassName);
+
+const isPassAtOrAfter = (pass: BoundaryPassName, resumeFrom?: BoundaryPassName): boolean =>
+  resumeFrom === undefined || boundaryPassIndex(pass) >= boundaryPassIndex(resumeFrom);
 
 const sendWithRetry = async (
   role: AgentRole,
@@ -226,15 +237,21 @@ const isGroupCompleted = (group: Group, ctx: PipelineContext): boolean => {
     && (state.lastCompletedSlice ?? 0) >= lastSliceNumber;
 };
 
-const isResumingSlice = (unit: ExecutionUnit, ctx: PipelineContext): boolean => {
+const resumedSlicePhase = (unit: ExecutionUnit, ctx: PipelineContext): SliceResumePhase | null => {
   if (unit.kind !== "slice") {
-    return false;
+    return null;
   }
 
   const state = ctx.state.get();
-  return state.currentPhase !== undefined
-    && state.currentGroup === unit.groupName
-    && state.currentSlice === unit.sliceNumber;
+  if (state.currentGroup !== unit.groupName || state.currentSlice !== unit.sliceNumber) {
+    return null;
+  }
+
+  if (state.currentPhase === undefined || state.currentPhase === "final") {
+    return null;
+  }
+
+  return state.currentPhase;
 };
 
 const runDirectExecution = async (
@@ -329,13 +346,7 @@ const runPlannedSliceExecution = async (
   unit: ExecutionUnit,
   ctx: PipelineContext,
   forceAccept = false,
-  resume = false,
 ): Promise<void> => {
-  if (resume) {
-    await runSliceExecutionWithoutPlan(unit, ctx);
-    return;
-  }
-
   let operatorGuidance: string | undefined;
   let acceptedPlanText: string | null = null;
 
@@ -408,7 +419,7 @@ const planThenExecute = async (
   unit: ExecutionUnit,
   ctx: PipelineContext,
   forceAccept = false,
-  resume = false,
+  resumePhase: "plan" | "tdd" | null = null,
 ): Promise<void> => {
   switch (unit.kind) {
     case "direct":
@@ -418,32 +429,72 @@ const planThenExecute = async (
       await runGroupedExecution(unit, ctx);
       return;
     case "slice":
-      if (resume || ctx.config.skills.plan === null) {
+      if (resumePhase === "tdd" || ctx.config.skills.plan === null) {
         await runSliceExecutionWithoutPlan(unit, ctx);
         return;
       }
-      await runPlannedSliceExecution(unit, ctx, forceAccept, resume);
+      await runPlannedSliceExecution(unit, ctx, forceAccept);
   }
 };
 
 const runNowPhases = (
   decisions: BoundaryTriageResult,
   ctx: PipelineContext,
+  resumeFrom?: BoundaryPassName,
 ): readonly PhaseHandler[] => BOUNDARY_PASSES
-  .filter((pass) => shouldRunPass(decisions[pass]))
+  .filter((pass) => isPassAtOrAfter(pass, resumeFrom))
+  .filter((pass) => pass === resumeFrom || shouldRunPass(decisions[pass]))
   .filter((pass) => isPassEnabled(pass, ctx))
   .map(boundaryPhaseFor);
+
+const deferredShaForPass = (
+  pass: BoundaryPassName,
+  decision: PassDecision,
+  baseSha: string,
+  previous: PersistedPendingShas,
+  resumeFrom?: BoundaryPassName,
+): string | undefined => {
+  if (!isPassAtOrAfter(pass, resumeFrom)) {
+    return previous[pass];
+  }
+
+  if (pass === resumeFrom) {
+    return undefined;
+  }
+
+  return shouldDeferPass(decision) ? baseSha : previous[pass];
+};
 
 const deferredShasFor = (
   decisions: BoundaryTriageResult,
   baseSha: string,
   previous: PersistedPendingShas,
+  resumeFrom?: BoundaryPassName,
 ): PersistedPendingShas => ({
-  verify: shouldDeferPass(decisions.verify) ? baseSha : previous.verify,
-  completeness: shouldDeferPass(decisions.completeness) ? baseSha : previous.completeness,
-  review: shouldDeferPass(decisions.review) ? baseSha : previous.review,
-  gap: shouldDeferPass(decisions.gap) ? baseSha : previous.gap,
+  verify: deferredShaForPass("verify", decisions.verify, baseSha, previous, resumeFrom),
+  completeness: deferredShaForPass(
+    "completeness",
+    decisions.completeness,
+    baseSha,
+    previous,
+    resumeFrom,
+  ),
+  review: deferredShaForPass("review", decisions.review, baseSha, previous, resumeFrom),
+  gap: deferredShaForPass("gap", decisions.gap, baseSha, previous, resumeFrom),
 });
+
+const deferredBaseForSliceImplemented = (
+  pass: Exclude<BoundaryPassName, "review">,
+  decision: PassDecision,
+  baseSha: string,
+  resumeFrom?: BoundaryPassName,
+): string | undefined => {
+  if (!isPassAtOrAfter(pass, resumeFrom) || pass === resumeFrom) {
+    return undefined;
+  }
+
+  return shouldDeferPass(decision) ? baseSha : undefined;
+};
 
 const applyBoundaryPolicy = async (
   options: BoundaryPolicyOptions,
@@ -475,20 +526,34 @@ const applyBoundaryPolicy = async (
     kind: "sliceImplemented",
     sliceNumber: options.unit.sliceNumber,
     reviewBaseSha: options.reviewBaseSha,
-    pendingVerifyBaseSha: shouldDeferPass(decisions.verify) ? options.reviewBaseSha : undefined,
-    pendingCompletenessBaseSha:
-      shouldDeferPass(decisions.completeness) ? options.reviewBaseSha : undefined,
-    pendingGapBaseSha: shouldDeferPass(decisions.gap) ? options.reviewBaseSha : undefined,
+    pendingVerifyBaseSha: deferredBaseForSliceImplemented(
+      "verify",
+      decisions.verify,
+      options.reviewBaseSha,
+      options.resumeFrom,
+    ),
+    pendingCompletenessBaseSha: deferredBaseForSliceImplemented(
+      "completeness",
+      decisions.completeness,
+      options.reviewBaseSha,
+      options.resumeFrom,
+    ),
+    pendingGapBaseSha: deferredBaseForSliceImplemented(
+      "gap",
+      decisions.gap,
+      options.reviewBaseSha,
+      options.resumeFrom,
+    ),
   });
 
   await updatePolicyState(
     options.activeTier,
     ctx.state.get().currentGroupBaseSha,
-    deferredShasFor(decisions, options.reviewBaseSha, previousPending),
+    deferredShasFor(decisions, options.reviewBaseSha, previousPending, options.resumeFrom),
     ctx,
   );
 
-  const phases = runNowPhases(decisions, ctx);
+  const phases = runNowPhases(decisions, ctx, options.resumeFrom);
   if (phases.length > 0) {
     await pipelineRunner(options.unit, phases, ctx);
   }
@@ -604,7 +669,8 @@ const runSlicedGroup = async (
     }
 
     const unit = sliceUnit(slice, group.name);
-    const resume = isResumingSlice(unit, ctx);
+    const resumePhase = resumedSlicePhase(unit, ctx);
+    const resume = resumePhase !== null;
     if (!resume) {
       ctx.progress.logSliceIntro(slice);
     }
@@ -615,28 +681,44 @@ const runSlicedGroup = async (
     }
 
     const reviewBaseSha = ctx.state.get().reviewBaseSha ?? (await ctx.git.captureRef());
-    await planThenExecute(unit, ctx, false, resume);
+    const moreUnitsInGroup = group.slices.some((candidate) => candidate.number > slice.number);
 
-    if (ctx.interrupts.skipRequested() || ctx.interrupts.quitRequested()) {
-      break;
+    if (resumePhase !== null && isBoundaryPassName(resumePhase)) {
+      await applyBoundaryPolicy(
+        {
+          unit,
+          reviewBaseSha,
+          activeTier: ctx.state.get().activeTier ?? ctx.config.tier,
+          finalBoundary: false,
+          moreUnitsInGroup,
+          resumeFrom: resumePhase,
+        },
+        ctx,
+      );
+    } else {
+      await planThenExecute(unit, ctx, false, resumePhase === "tdd" || resumePhase === "plan" ? resumePhase : null);
+
+      if (ctx.interrupts.skipRequested() || ctx.interrupts.quitRequested()) {
+        break;
+      }
+
+      await commitSweep(unit.label, ctx);
+
+      if (ctx.interrupts.skipRequested() || ctx.interrupts.quitRequested()) {
+        break;
+      }
+
+      await applyBoundaryPolicy(
+        {
+          unit,
+          reviewBaseSha,
+          activeTier: ctx.state.get().activeTier ?? ctx.config.tier,
+          finalBoundary: false,
+          moreUnitsInGroup,
+        },
+        ctx,
+      );
     }
-
-    await commitSweep(unit.label, ctx);
-
-    if (ctx.interrupts.skipRequested() || ctx.interrupts.quitRequested()) {
-      break;
-    }
-
-    await applyBoundaryPolicy(
-      {
-        unit,
-        reviewBaseSha,
-        activeTier: ctx.state.get().activeTier ?? ctx.config.tier,
-        finalBoundary: false,
-        moreUnitsInGroup: group.slices.some((candidate) => candidate.number > slice.number),
-      },
-      ctx,
-    );
 
     if (ctx.interrupts.skipRequested() || ctx.interrupts.quitRequested()) {
       break;

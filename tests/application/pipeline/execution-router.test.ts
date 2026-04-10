@@ -556,6 +556,70 @@ describe("executeGroups", () => {
     expect(spawner.lastAgent("tdd").sentPrompts).toEqual([expect.stringContaining("[TDD:2]")]);
   });
 
+  it("sliced mode: reruns planning when resuming from the plan phase", async () => {
+    const { ctx, spawner, tierSelector } = createHarness({
+      state: {
+        activeTier: "small",
+        tier: "small",
+        currentPhase: "plan",
+        currentSlice: 2,
+        currentGroup: "G1",
+        lastCompletedSlice: 1,
+      },
+      config: {
+        skills: { verify: null, review: null, gap: null, completeness: null },
+      },
+    });
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "plan", planText: "accepted plan" }),
+      okResult({ assistantText: "implemented resumed plan" }),
+    );
+
+    await executeGroups([makeGroup("G1", 1, 2)], ctx);
+
+    expect(tierSelector.inputs).toEqual([]);
+    expect(spawner.agentsForRole("plan")).toHaveLength(0);
+    expect(spawner.lastAgent("tdd").sentPrompts).toEqual([
+      expect.stringContaining("[PLAN:2]"),
+      expect.stringContaining("[EXEC:2]"),
+    ]);
+  });
+
+  it("sliced mode: resumes boundary work from the persisted review phase without replaying TDD", async () => {
+    const { ctx, spawner, triager, tierSelector, persistence } = createHarness({
+      state: {
+        activeTier: "small",
+        tier: "small",
+        currentPhase: "review",
+        currentSlice: 2,
+        currentGroup: "G1",
+        lastCompletedSlice: 1,
+        reviewBaseSha: "saved-sha",
+      },
+      config: {
+        skills: { plan: null },
+      },
+    });
+    triager.queueResult({
+      completeness: "skip",
+      verify: "skip",
+      review: "skip",
+      gap: "skip",
+      reason: "resume persisted review",
+    });
+    spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
+
+    await executeGroups([makeGroup("G1", 1, 2)], ctx);
+
+    expect(tierSelector.inputs).toEqual([]);
+    expect(spawner.agentsForRole("tdd")).toHaveLength(0);
+    expect(spawner.lastAgent("review").sentPrompts).toEqual([
+      expect.stringContaining("[REVIEW] from=saved-sha"),
+    ]);
+    expect(persistence.current.lastCompletedSlice).toBe(2);
+  });
+
   it("sliced mode: asks the operator for follow-up input when execution needs it", async () => {
     const { ctx, spawner, gate, persistence } = createHarness({
       config: {
