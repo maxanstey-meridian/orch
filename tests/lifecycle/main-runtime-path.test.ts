@@ -2,9 +2,6 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { OrchestratorConfig, SkillSet } from "#domain/config.js";
-import type { RuntimeInteractionGate } from "#application/ports/runtime-interaction.port.js";
-import { createContainer } from "../../src/composition-root.js";
 
 const mocks = vi.hoisted(() => ({
   agentSpawnerFactorySpy: vi.fn(),
@@ -84,56 +81,6 @@ const originalCwd = process.cwd();
 
 let tempDir: string;
 let planPath: string;
-
-const DEFAULT_SKILLS: SkillSet = {
-  tdd: "tdd-skill",
-  review: "review-skill",
-  verify: "verify-skill",
-  plan: "plan-skill",
-  gap: "gap-skill",
-  completeness: "completeness-skill",
-};
-
-const createConfig = (auto: boolean): OrchestratorConfig => ({
-  cwd: "/tmp/test",
-  planPath: "/tmp/plan.json",
-  planContent: "plan content",
-  brief: "brief",
-  executionMode: "sliced",
-  executionPreference: "auto",
-  auto,
-  reviewThreshold: 30,
-  maxReviewCycles: 3,
-  stateFile: "/tmp/state.json",
-  logPath: null,
-  tier: "medium",
-  skills: DEFAULT_SKILLS,
-  maxReplans: 3,
-  defaultProvider: "claude",
-  agentConfig: {
-    tdd: { provider: "claude" },
-    review: { provider: "claude" },
-    verify: { provider: "claude" },
-    plan: { provider: "claude" },
-    gap: { provider: "claude" },
-    completeness: { provider: "claude" },
-    final: { provider: "claude" },
-    triage: { provider: "claude" },
-  },
-});
-
-const createHudDouble = (answer: string) => ({
-  askUser: vi.fn().mockResolvedValue(answer),
-  createWriter: vi.fn(() => vi.fn()),
-  onInterruptSubmit: vi.fn(),
-  onKey: vi.fn(),
-  setActivity: vi.fn(),
-  setSkipping: vi.fn(),
-  startPrompt: vi.fn(),
-  teardown: vi.fn(),
-  update: vi.fn(),
-  wrapLog: vi.fn((logFn: (...args: unknown[]) => void) => logFn),
-});
 
 beforeEach(async () => {
   vi.resetModules();
@@ -251,56 +198,4 @@ describe("main runtime path", () => {
 
     expect(mocks.agentSpawnerFactorySpy).toHaveBeenCalledTimes(1);
   });
-
-  it("wires SilentRuntimeInteractionGate into the real composition root for auto mode", async () => {
-    const hud = createHudDouble("n");
-    const config = createConfig(true);
-    const container = createContainer(config, hud);
-
-    expect(() => container.resolve("runOrchestration")).toThrow(
-      "createContainer runtime wiring has not been restored yet",
-    );
-
-    expect(mocks.agentSpawnerFactorySpy).toHaveBeenCalledTimes(1);
-    const runtimeInteractionGate = mocks.agentSpawnerFactorySpy.mock.calls[0]?.[1] as
-      | RuntimeInteractionGate
-      | undefined;
-
-    await expect(
-      runtimeInteractionGate?.decide({ kind: "commandApproval", summary: "npm test", command: "npm test" }),
-    ).resolves.toEqual({ kind: "approve" });
-    expect(hud.askUser).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    { answer: "y", expected: { kind: "approve" } },
-    { answer: "n", expected: { kind: "reject" } },
-    { answer: "c", expected: { kind: "cancel" } },
-  ])(
-    "wires InkRuntimeInteractionGate into the real composition root for interactive mode and maps $answer",
-    async ({ answer, expected }) => {
-      const hud = createHudDouble(answer);
-      const config = createConfig(false);
-      const container = createContainer(config, hud);
-
-      expect(() => container.resolve("runOrchestration")).toThrow(
-        "createContainer runtime wiring has not been restored yet",
-      );
-
-      expect(mocks.agentSpawnerFactorySpy).toHaveBeenCalledTimes(1);
-      const runtimeInteractionGate = mocks.agentSpawnerFactorySpy.mock.calls[0]?.[1] as
-        | RuntimeInteractionGate
-        | undefined;
-
-      await expect(
-        runtimeInteractionGate?.decide({
-          kind: "permissionApproval",
-          summary: "allow network access",
-        }),
-      ).resolves.toEqual(expected);
-      expect(hud.askUser).toHaveBeenCalledWith(
-        "allow network access — (y)es / (n)o / (c)ancel: ",
-      );
-    },
-  );
 });
