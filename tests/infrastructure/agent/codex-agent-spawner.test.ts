@@ -379,6 +379,25 @@ describe("CodexAgentSpawner", () => {
     expect(onText).toHaveBeenCalledWith("Hello world.");
   });
 
+  it("trims synthetic leading whitespace after a sentence-boundary flush", async () => {
+    fake = createFakeAppServer();
+    const gate = new FakeRuntimeInteractionGate();
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, () => fake!.proc, gate);
+    const handle = spawner.spawn("tdd");
+    const onText = vi.fn();
+
+    fake.setTurnScript([
+      { kind: "textDelta", text: "First sentence." },
+      { kind: "textDelta", text: " Second sentence." },
+      { kind: "turnCompleted", resultText: "" },
+    ]);
+
+    await handle.send("go", onText);
+
+    expect(onText).toHaveBeenNthCalledWith(1, "First sentence.");
+    expect(onText).toHaveBeenNthCalledWith(2, "Second sentence.");
+  });
+
   it("queues pending guidance and prepends it to the next turn prompt", async () => {
     fake = createFakeAppServer();
     const gate = new FakeRuntimeInteractionGate();
@@ -450,6 +469,36 @@ describe("CodexAgentSpawner", () => {
       needsInput: false,
       sessionId: handle.sessionId,
     });
+  });
+
+  it("sendQuiet rejects when the process dies before the turn completes", async () => {
+    fake = createFakeAppServer();
+    fake.hangOnTurn();
+    const gate = new FakeRuntimeInteractionGate();
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, () => fake!.proc, gate);
+    const handle = spawner.spawn("tdd");
+
+    await tick();
+
+    const resultPromise = handle.sendQuiet("rules reminder");
+    await tick();
+    fake.stdout.push(null);
+
+    await expect(resultPromise).rejects.toThrow(/process exited/i);
+  });
+
+  it("sendQuiet rejects when the turn reports a failure", async () => {
+    fake = createFakeAppServer();
+    const gate = new FakeRuntimeInteractionGate();
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, () => fake!.proc, gate);
+    const handle = spawner.spawn("tdd");
+
+    fake.setTurnScript([
+      { kind: "turnFailed", message: "rules reminder failed" },
+      { kind: "turnCompleted", resultText: "" },
+    ]);
+
+    await expect(handle.sendQuiet("rules reminder")).rejects.toThrow("rules reminder failed");
   });
 
   it("satisfies the AgentSpawner port surface", () => {

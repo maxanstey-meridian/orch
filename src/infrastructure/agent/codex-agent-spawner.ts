@@ -17,21 +17,34 @@ type ProcessFactory = () => ChildProcess;
 
 const createTextBuffer = (flush: (text: string) => void) => {
   let buffer = "";
+  let trimLeadingWhitespaceOnNextPush = false;
 
   return {
-    push: (text: string) => {
+    push: (incomingText: string) => {
+      let text = incomingText;
+
+      if (trimLeadingWhitespaceOnNextPush) {
+        if (/^[ \t]+$/.test(text)) {
+          return;
+        }
+        text = text.replace(/^[ \t]+/, "");
+        trimLeadingWhitespaceOnNextPush = false;
+      }
+
       buffer += text;
       if (buffer.includes("\n")) {
         const lastNewline = buffer.lastIndexOf("\n");
         const chunk = buffer.slice(0, lastNewline + 1).replace(/\n{3,}/g, "\n\n");
         flush(chunk);
         buffer = buffer.slice(lastNewline + 1);
+        trimLeadingWhitespaceOnNextPush = false;
         return;
       }
 
       if (SENTENCE_END.test(buffer)) {
         flush(buffer);
         buffer = "";
+        trimLeadingWhitespaceOnNextPush = true;
       }
     },
     flush: () => {
@@ -202,25 +215,33 @@ export class CodexAgentSpawner extends AgentSpawner {
         }
       },
       sendQuiet: async (prompt) => {
-        try {
-          await ready;
+        await ready;
 
-          let effectivePrompt = prompt;
-          if (pendingGuidance.length > 0) {
-            const guidance = pendingGuidance.splice(0).join("\n");
-            effectivePrompt =
-              `[Prior operator guidance - incorporate before proceeding]\n${guidance}` +
-              `\n[End prior guidance]\n\n${prompt}`;
-          }
-
-          return await client.startTurn(effectivePrompt, (event) => {
-            if (event.kind === "approvalRequested") {
-              handleApprovalEvent(event.request);
-            }
-          });
-        } catch {
-          return "";
+        let effectivePrompt = prompt;
+        if (pendingGuidance.length > 0) {
+          const guidance = pendingGuidance.splice(0).join("\n");
+          effectivePrompt =
+            `[Prior operator guidance - incorporate before proceeding]\n${guidance}` +
+            `\n[End prior guidance]\n\n${prompt}`;
         }
+
+        let turnFailure: string | null = null;
+
+        const resultText = await client.startTurn(effectivePrompt, (event) => {
+          if (event.kind === "approvalRequested") {
+            handleApprovalEvent(event.request);
+            return;
+          }
+          if (event.kind === "turnFailed") {
+            turnFailure = event.message;
+          }
+        });
+
+        if (turnFailure !== null) {
+          throw new Error(turnFailure);
+        }
+
+        return resultText;
       },
       inject: (message) => {
         if (client.currentTurnId) {
