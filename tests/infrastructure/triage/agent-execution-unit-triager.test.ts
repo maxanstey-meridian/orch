@@ -121,5 +121,6 @@ describe("AgentExecutionUnitTriager", () => {
     const triager = new AgentExecutionUnitTriager(spawner, createConfig());
 
     await expect(triager.decide(triageInput)).resolves.toEqual(FULL_TRIAGE);
+    expect(spawner.lastAgent("triage").alive).toBe(false);
   });
 });

@@ -26,15 +26,17 @@ export class AgentExecutionUnitTriager extends ExecutionUnitTriager {
       };
     }
 
+    const agent = this.agents.spawn("triage", { cwd: this.config.cwd });
+
     try {
-      const agent = this.agents.spawn("triage", { cwd: this.config.cwd });
       const result = await agent.send(buildTriagePrompt(input));
-      agent.kill();
       const triageText =
         result.assistantText.trim().length > 0 ? result.assistantText : result.resultText;
       return parseTriageResult(triageText);
     } catch {
       return FULL_TRIAGE;
+    } finally {
+      agent.kill();
     }
   }
 }

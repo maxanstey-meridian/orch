@@ -102,5 +102,6 @@ describe("AgentExecutionUnitTierSelector", () => {
     const selector = new AgentExecutionUnitTierSelector(spawner, createConfig());
 
     await expect(selector.select(tierInput)).resolves.toEqual(COMPLEXITY_TRIAGE_FALLBACK);
+    expect(spawner.lastAgent("triage").alive).toBe(false);
   });
 });

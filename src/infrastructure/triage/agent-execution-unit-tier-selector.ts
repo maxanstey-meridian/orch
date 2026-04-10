@@ -26,15 +26,17 @@ export class AgentExecutionUnitTierSelector extends ExecutionUnitTierSelector {
       };
     }
 
+    const agent = this.agents.spawn("triage", { cwd: this.config.cwd });
+
     try {
-      const agent = this.agents.spawn("triage", { cwd: this.config.cwd });
       const result = await agent.send(buildComplexityTriagePrompt(input.content));
-      agent.kill();
       const triageText =
         result.assistantText.trim().length > 0 ? result.assistantText : result.resultText;
       return parseComplexityTriageResult(triageText);
     } catch {
       return COMPLEXITY_TRIAGE_FALLBACK;
+    } finally {
+      agent.kill();
     }
   }
 }
