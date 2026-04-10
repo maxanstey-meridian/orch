@@ -98,6 +98,16 @@ describe("AgentPool", () => {
     expect(spawner.agentsForRole("tdd")).toHaveLength(1);
   });
 
+  it("ensure does not send rules reminders for first-time tdd or review spawns", async () => {
+    const { pool, spawner } = createPool();
+
+    await pool.ensure("tdd");
+    await pool.ensure("review");
+
+    expect(spawner.lastAgent("tdd").quietPrompts).toEqual([]);
+    expect(spawner.lastAgent("review").quietPrompts).toEqual([]);
+  });
+
   it("ensure spawns new if previous killed externally", async () => {
     const { pool, spawner } = createPool();
 
@@ -117,6 +127,15 @@ describe("AgentPool", () => {
     await pool.ensure("tdd");
 
     expect(spawner.agentsForRole("tdd")).toHaveLength(2);
+  });
+
+  it("kill clears the persisted session for respawnable roles", async () => {
+    const { pool } = createPool();
+
+    await pool.ensure("tdd");
+    pool.kill("tdd");
+
+    expect(pool.sessionFor("tdd")).toBeUndefined();
   });
 
   it("killGroupScoped kills verify and gap only", async () => {
@@ -183,6 +202,31 @@ describe("AgentPool", () => {
     expect(first.alive).toBe(false);
     expect(second).not.toBe(first);
     expect(spawner.agentsForRole("review")).toHaveLength(2);
+    expect(spawner.lastAgent("review").quietPrompts).toEqual(["[RULES:review]"]);
+  });
+
+  it("respawnAll refreshes every pooled role and leaves ephemeral roles detached", async () => {
+    const { pool, spawner } = createPool();
+
+    const firstTdd = await pool.ensure("tdd");
+    const firstReview = await pool.ensure("review");
+    const firstVerify = await pool.ensure("verify");
+    const firstGap = await pool.ensure("gap");
+    const firstCompleteness = await pool.ensure("completeness");
+
+    await pool.respawnAll();
+
+    expect(firstTdd.alive).toBe(false);
+    expect(firstReview.alive).toBe(false);
+    expect(firstVerify.alive).toBe(false);
+    expect(firstGap.alive).toBe(false);
+    expect(firstCompleteness.alive).toBe(true);
+    expect(spawner.agentsForRole("tdd")).toHaveLength(2);
+    expect(spawner.agentsForRole("review")).toHaveLength(2);
+    expect(spawner.agentsForRole("verify")).toHaveLength(2);
+    expect(spawner.agentsForRole("gap")).toHaveLength(2);
+    expect(spawner.agentsForRole("completeness")).toHaveLength(1);
+    expect(spawner.lastAgent("tdd").quietPrompts).toEqual(["[RULES:tdd]"]);
     expect(spawner.lastAgent("review").quietPrompts).toEqual(["[RULES:review]"]);
   });
 

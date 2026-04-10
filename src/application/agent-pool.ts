@@ -94,12 +94,6 @@ export class AgentPool {
     this.persistSession(role, handle);
     this.firstFlags.set(role, persistedSession === undefined);
 
-    if (role === "tdd" || role === "review") {
-      if (persistedSession === undefined) {
-        await handle.sendQuiet(this.rulesReminder(role));
-      }
-    }
-
     return handle;
   }
 
