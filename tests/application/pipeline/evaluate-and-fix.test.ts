@@ -206,6 +206,7 @@ const useSlowAgentClock = (calls = 40): void => {
 
 const makePhase = (): PhaseHandler => ({
   name: "review",
+  persistedPhase: "review",
   agent: "review",
   prompt: () => "[REVIEW]",
   isClean: (result) => result.assistantText.includes("clean"),

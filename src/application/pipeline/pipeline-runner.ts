@@ -3,25 +3,8 @@ import type { ExecutionUnit } from "#application/execution-unit.js";
 import type { PipelineContext } from "#application/pipeline-context.js";
 import { withRetry } from "#application/with-retry.js";
 import type { AgentResult, AgentRole } from "#domain/agent-types.js";
-import { IncompleteRunError } from "#domain/errors.js";
-import type { PersistedPhase } from "#domain/state.js";
 import { evaluateAndFix } from "./evaluate-and-fix.js";
 import type { PhaseHandler } from "./phase-handler.js";
-
-const toPersistedPhase = (name: string): PersistedPhase | null => {
-  switch (name) {
-    case "tdd":
-    case "review":
-    case "verify":
-    case "completeness":
-    case "gap":
-    case "final":
-    case "plan":
-      return name;
-    default:
-      return null;
-  }
-};
 
 const sendWithRetry = async (
   role: AgentRole,
@@ -60,11 +43,6 @@ export const pipelineRunner = async (
       break;
     }
 
-    const persistedPhase = toPersistedPhase(phase.name);
-    if (persistedPhase === null) {
-      throw new IncompleteRunError(`Cannot persist unknown phase "${phase.name}"`);
-    }
-
     ctx.progress.logBadge(phase.agent, phase.name);
     ctx.progress.setActivity(phase.name);
 
@@ -79,7 +57,7 @@ export const pipelineRunner = async (
 
     await ctx.state.advance({
       kind: "phaseEntered",
-      phase: persistedPhase,
+      phase: phase.persistedPhase,
       sliceNumber: unit.sliceNumber,
     });
     ctx.log.write(phase.agent, result.assistantText);

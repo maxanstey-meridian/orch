@@ -5,6 +5,7 @@ import { createInterruptState } from "#application/interrupt-state.js";
 import { createPipelineContext } from "#application/pipeline-context.js";
 import { ExecutionUnitTierSelector } from "#application/ports/execution-unit-tier-selector.port.js";
 import { ExecutionUnitTriager } from "#application/ports/execution-unit-triager.port.js";
+import { RunOrchestration } from "#application/run-orchestration.js";
 import {
   OperatorGate,
   type CreditDecision,
@@ -214,9 +215,27 @@ describe("pipelineRunner", () => {
     const { spawner, ctx } = createHarness();
     const unit = sliceUnit(makeSlice(1), "Core");
     const phases: readonly PhaseHandler[] = [
-      { name: "review", agent: "review", prompt: () => "phase-1", isClean: () => true },
-      { name: "verify", agent: "verify", prompt: () => "phase-2", isClean: () => true },
-      { name: "gap", agent: "gap", prompt: () => "phase-3", isClean: () => true },
+      {
+        name: "review",
+        persistedPhase: "review",
+        agent: "review",
+        prompt: () => "phase-1",
+        isClean: () => true,
+      },
+      {
+        name: "verify",
+        persistedPhase: "verify",
+        agent: "verify",
+        prompt: () => "phase-2",
+        isClean: () => true,
+      },
+      {
+        name: "gap",
+        persistedPhase: "gap",
+        agent: "gap",
+        prompt: () => "phase-3",
+        isClean: () => true,
+      },
     ];
     spawner.onNextSpawn("review", okResult({ assistantText: "clean 1" }));
     spawner.onNextSpawn("verify", okResult({ assistantText: "clean 2" }));
@@ -239,6 +258,7 @@ describe("pipelineRunner", () => {
     const phases: readonly PhaseHandler[] = [
       {
         name: "review",
+        persistedPhase: "review",
         agent: "review",
         prompt: (_unit, promptCtx) => {
           promptCtx.interrupts.toggleSkip();
@@ -260,7 +280,13 @@ describe("pipelineRunner", () => {
     const { spawner, interrupts, ctx } = createHarness();
     const unit = sliceUnit(makeSlice(1), "Core");
     const phases: readonly PhaseHandler[] = [
-      { name: "review", agent: "review", prompt: () => "phase-1", isClean: () => true },
+      {
+        name: "review",
+        persistedPhase: "review",
+        agent: "review",
+        prompt: () => "phase-1",
+        isClean: () => true,
+      },
     ];
     interrupts.requestQuit();
 
@@ -275,6 +301,7 @@ describe("pipelineRunner", () => {
     const unit = sliceUnit(makeSlice(1), "Core");
     const phase: PhaseHandler = {
       name: "review",
+      persistedPhase: "review",
       agent: "review",
       prompt: () => "[REVIEW]",
       isClean: (result) => result.assistantText.includes("clean"),
@@ -299,6 +326,7 @@ describe("pipelineRunner", () => {
     const unit = sliceUnit(makeSlice(1), "Core");
     const phase: PhaseHandler = {
       name: "review",
+      persistedPhase: "review",
       agent: "review",
       prompt: () => "[REVIEW]",
       isClean: () => true,
@@ -317,6 +345,7 @@ describe("pipelineRunner", () => {
     const unit = sliceUnit(makeSlice(1), "Core");
     const phase: PhaseHandler = {
       name: "review",
+      persistedPhase: "review",
       agent: "review",
       prompt: () => "[REVIEW]",
       isClean: () => false,
@@ -333,8 +362,20 @@ describe("pipelineRunner", () => {
     const { spawner, persistence, ctx } = createHarness();
     const unit = sliceUnit(makeSlice(1), "Core");
     const phases: readonly PhaseHandler[] = [
-      { name: "review", agent: "review", prompt: () => "phase-1", isClean: () => true },
-      { name: "verify", agent: "verify", prompt: () => "phase-2", isClean: () => true },
+      {
+        name: "review pass",
+        persistedPhase: "review",
+        agent: "review",
+        prompt: () => "phase-1",
+        isClean: () => true,
+      },
+      {
+        name: "verify pass",
+        persistedPhase: "verify",
+        agent: "verify",
+        prompt: () => "phase-2",
+        isClean: () => true,
+      },
     ];
     spawner.onNextSpawn("review", okResult({ assistantText: "clean 1" }));
     spawner.onNextSpawn("verify", okResult({ assistantText: "clean 2" }));
@@ -342,5 +383,35 @@ describe("pipelineRunner", () => {
     await pipelineRunner(unit, phases, ctx);
 
     expect(persistence.saveHistory.map((state) => state.currentPhase)).toEqual(["review", "verify"]);
+  });
+
+  it("RunOrchestration uses pipelineRunner from production code", async () => {
+    useSlowAgentClock();
+    const { spawner, persistence, gate, git, prompts, progress, log } = createHarness();
+    const uc = new RunOrchestration(
+      spawner,
+      persistence,
+      gate,
+      git,
+      prompts,
+      DEFAULT_CONFIG,
+      progress,
+      log,
+      new FakeRolePromptResolver(),
+      new TestExecutionUnitTierSelector(),
+      new TestExecutionUnitTriager(),
+    );
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented" }));
+    spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
+
+    await uc.execute([
+      {
+        name: "Core",
+        slices: [makeSlice(1)],
+      },
+    ]);
+
+    expect(spawner.agentsForRole("tdd")).toHaveLength(1);
+    expect(spawner.agentsForRole("review")).toHaveLength(1);
   });
 });
