@@ -462,6 +462,45 @@ describe("executeGroups", () => {
     expect(spawner.lastAgent("verify").sentPrompts[0]).not.toContain("[VERIFY:1]");
   });
 
+  it("boundary policy: flushes deferred completeness, review, and gap with their stored base SHA", async () => {
+    const { ctx, spawner, triager, git } = createHarness({
+      config: {
+        skills: { plan: null, verify: null },
+      },
+    });
+    git.setHasChanges(true);
+    let captureCount = 0;
+    git.onCaptureRef = () => {
+      captureCount += 1;
+      if (captureCount === 2) {
+        git.advanceSha();
+      }
+    };
+    triager.queueResult({
+      completeness: "defer",
+      verify: "skip",
+      review: "defer",
+      gap: "defer",
+      reason: "flush deferred passes at group end",
+    });
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented" }));
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "GROUP_COMPLETE" }));
+    spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
+    spawner.onNextSpawn("gap", okResult({ exitCode: 0, assistantText: "NO_GAPS_FOUND" }));
+
+    await executeGroups([makeGroup("Core", 1)], ctx);
+
+    expect(spawner.agentsForRole("completeness")).toHaveLength(1);
+    expect(spawner.lastAgent("completeness").sentPrompts[0]).toContain("[GROUP_COMPLETENESS:Core]");
+    expect(spawner.lastAgent("completeness").sentPrompts[0]).toContain("from=sha-1");
+
+    expect(spawner.agentsForRole("review")).toHaveLength(1);
+    expect(spawner.lastAgent("review").sentPrompts[0]).toContain("[REVIEW] from=sha-1");
+
+    expect(spawner.agentsForRole("gap")).toHaveLength(1);
+    expect(spawner.lastAgent("gap").sentPrompts[0]).toContain("[BRIEF] [GAP] from=sha-1");
+  });
+
   it("boundary policy: skips verify when triage says skip", async () => {
     const { ctx, spawner, triager } = createHarness({
       config: {

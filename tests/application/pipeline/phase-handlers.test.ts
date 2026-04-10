@@ -261,6 +261,31 @@ describe("phase handlers", () => {
     expect(completenessPhase.isClean(okResult({ assistantText: "DIRECT_COMPLETE" }))).toBe(true);
   });
 
+  it.fails("completeness isClean: only accepts the unit-specific completion sentinel", () => {
+    const direct = directUnit("request content", 4);
+    const group = groupedUnit(makeGroup());
+    const slice = sliceUnit(makeSlice(4), "Core");
+    const isCleanFor = (unit: typeof direct | typeof group | typeof slice, assistantText: string) =>
+      (
+        completenessPhase.isClean as unknown as (
+          result: AgentResult,
+          executionUnit?: typeof unit,
+        ) => boolean
+      )(okResult({ assistantText }), unit);
+
+    expect(isCleanFor(direct, "DIRECT_COMPLETE")).toBe(true);
+    expect(isCleanFor(direct, "GROUP_COMPLETE")).toBe(false);
+    expect(isCleanFor(direct, "SLICE_COMPLETE")).toBe(false);
+
+    expect(isCleanFor(group, "GROUP_COMPLETE")).toBe(true);
+    expect(isCleanFor(group, "DIRECT_COMPLETE")).toBe(false);
+    expect(isCleanFor(group, "SLICE_COMPLETE")).toBe(false);
+
+    expect(isCleanFor(slice, "SLICE_COMPLETE")).toBe(true);
+    expect(isCleanFor(slice, "DIRECT_COMPLETE")).toBe(false);
+    expect(isCleanFor(slice, "GROUP_COMPLETE")).toBe(false);
+  });
+
   it("verify isClean: true when PASS status", () => {
     expect(verifyPhase.isClean(okResult({ assistantText: verifyJson("PASS") }))).toBe(true);
   });
