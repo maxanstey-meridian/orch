@@ -28,7 +28,7 @@ import {
 import { parsePlan } from "#infrastructure/plan/plan-parser.js";
 import { defaultRegistryPath, registerRun, withRegistryLock } from "#infrastructure/registry/run-registry.js";
 import { loadState, statePathForPlan } from "#infrastructure/state/state.js";
-import { buildSkillOverrides, loadTieredSkills } from "#infrastructure/skill-loader.js";
+import { buildSkillOverrides, loadTieredSkills } from "#infrastructure/prompts/skill-loader.js";
 import { formatPlanSummary, printStartupBanner } from "#ui/display.js";
 import { createHud } from "#ui/hud.js";
 import { createContainer } from "./composition-root.js";

@@ -63,7 +63,7 @@ vi.mock("#infrastructure/plan/plan-parser.js", () => ({
   parsePlan: mocks.parsePlan,
 }));
 
-vi.mock("#infrastructure/skill-loader.js", () => ({
+vi.mock("#infrastructure/prompts/skill-loader.js", () => ({
   buildSkillOverrides: mocks.buildSkillOverrides,
   loadTieredSkills: mocks.loadTieredSkills,
 }));

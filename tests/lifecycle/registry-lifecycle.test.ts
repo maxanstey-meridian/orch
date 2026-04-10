@@ -54,7 +54,7 @@ vi.mock("#infrastructure/complexity-triage.js", () => ({
   parseComplexityTriageResult: vi.fn(() => ({ tier: "medium", reason: "test" })),
 }));
 
-vi.mock("#infrastructure/skill-loader.js", () => ({
+vi.mock("#infrastructure/prompts/skill-loader.js", () => ({
   buildSkillOverrides: mocks.buildSkillOverrides,
   loadTieredSkills: mocks.loadTieredSkills,
 }));
