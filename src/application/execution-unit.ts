@@ -1,8 +1,7 @@
-import type { ExecutionUnitKind } from "./ports/execution-unit-triager.port.js";
 import { buildContent, type Group, type Slice } from "#domain/plan.js";
 
 export type ExecutionUnit = {
-  readonly kind: ExecutionUnitKind;
+  readonly kind: "slice" | "group" | "direct";
   readonly label: string;
   readonly content: string;
   readonly sliceNumber: number;
