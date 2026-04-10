@@ -174,6 +174,18 @@ describe("AgentPool", () => {
     expect(spawner.lastAgent("tdd").quietPrompts).toEqual(["[RULES:tdd]"]);
   });
 
+  it("respawn sends rules reminder for review", async () => {
+    const { pool, spawner } = createPool();
+
+    const first = await pool.ensure("review");
+    const second = await pool.respawn("review");
+
+    expect(first.alive).toBe(false);
+    expect(second).not.toBe(first);
+    expect(spawner.agentsForRole("review")).toHaveLength(2);
+    expect(spawner.lastAgent("review").quietPrompts).toEqual(["[RULES:review]"]);
+  });
+
   it("sessionFor returns provider and id", async () => {
     const { pool, config } = createPool();
 
@@ -227,6 +239,47 @@ describe("AgentPool", () => {
 
     expect(spawner.spawned[0]?.opts?.resumeSessionId).toBeUndefined();
   });
+
+  it.each([
+    { role: "verify" as const, persistedId: "verify-123" },
+    { role: "gap" as const, persistedId: "gap-123" },
+  ])(
+    "reuses and refreshes the persisted %s session across ensure and respawn",
+    async ({ role, persistedId }) => {
+      const { pool, spawner, stateAccessor, config } = createPool({
+        state:
+          role === "verify"
+            ? { verifySession: { provider: configProvider("verify"), id: persistedId } }
+            : { gapSession: { provider: configProvider("gap"), id: persistedId } },
+      });
+
+      function configProvider(currentRole: "verify" | "gap") {
+        return DEFAULT_CONFIG.agentConfig[currentRole].provider;
+      }
+
+      const first = await pool.ensure(role);
+      const persistedAfterEnsure =
+        role === "verify" ? stateAccessor.state.verifySession : stateAccessor.state.gapSession;
+
+      expect(spawner.spawned[0]?.opts?.resumeSessionId).toBe(persistedId);
+      expect(persistedAfterEnsure).toEqual({
+        provider: config.agentConfig[role].provider,
+        id: first.sessionId,
+      });
+
+      const second = await pool.respawn(role);
+      const persistedAfterRespawn =
+        role === "verify" ? stateAccessor.state.verifySession : stateAccessor.state.gapSession;
+
+      expect(first.alive).toBe(false);
+      expect(second).not.toBe(first);
+      expect(spawner.spawned[1]?.opts?.resumeSessionId).toBe(first.sessionId);
+      expect(persistedAfterRespawn).toEqual({
+        provider: config.agentConfig[role].provider,
+        id: second.sessionId,
+      });
+    },
+  );
 
   it("resets first-message state on respawn", async () => {
     const { pool } = createPool();
