@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AgentSpawner } from "#application/ports/agent-spawner.port.js";
+import { AgentSpawner, type AgentHandle } from "#application/ports/agent-spawner.port.js";
 import {
   RuntimeInteractionGate,
   type RuntimeInteractionDecision,
@@ -454,7 +454,7 @@ describe("CodexAgentSpawner", () => {
 
   it("satisfies the AgentSpawner port surface", () => {
     class TestSpawner extends AgentSpawner {
-      spawn() {
+      override spawn(): AgentHandle {
         throw new Error("not used");
       }
     }

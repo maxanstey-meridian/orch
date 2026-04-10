@@ -145,8 +145,9 @@ const readTurnId = (raw: unknown): string => {
     return (turn as Record<string, unknown>).id;
   }
 
-  if (typeof result?.turnId === "string") {
-    return result.turnId;
+  const turnId = result?.turnId;
+  if (typeof turnId === "string") {
+    return turnId;
   }
 
   throw new Error("turn/start response missing turn id");
