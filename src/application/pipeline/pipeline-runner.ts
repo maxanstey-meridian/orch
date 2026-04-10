@@ -3,6 +3,7 @@ import type { ExecutionUnit } from "#application/execution-unit.js";
 import type { PipelineContext } from "#application/pipeline-context.js";
 import { withRetry } from "#application/with-retry.js";
 import type { AgentResult, AgentRole } from "#domain/agent-types.js";
+import { IncompleteRunError } from "#domain/errors.js";
 import { evaluateAndFix } from "./evaluate-and-fix.js";
 import type { PhaseHandler } from "./phase-handler.js";
 
@@ -49,6 +50,11 @@ export const pipelineRunner = async (
 
     ctx.progress.logBadge(phase.agent, phase.name);
     ctx.progress.setActivity(phase.name);
+    await ctx.state.advance({
+      kind: "phaseEntered",
+      phase: phase.persistedPhase,
+      sliceNumber: unit.sliceNumber,
+    });
 
     const prompt = phase.prompt(unit, ctx);
     const result = await sendWithRetry(
@@ -58,12 +64,6 @@ export const pipelineRunner = async (
       ctx,
       ctx.progress.createStreamer(phase.agent),
     );
-
-    await ctx.state.advance({
-      kind: "phaseEntered",
-      phase: phase.persistedPhase,
-      sliceNumber: unit.sliceNumber,
-    });
     ctx.log.write(phase.agent, result.assistantText);
 
     if (ctx.interrupts.skipRequested() || ctx.interrupts.quitRequested()) {
@@ -80,15 +80,25 @@ export const pipelineRunner = async (
         continue;
       }
 
-      await evaluateAndFix({
-        evaluatorResult: result,
-        fixPromptBuilder: phase.fixPrompt,
-        isClean: phase.isClean,
-        maxCycles: Math.min(phase.maxCycles ?? ctx.config.maxReviewCycles, ctx.config.maxReviewCycles),
-        unit,
-        ctx,
-        phase,
-      });
+      try {
+        await evaluateAndFix({
+          evaluatorResult: result,
+          fixPromptBuilder: phase.fixPrompt,
+          isClean: phase.isClean,
+          maxCycles: Math.min(
+            phase.maxCycles ?? ctx.config.maxReviewCycles,
+            ctx.config.maxReviewCycles,
+          ),
+          unit,
+          ctx,
+          phase,
+        });
+      } catch (error) {
+        if (phase.name === "review" && error instanceof IncompleteRunError) {
+          continue;
+        }
+        throw error;
+      }
     }
   }
 };

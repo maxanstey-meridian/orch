@@ -82,7 +82,13 @@ const commitSweep = async (unit: ExecutionUnit, ctx: PipelineContext): Promise<v
 };
 
 const buildTddFixPrompt = (unit: ExecutionUnit, findings: string, ctx: PipelineContext): string =>
-  ctx.prompts.tdd(unit.content, findings, unit.sliceNumber);
+  unit.kind === "direct"
+    ? ctx.prompts.tdd(
+        `Current direct request\n${unit.slices.map((slice) => slice.content).join("\n\n---\n\n")}`,
+        findings,
+        unit.sliceNumber,
+      )
+    : ctx.prompts.tdd(unit.content, findings, unit.sliceNumber);
 
 const buildVerifyFixFindings = (findings: string): string => {
   const parsed = parseVerifyResult(findings);
@@ -150,6 +156,7 @@ const verifyEvaluate: PhaseEvaluate = async (unit, result, ctx, phase) => {
   const maxCycles = Math.min(phase.maxCycles ?? ctx.config.maxReviewCycles, ctx.config.maxReviewCycles);
   let findings = result.assistantText;
   let parsed = parseVerifyResult(findings);
+  const failureMessage = (summary: string): string => `${unit.label} verification failed: ${summary}`;
 
   for (let cycle = 0; cycle < maxCycles; cycle++) {
     if (ctx.interrupts.skipRequested() || ctx.interrupts.quitRequested()) {
@@ -159,17 +166,22 @@ const verifyEvaluate: PhaseEvaluate = async (unit, result, ctx, phase) => {
     const builderFixable = parsed.retryable && parsed.sliceLocalFailures.length > 0;
     if (!builderFixable) {
       if (ctx.config.auto) {
-        throw new IncompleteRunError(`Verify failed for ${unit.label}: ${parsed.summary}`);
+        throw new IncompleteRunError(failureMessage(parsed.summary));
       }
 
       const decision = await ctx.gate.verifyFailed(unit.label, parsed.summary, parsed.retryable);
       if (decision.kind === "skip") {
-        return;
+        throw new IncompleteRunError(failureMessage(parsed.summary));
       }
       if (decision.kind === "stop") {
-        throw new IncompleteRunError(`Verify failed for ${unit.label}: ${parsed.summary}`);
+        throw new IncompleteRunError(failureMessage(parsed.summary));
       }
 
+      await ctx.state.advance({
+        kind: "phaseEntered",
+        phase: phase.persistedPhase,
+        sliceNumber: unit.sliceNumber,
+      });
       const retried = await sendWithRetry(
         "verify",
         buildVerifyPrompt(unit, ctx),
@@ -193,6 +205,11 @@ const verifyEvaluate: PhaseEvaluate = async (unit, result, ctx, phase) => {
     }
 
     const preFixSha = await ctx.git.captureRef();
+    await ctx.state.advance({
+      kind: "phaseEntered",
+      phase: "tdd",
+      sliceNumber: unit.sliceNumber,
+    });
     await sendWithRetry("tdd", fixPrompt, `${phase.name} fix`, ctx);
 
     if (ctx.interrupts.skipRequested() || ctx.interrupts.quitRequested()) {
@@ -200,7 +217,40 @@ const verifyEvaluate: PhaseEvaluate = async (unit, result, ctx, phase) => {
     }
 
     if (!(await ctx.git.hasChanges(preFixSha))) {
-      break;
+      if (ctx.config.auto) {
+        throw new IncompleteRunError(
+          `${unit.label} verification failed without builder changes: ${parsed.summary}`,
+        );
+      }
+
+      const decision = await ctx.gate.verifyFailed(unit.label, parsed.summary, true);
+      if (decision.kind === "skip") {
+        throw new IncompleteRunError(failureMessage(parsed.summary));
+      }
+      if (decision.kind === "stop") {
+        throw new IncompleteRunError(failureMessage(parsed.summary));
+      }
+
+      await ctx.state.advance({
+        kind: "phaseEntered",
+        phase: phase.persistedPhase,
+        sliceNumber: unit.sliceNumber,
+      });
+      const retried = await sendWithRetry(
+        "verify",
+        buildVerifyPrompt(unit, ctx),
+        `${phase.name} retry`,
+        ctx,
+        ctx.progress.createStreamer("verify"),
+      );
+
+      if (phase.isClean(retried, unit)) {
+        return;
+      }
+
+      findings = retried.assistantText;
+      parsed = parseVerifyResult(findings);
+      continue;
     }
 
     await commitSweep(unit, ctx);
@@ -210,6 +260,11 @@ const verifyEvaluate: PhaseEvaluate = async (unit, result, ctx, phase) => {
     }
 
     const fixSummary = parsed.sliceLocalFailures.join("\n");
+    await ctx.state.advance({
+      kind: "phaseEntered",
+      phase: phase.persistedPhase,
+      sliceNumber: unit.sliceNumber,
+    });
     const reverified = await sendWithRetry(
       "verify",
       buildVerifyPrompt(unit, ctx, fixSummary),
@@ -226,9 +281,7 @@ const verifyEvaluate: PhaseEvaluate = async (unit, result, ctx, phase) => {
     parsed = parseVerifyResult(findings);
   }
 
-  throw new IncompleteRunError(
-    `Unable to clean ${phase.name} findings for ${unit.label} after ${maxCycles} cycle(s)`,
-  );
+  throw new IncompleteRunError(failureMessage(parsed.summary));
 };
 
 export const planPhase = {

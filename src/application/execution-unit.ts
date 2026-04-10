@@ -37,11 +37,12 @@ export const groupedUnit = (group: Group): ExecutionUnit => {
 export const directUnit = (
   requestContent: string,
   representativeSliceNumber: number,
+  slices: readonly Slice[] = [],
 ): ExecutionUnit => ({
   kind: "direct",
   label: "Direct request",
   content: requestContent,
   sliceNumber: representativeSliceNumber,
-  slices: [],
+  slices,
   groupName: "Direct",
 });

@@ -97,6 +97,21 @@ export class AgentPool {
     return handle;
   }
 
+  async prewarmLongLived(): Promise<void> {
+    await this.ensure("tdd");
+    await this.ensure("review");
+  }
+
+  inject(role: RespawnableRole, message: string): boolean {
+    const handle = this.handles.get(role);
+    if (!handle || !handle.alive) {
+      return false;
+    }
+
+    handle.inject(message);
+    return true;
+  }
+
   kill(role: AgentRole): void {
     const handle = this.handles.get(role);
     if (!handle) {

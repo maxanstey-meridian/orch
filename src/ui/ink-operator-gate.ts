@@ -176,9 +176,12 @@ export class InkProgressSink implements ProgressSink {
       if (normalized === "i") {
         this.hud.startPrompt("interrupt");
       }
-      if (normalized === "s" && skipCallback?.()) {
-        this.skipping = !this.skipping;
-        this.hud.setSkipping(this.skipping);
+      if (normalized === "s" && skipCallback) {
+        const nextSkipping = skipCallback();
+        if (nextSkipping || this.skipping) {
+          this.skipping = nextSkipping;
+          this.hud.setSkipping(this.skipping);
+        }
       }
       if (normalized === "q") {
         quitCallback?.();

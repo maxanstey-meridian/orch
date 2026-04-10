@@ -59,12 +59,46 @@ export class RunOrchestration {
     this.logWriter.write("ORCH", text);
   }
 
+  private bootstrapState(state: OrchestratorState): OrchestratorState {
+    const normalized: OrchestratorState = {
+      ...state,
+      executionMode: this.config.executionMode,
+      tier: state.tier ?? state.activeTier ?? this.config.tier,
+      activeTier: state.activeTier ?? state.tier ?? this.config.tier,
+    };
+
+    if (this.config.executionMode !== "direct") {
+      return normalized;
+    }
+
+    return {
+      ...normalized,
+      currentPhase: undefined,
+      currentSlice: undefined,
+      currentGroup: undefined,
+      currentGroupBaseSha: undefined,
+      sliceTimings: undefined,
+      lastCompletedSlice: undefined,
+      lastCompletedGroup: undefined,
+      lastSliceImplemented: undefined,
+      reviewBaseSha: undefined,
+      pendingVerifyBaseSha: undefined,
+      pendingCompletenessBaseSha: undefined,
+      pendingReviewBaseSha: undefined,
+      pendingGapBaseSha: undefined,
+    };
+  }
+
   async execute(groups: readonly Group[]): Promise<void> {
-    this.state = await this.persistence.load();
+    this.state = this.bootstrapState(await this.persistence.load());
 
     const interrupts = createInterruptState();
     const interruptHandler = this.progressSink.registerInterrupts();
     interruptHandler.onSkip(() => {
+      const currentState = ctx === null ? ctxState : ctx.state.get();
+      if (currentState.currentPhase === undefined) {
+        return false;
+      }
       this.sliceSkipFlag = interrupts.toggleSkip();
       return this.sliceSkipFlag;
     });
@@ -77,8 +111,8 @@ export class RunOrchestration {
       this.hardInterruptPending = guidance;
     });
     interruptHandler.onGuide((guidance) => {
-      interrupts.setHardInterrupt(guidance);
-      this.hardInterruptPending = guidance;
+      this.hardInterruptPending = null;
+      void pool.inject("tdd", guidance);
     });
 
     let ctxState: OrchestratorState = this.state;
@@ -171,9 +205,19 @@ export class RunOrchestration {
     };
 
     try {
+      await pool.prewarmLongLived();
       await executeGroups(groups, ctx);
 
-      this.state = ctx.state.get();
+      const completedState: OrchestratorState = {
+        ...ctx.state.get(),
+        executionMode: this.config.executionMode,
+        currentPhase: undefined,
+        completedAt: new Date().toISOString(),
+      };
+      ctx.state.set(completedState);
+      await this.persistence.save(completedState);
+
+      this.state = completedState;
       this.hardInterruptPending = interrupts.hardInterrupt();
 
       if (interrupts.skipRequested()) {

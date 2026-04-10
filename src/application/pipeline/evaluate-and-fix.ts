@@ -66,6 +66,11 @@ export const evaluateAndFix = async (input: EvaluateAndFixInput): Promise<void> 
 
     const fixPrompt = input.fixPromptBuilder(input.unit, findings, input.ctx);
     const preFixSha = await input.ctx.git.captureRef();
+    await input.ctx.state.advance({
+      kind: "phaseEntered",
+      phase: "tdd",
+      sliceNumber: input.unit.sliceNumber,
+    });
 
     await sendWithRetry("tdd", fixPrompt, `${input.phase.name} fix`, input.ctx);
 
@@ -84,7 +89,16 @@ export const evaluateAndFix = async (input: EvaluateAndFixInput): Promise<void> 
       return;
     }
 
+    if (input.phase.name === "review" && input.ctx.config.auto && cycle === input.maxCycles - 1) {
+      return;
+    }
+
     const reevaluatePrompt = input.phase.prompt(input.unit, input.ctx);
+    await input.ctx.state.advance({
+      kind: "phaseEntered",
+      phase: input.phase.persistedPhase,
+      sliceNumber: input.unit.sliceNumber,
+    });
     const reevaluated = await sendWithRetry(
       input.phase.agent,
       reevaluatePrompt,
