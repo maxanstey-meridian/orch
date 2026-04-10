@@ -59,6 +59,56 @@ describe("mergeRepoContextLayers", () => {
     expect(result.provenance["context.architecture"]?.source).toBe("planner");
   });
 
+  it("verified entries beat unverified planner or detected entries", () => {
+    const planner: RepoContextLayer = {
+      context: { architecture: "planner-arch" },
+      provenance: {
+        "context.architecture": { source: "planner", updatedAt: "2026-01-01T00:00:00Z" },
+      },
+    };
+    const detected: RepoContextLayer = {
+      context: { architecture: "detected-arch" },
+      provenance: {
+        "context.architecture": { source: "verified", updatedAt: "2026-01-01T00:00:00Z" },
+      },
+    };
+
+    const layers: RepoContextLayers = {
+      operator: createEmptyRepoContextLayer(),
+      planner,
+      detected,
+    };
+    const result = mergeRepoContextLayers(layers);
+
+    expect(result.context.architecture).toBe("detected-arch");
+    expect(result.provenance["context.architecture"]?.source).toBe("verified");
+  });
+
+  it("operator entries still beat verified lower-priority entries", () => {
+    const operator: RepoContextLayer = {
+      context: { architecture: "operator-arch" },
+      provenance: {
+        "context.architecture": { source: "operator", updatedAt: "2026-01-01T00:00:00Z" },
+      },
+    };
+    const detected: RepoContextLayer = {
+      context: { architecture: "verified-detected-arch" },
+      provenance: {
+        "context.architecture": { source: "verified", updatedAt: "2026-01-01T00:00:00Z" },
+      },
+    };
+
+    const layers: RepoContextLayers = {
+      operator,
+      planner: createEmptyRepoContextLayer(),
+      detected,
+    };
+    const result = mergeRepoContextLayers(layers);
+
+    expect(result.context.architecture).toBe("operator-arch");
+    expect(result.provenance["context.architecture"]?.source).toBe("operator");
+  });
+
   it("merges non-overlapping keys from all layers", () => {
     const operator: RepoContextLayer = {
       context: { concepts: { language: "TypeScript" } },

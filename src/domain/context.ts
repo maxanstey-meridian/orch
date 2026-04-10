@@ -140,27 +140,70 @@ export const hasRepoContextData = (context: RepoContextData): boolean =>
 export const hasRepoContextArtifact = (artifact: RepoContextArtifact | null | undefined): boolean =>
   artifact !== undefined && artifact !== null && hasRepoContextData(artifact.effective.context);
 
-export const mergeRepoContextLayers = (layers: RepoContextLayers): RepoContextLayer => {
-  const mergedEntries = new Map<RepoContextLeafPath, string>();
-  const mergedProvenance = new Map<RepoContextLeafPath, RepoContextEntryProvenance>();
+const layerMergeOrder = ["operator", "planner", "detected"] as const;
 
-  for (const layer of [layers.operator, layers.planner, layers.detected]) {
+const repoContextEntryPriority = (
+  layerName: (typeof layerMergeOrder)[number],
+  provenance: RepoContextEntryProvenance | undefined,
+): number => {
+  if (layerName === "operator" || provenance?.source === "operator") {
+    return 4;
+  }
+
+  if (provenance?.source === "verified") {
+    return 3;
+  }
+
+  if (layerName === "planner" || provenance?.source === "planner") {
+    return 2;
+  }
+
+  return 1;
+};
+
+export const mergeRepoContextLayers = (layers: RepoContextLayers): RepoContextLayer => {
+  const mergedEntries = new Map<
+    RepoContextLeafPath,
+    {
+      readonly value: string;
+      readonly provenance: RepoContextEntryProvenance | undefined;
+      readonly priority: number;
+      readonly order: number;
+    }
+  >();
+
+  for (const [order, layerName] of layerMergeOrder.entries()) {
+    const layer = layers[layerName];
     const entries = flattenRepoContextData(layer.context);
     for (const [path, value] of Object.entries(entries) as Array<[RepoContextLeafPath, string]>) {
-      if (mergedEntries.has(path)) {
+      const provenance = layer.provenance[path];
+      const priority = repoContextEntryPriority(layerName, provenance);
+      const existing = mergedEntries.get(path);
+
+      if (
+        existing !== undefined &&
+        (existing.priority > priority ||
+          (existing.priority === priority && existing.order <= order))
+      ) {
         continue;
       }
 
-      mergedEntries.set(path, value);
-      const provenance = layer.provenance[path];
-      if (provenance !== undefined) {
-        mergedProvenance.set(path, provenance);
-      }
+      mergedEntries.set(path, { value, provenance, priority, order });
     }
   }
 
+  const mergedProvenance = Object.fromEntries(
+    [...mergedEntries.entries()]
+      .filter(([, entry]) => entry.provenance !== undefined)
+      .map(([path, entry]) => [path, entry.provenance]),
+  ) as Readonly<Record<RepoContextLeafPath, RepoContextEntryProvenance>>;
+
   return {
-    context: unflattenRepoContextData(Object.fromEntries(mergedEntries)),
-    provenance: Object.fromEntries(mergedProvenance),
+    context: unflattenRepoContextData(
+      Object.fromEntries(
+        [...mergedEntries.entries()].map(([path, entry]) => [path, entry.value]),
+      ) as Readonly<Record<RepoContextLeafPath, string>>,
+    ),
+    provenance: mergedProvenance,
   };
 };

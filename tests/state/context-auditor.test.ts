@@ -284,6 +284,46 @@ describe("auditContextEntries", () => {
     );
   });
 
+  it("promoting a detected entry to verified lets it overtake conflicting planner inference", async () => {
+    await mkdir(join(tempDir, "src"), { recursive: true });
+
+    const detectedPath = join(tempDir, "src", "detected.ts");
+    writeFileSync(detectedPath, "detected");
+    const oldTime = new Date("2025-06-01T00:00:00.000Z");
+    utimesSync(detectedPath, oldTime, oldTime);
+
+    const artifact = makeArtifact({
+      layers: {
+        planner: {
+          context: { architecture: "Planner architecture" },
+          provenance: {
+            "context.architecture": {
+              source: "planner",
+              updatedAt: pastTimestamp,
+              supportingFiles: ["src/planner.ts"],
+            },
+          },
+        },
+        detected: {
+          context: { architecture: "Detected architecture" },
+          provenance: {
+            "context.architecture": {
+              source: "detected",
+              updatedAt: pastTimestamp,
+              supportingFiles: ["src/detected.ts"],
+            },
+          },
+        },
+      },
+    });
+
+    const result = auditContextEntries(artifact, tempDir);
+
+    expect(result.layers.detected.provenance["context.architecture"]!.source).toBe("verified");
+    expect(result.effective.context.architecture).toBe("Detected architecture");
+    expect(result.effective.provenance["context.architecture"]!.source).toBe("verified");
+  });
+
   it("handles mixed entries: promotes valid, stales invalid, preserves unrelated", async () => {
     await mkdir(join(tempDir, "src"), { recursive: true });
 
