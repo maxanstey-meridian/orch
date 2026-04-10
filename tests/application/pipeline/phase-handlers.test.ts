@@ -242,36 +242,50 @@ describe("phase handlers", () => {
   });
 
   it("completeness isClean: true when SLICE_COMPLETE present without MISSING", () => {
-    expect(completenessPhase.isClean(okResult({ assistantText: "SLICE_COMPLETE" }))).toBe(true);
+    expect(
+      completenessPhase.isClean(
+        okResult({ assistantText: "SLICE_COMPLETE" }),
+        sliceUnit(makeSlice(1), "Core"),
+      ),
+    ).toBe(true);
   });
 
   it("completeness isClean: false when ❌ present", () => {
-    expect(completenessPhase.isClean(okResult({ assistantText: "SLICE_COMPLETE\n❌ MISSING" }))).toBe(false);
+    expect(
+      completenessPhase.isClean(
+        okResult({ assistantText: "SLICE_COMPLETE\n❌ MISSING" }),
+        sliceUnit(makeSlice(1), "Core"),
+      ),
+    ).toBe(false);
   });
 
   it("completeness isClean: false when MISSING present without sentinel", () => {
-    expect(completenessPhase.isClean(okResult({ assistantText: "MISSING tests" }))).toBe(false);
+    expect(
+      completenessPhase.isClean(
+        okResult({ assistantText: "MISSING tests" }),
+        sliceUnit(makeSlice(1), "Core"),
+      ),
+    ).toBe(false);
   });
 
   it("completeness isClean: uses GROUP_COMPLETE for group units", () => {
-    expect(completenessPhase.isClean(okResult({ assistantText: "GROUP_COMPLETE" }))).toBe(true);
+    expect(
+      completenessPhase.isClean(okResult({ assistantText: "GROUP_COMPLETE" }), groupedUnit(makeGroup())),
+    ).toBe(true);
   });
 
   it("completeness isClean: uses DIRECT_COMPLETE for direct units", () => {
-    expect(completenessPhase.isClean(okResult({ assistantText: "DIRECT_COMPLETE" }))).toBe(true);
+    expect(
+      completenessPhase.isClean(okResult({ assistantText: "DIRECT_COMPLETE" }), directUnit("request", 1)),
+    ).toBe(true);
   });
 
-  it.fails("completeness isClean: only accepts the unit-specific completion sentinel", () => {
+  it("completeness isClean: only accepts the unit-specific completion sentinel", () => {
     const direct = directUnit("request content", 4);
     const group = groupedUnit(makeGroup());
     const slice = sliceUnit(makeSlice(4), "Core");
     const isCleanFor = (unit: typeof direct | typeof group | typeof slice, assistantText: string) =>
-      (
-        completenessPhase.isClean as unknown as (
-          result: AgentResult,
-          executionUnit?: typeof unit,
-        ) => boolean
-      )(okResult({ assistantText }), unit);
+      completenessPhase.isClean(okResult({ assistantText }), unit);
 
     expect(isCleanFor(direct, "DIRECT_COMPLETE")).toBe(true);
     expect(isCleanFor(direct, "GROUP_COMPLETE")).toBe(false);

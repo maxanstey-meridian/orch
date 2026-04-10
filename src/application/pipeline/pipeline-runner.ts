@@ -70,7 +70,7 @@ export const pipelineRunner = async (
       break;
     }
 
-    if (!phase.isClean(result)) {
+    if (!phase.isClean(result, unit)) {
       if (phase.evaluate) {
         await phase.evaluate(unit, result, ctx, phase);
         continue;

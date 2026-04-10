@@ -15,7 +15,7 @@ export type PhaseHandler = {
   readonly persistedPhase: PersistedPhase;
   readonly agent: AgentRole;
   readonly prompt: (unit: ExecutionUnit, ctx: PipelineContext) => string;
-  readonly isClean: (result: AgentResult) => boolean;
+  readonly isClean: (result: AgentResult, unit?: ExecutionUnit) => boolean;
   readonly fixPrompt?: (unit: ExecutionUnit, findings: string, ctx: PipelineContext) => string;
   readonly evaluate?: PhaseEvaluate;
   readonly maxCycles?: number;

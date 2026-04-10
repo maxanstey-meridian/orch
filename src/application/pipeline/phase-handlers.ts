@@ -178,7 +178,7 @@ const verifyEvaluate: PhaseEvaluate = async (unit, result, ctx, phase) => {
         ctx.progress.createStreamer("verify"),
       );
 
-      if (phase.isClean(retried)) {
+      if (phase.isClean(retried, unit)) {
         return;
       }
 
@@ -218,7 +218,7 @@ const verifyEvaluate: PhaseEvaluate = async (unit, result, ctx, phase) => {
       ctx.progress.createStreamer("verify"),
     );
 
-    if (phase.isClean(reverified)) {
+    if (phase.isClean(reverified, unit)) {
       return;
     }
 
@@ -266,8 +266,14 @@ export const completenessPhase = {
   persistedPhase: "completeness",
   agent: "completeness",
   prompt: buildCompletenessPrompt,
-  isClean: (result) =>
-    /(SLICE_COMPLETE|GROUP_COMPLETE|DIRECT_COMPLETE)/.test(result.assistantText)
+  isClean: (result, unit) =>
+    result.assistantText.includes(
+      unit?.kind === "group"
+        ? "GROUP_COMPLETE"
+        : unit?.kind === "direct"
+          ? "DIRECT_COMPLETE"
+          : "SLICE_COMPLETE",
+    )
     && !result.assistantText.includes("MISSING")
     && !result.assistantText.includes("❌"),
   fixPrompt: buildTddFixPrompt,

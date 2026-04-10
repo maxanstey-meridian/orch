@@ -93,7 +93,7 @@ export const evaluateAndFix = async (input: EvaluateAndFixInput): Promise<void> 
       input.ctx.progress.createStreamer(input.phase.agent),
     );
 
-    if (input.isClean(reevaluated)) {
+    if (input.isClean(reevaluated, input.unit)) {
       return;
     }
 
