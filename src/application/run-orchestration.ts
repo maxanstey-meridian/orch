@@ -164,7 +164,7 @@ const makePhases = (
         }
       },
       isClean: (result) =>
-        result.exitCode !== 0 || result.assistantText.includes("NO_GAPS_FOUND"),
+        result.exitCode === 0 && result.assistantText.includes("NO_GAPS_FOUND"),
       fixPrompt: (currentUnit, findings) => makeTddFixPrompt(currentUnit, prompts, findings),
       maxCycles: Math.min(maxCycles, 2),
     });

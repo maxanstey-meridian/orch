@@ -467,6 +467,53 @@ describe("pipelineRunner", () => {
     expect(spawner.agentsForRole("final")).toHaveLength(1);
   });
 
+  it("RunOrchestration treats non-zero gap exits as dirty and sends fixes back to TDD", async () => {
+    useSlowAgentClock();
+    const { spawner, persistence, gate, git, prompts, progress, log } = createHarness();
+    const uc = new RunOrchestration(
+      spawner,
+      persistence,
+      gate,
+      git,
+      prompts,
+      {
+        ...DEFAULT_CONFIG,
+        skills: { ...DEFAULT_SKILLS, gap: "test", verify: null },
+      },
+      progress,
+      log,
+      new FakeRolePromptResolver(),
+      new TestExecutionUnitTierSelector(),
+      new TestExecutionUnitTriager(),
+    );
+    git.setHasChanges(true);
+    spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented" }),
+      okResult({ assistantText: "fixed gap issue" }),
+    );
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+    spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
+    spawner.onNextSpawn(
+      "gap",
+      okResult({ exitCode: 1, assistantText: "gap runner failed" }),
+      okResult({ assistantText: "NO_GAPS_FOUND" }),
+    );
+
+    await uc.execute([
+      {
+        name: "Core",
+        slices: [makeSlice(1)],
+      },
+    ]);
+
+    expect(spawner.lastAgent("tdd").sentPrompts).toHaveLength(2);
+    expect(spawner.lastAgent("tdd").sentPrompts[0]).toContain("[TDD:1]");
+    expect(spawner.lastAgent("tdd").sentPrompts[1]).toContain("[TDD:1]");
+    expect(spawner.lastAgent("tdd").sentPrompts[1]).toContain("FIX: gap runner failed");
+    expect(persistence.current.lastCompletedSlice).toBe(1);
+  });
+
   it("RunOrchestration does not persist a skipped slice as completed", async () => {
     useSlowAgentClock();
     const { spawner, persistence, gate, git, prompts, progress, log } = createHarness();
