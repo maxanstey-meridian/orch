@@ -3,6 +3,8 @@ import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSpawner, type AgentHandle } from "#application/ports/agent-spawner.port.js";
+import { AGENT_DEFAULTS } from "#domain/agent-config.js";
+import type { OrchestratorConfig, SkillSet } from "#domain/config.js";
 import {
   RuntimeInteractionGate,
   type RuntimeInteractionDecision,
@@ -10,9 +12,50 @@ import {
 } from "#application/ports/runtime-interaction.port.js";
 import { CodexAgentSpawner } from "#infrastructure/agent/codex-agent-spawner.js";
 import { createCodexAppServerClient } from "#infrastructure/agent/codex-app-server-client.js";
+import { agentSpawnerFactory } from "#infrastructure/factories.js";
 import type { CodexEvent } from "#infrastructure/agent/codex-types.js";
 
+const { spawnProcess } = vi.hoisted(() => ({
+  spawnProcess: vi.fn(),
+}));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    spawn: spawnProcess,
+  };
+});
+
 const tick = async () => new Promise((resolve) => setTimeout(resolve, 10));
+
+const DEFAULT_SKILLS: SkillSet = {
+  tdd: "test",
+  review: "test",
+  verify: "test",
+  plan: "test",
+  gap: null,
+  completeness: "test",
+};
+
+const DEFAULT_CONFIG: OrchestratorConfig = {
+  cwd: "/tmp/test",
+  planPath: "/tmp/plan.json",
+  planContent: "plan content",
+  brief: "brief",
+  executionMode: "sliced",
+  executionPreference: "auto",
+  auto: false,
+  reviewThreshold: 30,
+  maxReviewCycles: 3,
+  stateFile: "/tmp/state.json",
+  logPath: null,
+  tier: "medium",
+  skills: DEFAULT_SKILLS,
+  maxReplans: 3,
+  defaultProvider: "claude",
+  agentConfig: AGENT_DEFAULTS,
+};
 
 type ReceivedRequest = {
   readonly id: number;
@@ -275,6 +318,7 @@ describe("CodexAgentSpawner", () => {
   let fake: FakeAppServer | undefined;
 
   afterEach(() => {
+    spawnProcess.mockReset();
     fake?.close();
     fake = undefined;
   });
@@ -298,7 +342,7 @@ describe("CodexAgentSpawner", () => {
   it("spawns tdd with workspace-write sandbox", async () => {
     fake = createFakeAppServer();
     const gate = new FakeRuntimeInteractionGate();
-    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, () => fake!.proc, gate);
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
     const handle = spawner.spawn("tdd");
 
     fake.setTurnScript([{ kind: "turnCompleted", resultText: "" }]);
@@ -313,7 +357,7 @@ describe("CodexAgentSpawner", () => {
     fake = createFakeAppServer();
     const gate = new FakeRuntimeInteractionGate();
     gate.queueDecision({ kind: "approve" });
-    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, () => fake!.proc, gate);
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
     const handle = spawner.spawn("tdd");
 
     fake.setTurnScript([
@@ -339,7 +383,7 @@ describe("CodexAgentSpawner", () => {
   it("auto-approves approval requests when auto mode is enabled", async () => {
     fake = createFakeAppServer();
     const gate = new FakeRuntimeInteractionGate();
-    const spawner = new CodexAgentSpawner("/tmp/test", { auto: true }, () => fake!.proc, gate);
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: true }, (_cwd) => fake!.proc, gate);
     const handle = spawner.spawn("tdd");
 
     fake.setTurnScript([
@@ -363,7 +407,7 @@ describe("CodexAgentSpawner", () => {
   it("buffers text until a sentence boundary before flushing", async () => {
     fake = createFakeAppServer();
     const gate = new FakeRuntimeInteractionGate();
-    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, () => fake!.proc, gate);
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
     const handle = spawner.spawn("tdd");
     const onText = vi.fn();
 
@@ -382,7 +426,7 @@ describe("CodexAgentSpawner", () => {
   it("trims synthetic leading whitespace after a sentence-boundary flush", async () => {
     fake = createFakeAppServer();
     const gate = new FakeRuntimeInteractionGate();
-    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, () => fake!.proc, gate);
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
     const handle = spawner.spawn("tdd");
     const onText = vi.fn();
 
@@ -401,7 +445,7 @@ describe("CodexAgentSpawner", () => {
   it("queues pending guidance and prepends it to the next turn prompt", async () => {
     fake = createFakeAppServer();
     const gate = new FakeRuntimeInteractionGate();
-    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, () => fake!.proc, gate);
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
     const handle = spawner.spawn("tdd");
 
     handle.inject("fix the tests");
@@ -417,7 +461,7 @@ describe("CodexAgentSpawner", () => {
   it("resumes a session by thread id instead of starting a new thread", async () => {
     fake = createFakeAppServer();
     const gate = new FakeRuntimeInteractionGate();
-    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, () => fake!.proc, gate);
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
     const handle = spawner.spawn("tdd", { resumeSessionId: "thread-123" });
 
     fake.setTurnScript([{ kind: "turnCompleted", resultText: "" }]);
@@ -453,7 +497,7 @@ describe("CodexAgentSpawner", () => {
     fake = createFakeAppServer();
     fake.hangOnTurn();
     const gate = new FakeRuntimeInteractionGate();
-    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, () => fake!.proc, gate);
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
     const handle = spawner.spawn("tdd");
 
     await tick();
@@ -475,7 +519,7 @@ describe("CodexAgentSpawner", () => {
     fake = createFakeAppServer();
     fake.hangOnTurn();
     const gate = new FakeRuntimeInteractionGate();
-    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, () => fake!.proc, gate);
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
     const handle = spawner.spawn("tdd");
 
     await tick();
@@ -490,7 +534,7 @@ describe("CodexAgentSpawner", () => {
   it("sendQuiet rejects when the turn reports a failure", async () => {
     fake = createFakeAppServer();
     const gate = new FakeRuntimeInteractionGate();
-    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, () => fake!.proc, gate);
+    const spawner = new CodexAgentSpawner("/tmp/test", { auto: false }, (_cwd) => fake!.proc, gate);
     const handle = spawner.spawn("tdd");
 
     fake.setTurnScript([
@@ -499,6 +543,46 @@ describe("CodexAgentSpawner", () => {
     ]);
 
     await expect(handle.sendQuiet("rules reminder")).rejects.toThrow("rules reminder failed");
+  });
+
+  it("passes the requested cwd to the Codex process factory", async () => {
+    fake = createFakeAppServer();
+    const gate = new FakeRuntimeInteractionGate();
+    const processFactory = vi.fn((_cwd: string) => fake!.proc);
+    const spawner = new CodexAgentSpawner("/tmp/default", { auto: false }, processFactory, gate);
+
+    const handle = spawner.spawn("tdd", { cwd: "/tmp/custom-worktree" });
+    fake.setTurnScript([{ kind: "turnCompleted", resultText: "" }]);
+
+    await handle.send("init");
+
+    expect(processFactory).toHaveBeenCalledWith("/tmp/custom-worktree");
+  });
+
+  it("production agentSpawnerFactory routes codex-configured roles to CodexAgentSpawner", async () => {
+    fake = createFakeAppServer();
+    spawnProcess.mockReturnValue(fake.proc);
+    const gate = new FakeRuntimeInteractionGate();
+    const spawner = agentSpawnerFactory(
+      {
+        ...DEFAULT_CONFIG,
+        agentConfig: {
+          ...AGENT_DEFAULTS,
+          tdd: { provider: "codex" },
+        },
+      },
+      gate,
+    );
+
+    const handle = spawner.spawn("tdd", { cwd: "/tmp/factory-worktree" });
+    fake.setTurnScript([{ kind: "turnCompleted", resultText: "" }]);
+
+    await handle.send("init");
+
+    expect(spawnProcess).toHaveBeenCalledWith("codex", ["app-server"], {
+      cwd: "/tmp/factory-worktree",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
   });
 
   it("satisfies the AgentSpawner port surface", () => {

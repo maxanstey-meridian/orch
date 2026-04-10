@@ -13,7 +13,7 @@ import { detectQuestion } from "#infrastructure/agent/question-detector.js";
 
 const SENTENCE_END = /[a-z][.!?]\s*$/i;
 
-type ProcessFactory = () => ChildProcess;
+type ProcessFactory = (cwd: string) => ChildProcess;
 
 const createTextBuffer = (flush: (text: string) => void) => {
   let buffer = "";
@@ -90,10 +90,10 @@ export class CodexAgentSpawner extends AgentSpawner {
       readonly model?: string;
     },
   ): AgentHandle {
-    void (opts?.cwd ?? this.defaultCwd);
+    const cwd = opts?.cwd ?? this.defaultCwd;
     const style = ROLE_STYLES[role];
     const modeConfig = resolveCodexModeConfig(role, this.config, opts?.planMode ?? false);
-    const client = createCodexAppServerClient(this.processFactory());
+    const client = createCodexAppServerClient(this.processFactory(cwd));
 
     let sessionId = opts?.resumeSessionId ?? "";
     let persistentOnText: ((text: string) => void) | undefined;
