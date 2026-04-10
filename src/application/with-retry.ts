@@ -9,7 +9,7 @@ import type { StatePersistence } from "#application/ports/state-persistence.port
 import type { AgentResult, AgentRole } from "#domain/agent-types.js";
 import { collectAgentFailureText, detectApiError, type ApiError } from "#domain/api-errors.js";
 import type { OrchestratorConfig } from "#domain/config.js";
-import { CreditExhaustedError } from "#domain/errors.js";
+import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
 
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_DELAY_MS = 5_000;
@@ -109,12 +109,12 @@ export const withRetry = async (
       }
 
       if (!isRespawnableRole(role)) {
-        throw new Error(`Ephemeral ${role} agent died during ${label} — cannot respawn`);
+        throw new IncompleteRunError(`Ephemeral ${role} agent died during ${label} — cannot respawn`);
       }
 
       attempt++;
       if (attempt > maxRetries) {
-        throw new Error(`Agent died after ${maxRetries} respawn attempts (${label})`);
+        throw new IncompleteRunError(`Agent died after ${maxRetries} respawn attempts (${label})`);
       }
 
       opts.progress.setActivity(`${role} agent died, respawning ${attempt}/${maxRetries}...`);
@@ -128,7 +128,7 @@ export const withRetry = async (
     if (apiError === null && elapsed < minDurationMs) {
       attempt++;
       if (attempt > maxRetries) {
-        throw new Error(
+        throw new IncompleteRunError(
           `Agent returned in ${elapsed}ms without doing work after ${maxRetries} retries (${label})`,
         );
       }
@@ -166,7 +166,7 @@ export const withRetry = async (
 
     attempt++;
     if (attempt > maxRetries) {
-      throw new Error(`Max retries (${maxRetries}) exceeded for ${label}: ${apiError.kind}`);
+      throw new IncompleteRunError(`Max retries (${maxRetries}) exceeded for ${label}: ${apiError.kind}`);
     }
 
     opts.progress.setActivity(`waiting to retry (${apiError.kind})...`);

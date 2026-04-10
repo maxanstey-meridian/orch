@@ -21,7 +21,7 @@ import { AGENT_DEFAULTS } from "#domain/agent-config.js";
 import type { AgentResult, AgentRole } from "#domain/agent-types.js";
 import type { OrchestratorConfig, SkillSet } from "#domain/config.js";
 import type { ExecutionMode } from "#domain/config.js";
-import { CreditExhaustedError } from "#domain/errors.js";
+import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
 import type { Slice } from "#domain/plan.js";
 import type { OrchestratorState } from "#domain/state.js";
 import type { ComplexityTriageResult } from "#domain/triage.js";
@@ -328,7 +328,7 @@ describe("withRetry", () => {
         minDurationMs: 0,
         delayMs: 0,
       }),
-    ).rejects.toThrow(/cannot respawn/);
+    ).rejects.toThrow(IncompleteRunError);
   });
 
   it("returns immediately on dead agent with quit pending", async () => {
@@ -438,7 +438,7 @@ describe("withRetry", () => {
         delayMs: 0,
         maxRetries: 1,
       }),
-    ).rejects.toThrow(/without doing work/);
+    ).rejects.toThrow(IncompleteRunError);
 
     expect(fn).toHaveBeenCalledTimes(2);
   });
