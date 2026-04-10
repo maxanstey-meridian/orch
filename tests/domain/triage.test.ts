@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { FULL_TRIAGE, formatRequestTriageSummary } from "#domain/triage.js";
+import {
+  COMPLEXITY_TRIAGE_FALLBACK,
+  FULL_TRIAGE,
+  formatRequestTriageSummary,
+} from "#domain/triage.js";
+import {
+  buildComplexityTriagePrompt,
+  parseComplexityTriageResult,
+} from "#infrastructure/complexity-triage.js";
 import { buildTriagePrompt, parseTriageResult } from "#infrastructure/diff-triage.js";
 import {
   buildRequestTriagePrompt,
@@ -194,6 +202,66 @@ describe("buildTriagePrompt", () => {
     );
     expect(prompt).toContain("deferred");
     expect(prompt).not.toContain("NEXT execution unit");
+  });
+});
+
+describe("parseComplexityTriageResult", () => {
+  it("parses valid complexity triage JSON", () => {
+    expect(
+      parseComplexityTriageResult(
+        JSON.stringify({
+          tier: "small",
+          reason: "single abstraction with a modest test surface",
+        }),
+      ),
+    ).toEqual({
+      tier: "small",
+      reason: "single abstraction with a modest test surface",
+    });
+  });
+
+  it("falls back when the response is empty", () => {
+    expect(parseComplexityTriageResult("   \n\t  ")).toEqual({
+      tier: COMPLEXITY_TRIAGE_FALLBACK.tier,
+      reason: `${COMPLEXITY_TRIAGE_FALLBACK.reason}: empty response`,
+    });
+  });
+
+  it("falls back when the response is malformed JSON", () => {
+    expect(parseComplexityTriageResult('{"tier":"small",')).toEqual({
+      tier: COMPLEXITY_TRIAGE_FALLBACK.tier,
+      reason: `${COMPLEXITY_TRIAGE_FALLBACK.reason}: invalid JSON`,
+    });
+  });
+
+  it("falls back when the response JSON does not satisfy the schema", () => {
+    expect(
+      parseComplexityTriageResult(
+        JSON.stringify({
+          tier: "huge",
+          reason: "",
+        }),
+      ),
+    ).toEqual({
+      tier: COMPLEXITY_TRIAGE_FALLBACK.tier,
+      reason: `${COMPLEXITY_TRIAGE_FALLBACK.reason}: invalid schema`,
+    });
+  });
+});
+
+describe("buildComplexityTriagePrompt", () => {
+  it("includes the request and preserves the complexity classification contract", () => {
+    const request = "Refactor triage routing and add grouped execution coverage.";
+    const prompt = buildComplexityTriagePrompt(request);
+
+    expect(prompt).toContain(request);
+    expect(prompt).toContain("trivial");
+    expect(prompt).toContain("small");
+    expect(prompt).toContain("medium");
+    expect(prompt).toContain("large");
+    expect(prompt).toContain("Err toward smaller tiers when in doubt.");
+    expect(prompt).toContain("Output ONLY raw JSON.");
+    expect(prompt).toContain("No markdown, no prose, no code fences, no surrounding text.");
   });
 });
 
