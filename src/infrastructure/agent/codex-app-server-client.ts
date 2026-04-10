@@ -136,13 +136,13 @@ const createJsonRpcClient = (proc: ChildProcess): JsonRpcClient => {
 const readTurnId = (raw: unknown): string => {
   const result = raw as Record<string, unknown> | undefined;
   const turn = result?.turn;
+  const turnRecord = typeof turn === "object" && turn !== null
+    ? (turn as Record<string, unknown>)
+    : null;
+  const nestedTurnId = turnRecord?.id;
 
-  if (
-    typeof turn === "object" &&
-    turn !== null &&
-    typeof (turn as Record<string, unknown>).id === "string"
-  ) {
-    return (turn as Record<string, unknown>).id;
+  if (typeof nestedTurnId === "string") {
+    return nestedTurnId;
   }
 
   const turnId = result?.turnId;
