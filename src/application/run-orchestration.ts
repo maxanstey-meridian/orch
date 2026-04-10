@@ -15,34 +15,123 @@ import type { StatePersistence } from "#application/ports/state-persistence.port
 import type { OrchestratorConfig } from "#domain/config.js";
 import { IncompleteRunError } from "#domain/errors.js";
 import type { Group } from "#domain/plan.js";
+import { isVerifyPassing, parseVerifyResult } from "#domain/verify.js";
 import type { OrchestratorState } from "#domain/state.js";
 import { isCleanReview } from "#domain/review-check.js";
 import { pipelineRunner } from "./pipeline/pipeline-runner.js";
 import type { PhaseHandler } from "./pipeline/phase-handler.js";
 
+const completenessSentinelFor = (unit: ExecutionUnit): string => {
+  switch (unit.kind) {
+    case "direct":
+      return "DIRECT_COMPLETE";
+    case "group":
+      return "GROUP_COMPLETE";
+    case "slice":
+      return "SLICE_COMPLETE";
+  }
+};
+
+const isCompletenessClean = (unit: ExecutionUnit, assistantText: string): boolean => {
+  const sentinel = completenessSentinelFor(unit);
+  return (
+    assistantText.includes(sentinel) &&
+    !assistantText.includes("MISSING") &&
+    !assistantText.includes("❌")
+  );
+};
+
+const makeTddFixPrompt = (unit: ExecutionUnit, prompts: PromptBuilder, findings: string): string =>
+  prompts.tdd(unit.content, findings, unit.sliceNumber);
+
 const makePhases = (
   unit: ExecutionUnit,
   prompts: PromptBuilder,
   baseSha: string,
+  includeVerify: boolean,
+  includeGap: boolean,
   maxCycles: number,
-): readonly PhaseHandler[] => [
-  {
-    name: "execute",
-    persistedPhase: "tdd",
-    agent: "tdd",
+): readonly PhaseHandler[] => {
+  const phases: PhaseHandler[] = [
+    {
+      name: "execute",
+      persistedPhase: "tdd",
+      agent: "tdd",
+      prompt: (currentUnit) => {
+        switch (currentUnit.kind) {
+          case "direct":
+            return prompts.directExecute(currentUnit.content);
+          case "group":
+            return prompts.groupedExecute(currentUnit.groupName, currentUnit.content, false);
+          case "slice":
+            return prompts.tdd(currentUnit.content, undefined, currentUnit.sliceNumber);
+        }
+      },
+      isClean: () => true,
+    },
+  ];
+
+  if (unit.kind === "direct") {
+    phases.push({
+      name: "test pass",
+      persistedPhase: "tdd",
+      agent: "tdd",
+      prompt: (currentUnit) => prompts.directTestPass(currentUnit.content),
+      isClean: () => true,
+    });
+  }
+
+  if (unit.kind === "group") {
+    phases.push({
+      name: "test pass",
+      persistedPhase: "tdd",
+      agent: "tdd",
+      prompt: (currentUnit) => prompts.groupedTestPass(currentUnit.groupName, currentUnit.content),
+      isClean: () => true,
+    });
+  }
+
+  phases.push({
+    name: "completeness",
+    persistedPhase: "completeness",
+    agent: "completeness",
     prompt: (currentUnit) => {
       switch (currentUnit.kind) {
         case "direct":
-          return prompts.directExecute(currentUnit.content);
+          return prompts.directCompleteness(currentUnit.content, baseSha);
         case "group":
-          return prompts.groupedExecute(currentUnit.groupName, currentUnit.content, false);
+          return prompts.groupedCompleteness(currentUnit.content, baseSha, currentUnit.groupName);
         case "slice":
-          return prompts.tdd(currentUnit.content, undefined, currentUnit.sliceNumber);
+          return prompts.completeness(currentUnit.content, baseSha, currentUnit.sliceNumber);
       }
     },
-    isClean: () => true,
-  },
-  {
+    isClean: (result) => isCompletenessClean(unit, result.assistantText),
+    fixPrompt: (currentUnit, findings) => makeTddFixPrompt(currentUnit, prompts, findings),
+    maxCycles,
+  });
+
+  if (includeVerify) {
+    phases.push({
+      name: "verify",
+      persistedPhase: "verify",
+      agent: "verify",
+      prompt: (currentUnit) => {
+        switch (currentUnit.kind) {
+          case "direct":
+            return prompts.directVerify(baseSha, currentUnit.content);
+          case "group":
+            return prompts.groupedVerify(baseSha, currentUnit.groupName);
+          case "slice":
+            return prompts.verify(baseSha, currentUnit.sliceNumber);
+        }
+      },
+      isClean: (result) => isVerifyPassing(parseVerifyResult(result.assistantText)),
+      fixPrompt: (currentUnit, findings) => makeTddFixPrompt(currentUnit, prompts, findings),
+      maxCycles,
+    });
+  }
+
+  phases.push({
     name: "review",
     persistedPhase: "review",
     agent: "review",
@@ -56,11 +145,56 @@ const makePhases = (
       }
     },
     isClean: (result) => isCleanReview(result.assistantText),
-    fixPrompt: (currentUnit, findings) =>
-      prompts.tdd(currentUnit.content, findings, currentUnit.sliceNumber),
+    fixPrompt: (currentUnit, findings) => makeTddFixPrompt(currentUnit, prompts, findings),
     maxCycles,
-  },
-];
+  });
+
+  if (includeGap) {
+    phases.push({
+      name: "gap",
+      persistedPhase: "gap",
+      agent: "gap",
+      prompt: (currentUnit) => {
+        switch (currentUnit.kind) {
+          case "direct":
+            return prompts.directGap(currentUnit.content);
+          case "group":
+          case "slice":
+            return prompts.withBrief(prompts.gap(currentUnit.content, baseSha));
+        }
+      },
+      isClean: (result) =>
+        result.exitCode !== 0 || result.assistantText.includes("NO_GAPS_FOUND"),
+      fixPrompt: (currentUnit, findings) => makeTddFixPrompt(currentUnit, prompts, findings),
+      maxCycles: Math.min(maxCycles, 2),
+    });
+  }
+
+  return phases;
+};
+
+const makeFinalPhases = (
+  unit: ExecutionUnit,
+  prompts: PromptBuilder,
+  baseSha: string,
+  maxCycles: number,
+): readonly PhaseHandler[] => {
+  const passes = unit.kind === "direct"
+    ? prompts.directFinalPasses(baseSha, unit.content)
+    : prompts.finalPasses(baseSha);
+
+  return passes.map((pass) => ({
+    name: pass.name,
+    persistedPhase: "final" as const,
+    agent: "final" as const,
+    prompt: () => prompts.withBrief(pass.prompt),
+    isClean: (result) =>
+      result.exitCode === 0 &&
+      (result.assistantText.trim() === "" || result.assistantText.includes("NO_ISSUES_FOUND")),
+    fixPrompt: (_currentUnit, findings) => makeTddFixPrompt(unit, prompts, findings),
+    maxCycles,
+  }));
+};
 
 export class RunOrchestration {
   static inject = [
@@ -159,11 +293,25 @@ export class RunOrchestration {
       tierSelector: this.tierSelector,
     });
 
-    const executeUnit = async (unit: ExecutionUnit): Promise<void> => {
+    let lastUnit: ExecutionUnit | null = null;
+
+    const executeUnit = async (unit: ExecutionUnit): Promise<boolean> => {
       const baseSha = await this.git.captureRef();
-      const phases = makePhases(unit, this.prompts, baseSha, this.config.maxReviewCycles);
+      const phases = makePhases(
+        unit,
+        this.prompts,
+        baseSha,
+        this.config.skills.verify !== null,
+        this.config.skills.gap !== null,
+        this.config.maxReviewCycles,
+      );
       await pipelineRunner(unit, phases, ctx);
+      if (interrupts.skipRequested() || interrupts.quitRequested()) {
+        return false;
+      }
       await ctx.state.advance({ kind: "sliceDone", sliceNumber: unit.sliceNumber });
+      lastUnit = unit;
+      return true;
     };
 
     switch (this.config.executionMode) {
@@ -203,6 +351,14 @@ export class RunOrchestration {
           }
         }
         break;
+      }
+    }
+
+    if (!interrupts.skipRequested() && !interrupts.quitRequested() && lastUnit !== null) {
+      const finalBaseSha = await this.git.captureRef();
+      const finalPhases = makeFinalPhases(lastUnit, this.prompts, finalBaseSha, this.config.maxReviewCycles);
+      if (finalPhases.length > 0) {
+        await pipelineRunner(lastUnit, finalPhases, ctx);
       }
     }
 

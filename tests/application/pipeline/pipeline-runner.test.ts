@@ -96,8 +96,26 @@ class TestOperatorGate extends OperatorGate {
 }
 
 class TestProgressSink extends ProgressSink {
+  private guideCallback: ((guidance: string) => void) | null = null;
+  private interruptCallback: ((guidance: string) => void) | null = null;
+  private skipCallback: (() => boolean) | null = null;
+  private quitCallback: (() => void) | null = null;
+
   registerInterrupts(): InterruptHandler {
-    return { onGuide: () => {}, onInterrupt: () => {}, onSkip: () => {}, onQuit: () => {} };
+    return {
+      onGuide: (callback) => {
+        this.guideCallback = callback;
+      },
+      onInterrupt: (callback) => {
+        this.interruptCallback = callback;
+      },
+      onSkip: (callback) => {
+        this.skipCallback = callback;
+      },
+      onQuit: (callback) => {
+        this.quitCallback = callback;
+      },
+    };
   }
 
   updateProgress(_update: ProgressUpdate): void {}
@@ -119,6 +137,10 @@ class TestProgressSink extends ProgressSink {
   clearSkipping(): void {}
 
   teardown(): void {}
+
+  requestSkip(): boolean {
+    return this.skipCallback?.() ?? false;
+  }
 }
 
 class TestExecutionUnitTierSelector extends ExecutionUnitTierSelector {
@@ -266,8 +288,20 @@ describe("pipelineRunner", () => {
         },
         isClean: () => true,
       },
-      { name: "verify", agent: "verify", prompt: () => "phase-2", isClean: () => true },
-      { name: "gap", agent: "gap", prompt: () => "phase-3", isClean: () => true },
+      {
+        name: "verify",
+        persistedPhase: "verify",
+        agent: "verify",
+        prompt: () => "phase-2",
+        isClean: () => true,
+      },
+      {
+        name: "gap",
+        persistedPhase: "gap",
+        agent: "gap",
+        prompt: () => "phase-3",
+        isClean: () => true,
+      },
     ];
     spawner.onNextSpawn("review", okResult({ assistantText: "clean 1" }));
 
@@ -385,7 +419,55 @@ describe("pipelineRunner", () => {
     expect(persistence.saveHistory.map((state) => state.currentPhase)).toEqual(["review", "verify"]);
   });
 
-  it("RunOrchestration uses pipelineRunner from production code", async () => {
+  it("RunOrchestration routes completeness, verify, review, gap, and final through pipelineRunner", async () => {
+    useSlowAgentClock();
+    const { spawner, persistence, gate, git, prompts, progress, log } = createHarness();
+    const uc = new RunOrchestration(
+      spawner,
+      persistence,
+      gate,
+      git,
+      prompts,
+      {
+        ...DEFAULT_CONFIG,
+        skills: { ...DEFAULT_SKILLS, gap: "test" },
+      },
+      progress,
+      log,
+      new FakeRolePromptResolver(),
+      new TestExecutionUnitTierSelector(),
+      new TestExecutionUnitTriager(),
+    );
+    prompts.finalPassesOverride = [{ name: "sanity", prompt: "final check" }];
+    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented" }));
+    spawner.onNextSpawn("completeness", okResult({ assistantText: "SLICE_COMPLETE" }));
+    spawner.onNextSpawn(
+      "verify",
+      okResult({
+        assistantText:
+          '### VERIFY_JSON\n```json\n{"status":"PASS","checks":[],"sliceLocalFailures":[],"outOfScopeFailures":[],"preExistingFailures":[],"runnerIssue":null,"retryable":false,"summary":"ok"}\n```',
+      }),
+    );
+    spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
+    spawner.onNextSpawn("gap", okResult({ assistantText: "NO_GAPS_FOUND" }));
+    spawner.onNextSpawn("final", okResult({ assistantText: "NO_ISSUES_FOUND" }));
+
+    await uc.execute([
+      {
+        name: "Core",
+        slices: [makeSlice(1)],
+      },
+    ]);
+
+    expect(spawner.agentsForRole("tdd")).toHaveLength(1);
+    expect(spawner.agentsForRole("completeness")).toHaveLength(1);
+    expect(spawner.agentsForRole("verify")).toHaveLength(1);
+    expect(spawner.agentsForRole("review")).toHaveLength(1);
+    expect(spawner.agentsForRole("gap")).toHaveLength(1);
+    expect(spawner.agentsForRole("final")).toHaveLength(1);
+  });
+
+  it("RunOrchestration does not persist a skipped slice as completed", async () => {
     useSlowAgentClock();
     const { spawner, persistence, gate, git, prompts, progress, log } = createHarness();
     const uc = new RunOrchestration(
@@ -401,17 +483,20 @@ describe("pipelineRunner", () => {
       new TestExecutionUnitTierSelector(),
       new TestExecutionUnitTriager(),
     );
-    spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented" }));
-    spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
+    spawner.onNextSpawn("tdd", () => {
+      progress.requestSkip();
+      return okResult({ assistantText: "implemented" });
+    });
 
-    await uc.execute([
-      {
-        name: "Core",
-        slices: [makeSlice(1)],
-      },
-    ]);
+    await expect(
+      uc.execute([
+        {
+          name: "Core",
+          slices: [makeSlice(1)],
+        },
+      ]),
+    ).rejects.toThrow("Skipped Core slice 1");
 
-    expect(spawner.agentsForRole("tdd")).toHaveLength(1);
-    expect(spawner.agentsForRole("review")).toHaveLength(1);
+    expect(persistence.current.lastCompletedSlice).toBeUndefined();
   });
 });
