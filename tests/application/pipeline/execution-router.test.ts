@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentPool } from "#application/agent-pool.js";
 import { createInterruptState } from "#application/interrupt-state.js";
 import { createPipelineContext } from "#application/pipeline-context.js";
-import { ExecutionUnitTierSelector } from "#application/ports/execution-unit-tier-selector.port.js";
 import { ExecutionUnitTriager } from "#application/ports/execution-unit-triager.port.js";
 import {
   OperatorGate,
@@ -21,7 +20,7 @@ import type { AgentResult, AgentRole } from "#domain/agent-types.js";
 import type { ExecutionMode, OrchestratorConfig, SkillSet } from "#domain/config.js";
 import type { Group, Slice } from "#domain/plan.js";
 import type { OrchestratorState } from "#domain/state.js";
-import type { BoundaryTriageResult, ComplexityTriageResult } from "#domain/triage.js";
+import type { BoundaryTriageResult } from "#domain/triage.js";
 import { FakeAgentSpawner } from "../../fakes/fake-agent-spawner.js";
 import { FakeExecutionUnitTierSelector } from "../../fakes/fake-execution-unit-tier-selector.js";
 import { InMemoryGitOps } from "../../fakes/fake-git-ops.js";
@@ -179,8 +178,12 @@ const createPoolStateAccessor = (initial: OrchestratorState = {}) => {
   };
 };
 
+type TestConfig = Omit<Partial<OrchestratorConfig>, "skills"> & {
+  readonly skills?: Partial<SkillSet>;
+};
+
 const createHarness = (options?: {
-  readonly config?: Partial<OrchestratorConfig> & { readonly skills?: Partial<SkillSet> };
+  readonly config?: TestConfig;
   readonly state?: OrchestratorState;
 }) => {
   const config: OrchestratorConfig = {
