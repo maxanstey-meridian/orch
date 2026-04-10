@@ -53,10 +53,7 @@ const agentRoleToSkillRole = (role: AgentRole): SkillRole | null => {
   }
 };
 
-const fallbackRulesReminder = (
-  config: OrchestratorConfig,
-  role: "tdd" | "review",
-): string => {
+const fallbackRulesReminder = (config: OrchestratorConfig, role: "tdd" | "review"): string => {
   if (role === "tdd") {
     return config.tddRules ?? "Continue following the TDD rules.";
   }
@@ -146,8 +143,9 @@ export class AgentPool {
       existing.kill();
     }
 
-    const resumeSessionId =
-      isGroupScopedRole(role) ? this.persistedSessionFor(role)?.id : undefined;
+    const resumeSessionId = isGroupScopedRole(role)
+      ? this.persistedSessionFor(role)?.id
+      : undefined;
 
     const handle = this.spawn(role, resumeSessionId);
     this.handles.set(role, handle);
@@ -185,6 +183,22 @@ export class AgentPool {
     this.firstFlags.set(role, false);
   }
 
+  spawnDetached(role: AgentRole): AgentHandle {
+    const skillRole = agentRoleToSkillRole(role);
+    const systemPrompt =
+      skillRole === null
+        ? undefined
+        : (this.rolePromptResolver.resolve(skillRole, this.currentTier()) ?? undefined);
+
+    const agentConfig = this.config.agentConfig[role];
+    return this.agents.spawn(role, {
+      cwd: this.config.cwd,
+      model: agentConfig.model,
+      planMode: role === "plan" || undefined,
+      systemPrompt,
+    });
+  }
+
   private currentTier(): ComplexityTier {
     const state = this.stateAccessor.get();
     return state.activeTier ?? state.tier ?? this.config.tier;
@@ -195,7 +209,7 @@ export class AgentPool {
     const systemPrompt =
       skillRole === null
         ? undefined
-        : this.rolePromptResolver.resolve(skillRole, this.currentTier()) ?? undefined;
+        : (this.rolePromptResolver.resolve(skillRole, this.currentTier()) ?? undefined);
 
     const agentConfig = this.config.agentConfig[role];
     const handle = this.agents.spawn(role, {
