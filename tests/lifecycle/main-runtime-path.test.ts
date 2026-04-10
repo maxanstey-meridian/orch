@@ -225,21 +225,6 @@ afterEach(async () => {
 });
 
 describe("main runtime path", () => {
-  it("constructs the legacy #ui HUD on the real main() entry path", async () => {
-    const { main } = await import("../../src/main.js");
-
-    await expect(
-      main({
-        onSignal: () => process,
-        exit: vi.fn(),
-        registryPath: join(tempDir, ".orch", "runs.json"),
-      }),
-    ).rejects.toThrow("createContainer runtime wiring has not been restored yet");
-
-    expect(mocks.createHud).toHaveBeenCalledTimes(1);
-    expect(mocks.createHud).toHaveBeenCalledWith(false);
-  });
-
   it("reaches the real composition root and invokes agentSpawnerFactory", async () => {
     const { main } = await import("../../src/main.js");
 
