@@ -1,6 +1,6 @@
 import { AgentPool } from "#application/agent-pool.js";
-import { createInterruptState } from "#application/interrupt-state.js";
-import { createPipelineContext } from "#application/pipeline-context.js";
+import { createInterruptState, type InterruptState } from "#application/interrupt-state.js";
+import { createPipelineContext, type PipelineContext } from "#application/pipeline-context.js";
 import type { AgentSpawner } from "#application/ports/agent-spawner.port.js";
 import type { ExecutionUnitTierSelector } from "#application/ports/execution-unit-tier-selector.port.js";
 import type { ExecutionUnitTriager } from "#application/ports/execution-unit-triager.port.js";
@@ -17,7 +17,28 @@ import type { Group } from "#domain/plan.js";
 import type { OrchestratorState } from "#domain/state.js";
 import { executeGroups } from "./pipeline/execution-router.js";
 
-export class RunOrchestration {
+export type PipelineReadyInfo = {
+  readonly tddSessionId: string;
+  readonly reviewSessionId: string;
+};
+
+export type PipelineExecuteOptions = {
+  readonly onReady?: (info: PipelineReadyInfo) => void;
+};
+
+const requireSessionId = (
+  state: OrchestratorState,
+  role: "tdd" | "review",
+): string => {
+  const session = role === "tdd" ? state.tddSession : state.reviewSession;
+  if (session?.id) {
+    return session.id;
+  }
+
+  throw new Error(`Missing ${role} session after prewarm`);
+};
+
+export class PipelineRuntime {
   static inject = [
     "agentSpawner",
     "statePersistence",
@@ -40,6 +61,12 @@ export class RunOrchestration {
   sliceSkipFlag = false;
   quitRequested = false;
   hardInterruptPending: string | null = null;
+
+  private pool: AgentPool | null = null;
+  private interrupts: InterruptState | null = null;
+  private context: PipelineContext | null = null;
+  private disposed = false;
+  private logClosed = false;
 
   constructor(
     private readonly agents: AgentSpawner,
@@ -89,16 +116,23 @@ export class RunOrchestration {
     };
   }
 
-  async execute(groups: readonly Group[]): Promise<void> {
+  async execute(groups: readonly Group[], options: PipelineExecuteOptions = {}): Promise<void> {
     this.state = this.bootstrapState(await this.persistence.load());
+    this.disposed = false;
+    this.logClosed = false;
 
     const interrupts = createInterruptState();
     const interruptHandler = this.progressSink.registerInterrupts();
+
+    let currentState: OrchestratorState = this.state;
+    let ctx: PipelineContext | null = null;
+
     interruptHandler.onSkip(() => {
-      const currentState = ctx === null ? ctxState : ctx.state.get();
-      if (currentState.currentPhase === undefined) {
+      const state = ctx === null ? currentState : ctx.state.get();
+      if (state.currentPhase === undefined) {
         return false;
       }
+
       this.sliceSkipFlag = interrupts.toggleSkip();
       return this.sliceSkipFlag;
     });
@@ -110,26 +144,17 @@ export class RunOrchestration {
       interrupts.setHardInterrupt(guidance);
       this.hardInterruptPending = guidance;
     });
-    interruptHandler.onGuide((guidance) => {
-      this.hardInterruptPending = null;
-      void pool.inject("tdd", guidance);
-    });
-
-    let ctxState: OrchestratorState = this.state;
-    let ctx:
-      | ReturnType<typeof createPipelineContext>
-      | null = null;
 
     const pool = new AgentPool(
       this.agents,
       this.rolePromptResolver,
       this.config,
       {
-        get: () => (ctx === null ? ctxState : ctx.state.get()),
+        get: () => (ctx === null ? currentState : ctx.state.get()),
         update: (update) => {
-          ctxState = update(ctx === null ? ctxState : ctx.state.get());
+          currentState = update(ctx === null ? currentState : ctx.state.get());
           if (ctx !== null) {
-            ctx.state.set(ctxState);
+            ctx.state.set(currentState);
           }
         },
       },
@@ -144,9 +169,14 @@ export class RunOrchestration {
       (role) => this.prompts.rulesReminder(role),
     );
 
+    interruptHandler.onGuide((guidance) => {
+      this.hardInterruptPending = null;
+      void pool.inject("tdd", guidance);
+    });
+
     const baseContext = createPipelineContext({
       config: this.config,
-      initialState: ctxState,
+      initialState: currentState,
       git: this.git,
       persistence: this.persistence,
       progress: this.progressSink,
@@ -204,8 +234,17 @@ export class RunOrchestration {
       },
     };
 
+    this.pool = pool;
+    this.interrupts = interrupts;
+    this.context = ctx;
+
     try {
       await pool.prewarmLongLived();
+      options.onReady?.({
+        tddSessionId: requireSessionId(ctx.state.get(), "tdd"),
+        reviewSessionId: requireSessionId(ctx.state.get(), "review"),
+      });
+
       await executeGroups(groups, ctx);
 
       const completedState: OrchestratorState = {
@@ -231,7 +270,27 @@ export class RunOrchestration {
       this.logOrchestrator(`Execution failed: ${message}`);
       throw error;
     } finally {
-      await this.logWriter.close();
+      await this.closeLogWriter();
     }
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+    this.pool?.killAll();
+    this.progressSink.teardown();
+    await this.closeLogWriter();
+  }
+
+  private async closeLogWriter(): Promise<void> {
+    if (this.logClosed) {
+      return;
+    }
+
+    this.logClosed = true;
+    await this.logWriter.close();
   }
 }

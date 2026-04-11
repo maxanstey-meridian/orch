@@ -2,7 +2,7 @@ import { AGENT_DEFAULTS } from "#domain/agent-config.js";
 import type { OrchestratorConfig, SkillSet } from "#domain/config.js";
 import type { OrchestratorState } from "#domain/state.js";
 import type { AgentResult } from "#domain/agent-types.js";
-import { RunOrchestration } from "#application/run-orchestration.js";
+import { PipelineRuntime } from "#application/pipeline-runtime.js";
 import { InkProgressSink, InkOperatorGate, SilentOperatorGate } from "#ui/ink-operator-gate.js";
 import { FakeHud } from "./fake-hud.js";
 import { FakeAgentSpawner } from "./fake-agent-spawner.js";
@@ -80,7 +80,7 @@ export const createTestHarness = (opts?: {
     ...(opts?.auto === undefined ? {} : { auto: opts.auto }),
   };
 
-  const uc = new RunOrchestration(
+  const uc = new PipelineRuntime(
     spawner,
     persistence,
     gate,

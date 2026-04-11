@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AGENT_DEFAULTS } from "#domain/agent-config.js";
 
 const mocks = vi.hoisted(() => ({
   agentSpawnerFactorySpy: vi.fn(),
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   buildSkillOverrides: vi.fn(),
   checkWorktreeResume: vi.fn(),
   createHud: vi.fn(),
+  executeGroups: vi.fn(),
   loadAndResolveOrchrConfig: vi.fn(),
   loadTieredSkills: vi.fn(),
   parseBranchFlag: vi.fn(),
@@ -23,9 +25,13 @@ const mocks = vi.hoisted(() => ({
   runFingerprint: vi.fn(),
 }));
 
-vi.mock("#domain/agent-config.js", () => ({
-  resolveAllAgentConfigs: mocks.resolveAllAgentConfigs,
-}));
+vi.mock("#domain/agent-config.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("#domain/agent-config.js")>();
+  return {
+    ...actual,
+    resolveAllAgentConfigs: mocks.resolveAllAgentConfigs,
+  };
+});
 
 vi.mock("#infrastructure/cli/cli-args.js", () => ({
   parseBranchFlag: mocks.parseBranchFlag,
@@ -63,18 +69,44 @@ vi.mock("#infrastructure/plan/plan-parser.js", () => ({
   parsePlan: mocks.parsePlan,
 }));
 
-vi.mock("#infrastructure/prompts/skill-loader.js", () => ({
-  buildSkillOverrides: mocks.buildSkillOverrides,
-  loadTieredSkills: mocks.loadTieredSkills,
-}));
+vi.mock("#infrastructure/prompts/skill-loader.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("#infrastructure/prompts/skill-loader.js")>();
+  return {
+    ...actual,
+    buildSkillOverrides: mocks.buildSkillOverrides,
+    loadTieredSkills: mocks.loadTieredSkills,
+  };
+});
 
 vi.mock("#ui/hud.js", () => ({
   createHud: mocks.createHud,
 }));
 
+vi.mock("#application/pipeline/execution-router.js", () => ({
+  executeGroups: mocks.executeGroups,
+}));
+
 vi.mock("#infrastructure/factories.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("#infrastructure/factories.js")>();
-  mocks.agentSpawnerFactorySpy.mockImplementation(actual.agentSpawnerFactory);
+  mocks.agentSpawnerFactorySpy.mockImplementation(() => ({
+    spawn: (role: string) => ({
+      sessionId: `${role}-session`,
+      style: { label: role, color: "white", badge: role },
+      alive: true,
+      stderr: "",
+      send: vi.fn(async () => ({
+        exitCode: 0,
+        assistantText: "",
+        resultText: "",
+        needsInput: false,
+        sessionId: `${role}-session`,
+      })),
+      sendQuiet: vi.fn(async () => ""),
+      inject: vi.fn(),
+      kill: vi.fn(),
+      pipe: vi.fn(),
+    }),
+  }));
   return {
     ...actual,
     agentSpawnerFactory: mocks.agentSpawnerFactorySpy,
@@ -184,7 +216,7 @@ beforeEach(async () => {
     completeness: "completeness-skill",
   });
   mocks.buildSkillOverrides.mockReturnValue({});
-  mocks.resolveAllAgentConfigs.mockReturnValue({});
+  mocks.resolveAllAgentConfigs.mockReturnValue(AGENT_DEFAULTS);
   mocks.parsePlan.mockResolvedValue([
     {
       name: "Runtime path",
@@ -234,9 +266,10 @@ describe("main runtime path", () => {
         exit: vi.fn(),
         registryPath: join(tempDir, ".orch", "runs.json"),
       }),
-    ).rejects.toThrow("createContainer runtime wiring has not been restored yet");
+    ).resolves.toBeUndefined();
 
     expect(mocks.agentSpawnerFactorySpy).toHaveBeenCalledTimes(1);
+    expect(mocks.executeGroups).toHaveBeenCalledTimes(1);
   });
 
   it("does not await the auditor before continuing foreground startup", async () => {
@@ -250,7 +283,7 @@ describe("main runtime path", () => {
         exit: vi.fn(),
         registryPath: join(tempDir, ".orch", "runs.json"),
       }),
-    ).rejects.toThrow("createContainer runtime wiring has not been restored yet");
+    ).resolves.toBeUndefined();
 
     expect(mocks.auditContextInBackground).toHaveBeenCalledWith(
       join(currentCwd, ".orch"),
@@ -272,7 +305,7 @@ describe("main runtime path", () => {
         exit: vi.fn(),
         registryPath: join(tempDir, ".orch", "runs.json"),
       }),
-    ).rejects.toThrow("createContainer runtime wiring has not been restored yet");
+    ).resolves.toBeUndefined();
 
     expect(mocks.auditContextInBackground).toHaveBeenCalledWith(
       join(currentCwd, ".orch"),

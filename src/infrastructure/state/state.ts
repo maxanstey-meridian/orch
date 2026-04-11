@@ -1,5 +1,5 @@
-import { readFile, writeFile, rm } from "fs/promises";
-import { join } from "path";
+import { mkdir, readFile, writeFile, rm } from "fs/promises";
+import { dirname, join } from "path";
 import { z } from "zod";
 
 export type { OrchestratorState } from "#domain/state.js";
@@ -99,6 +99,7 @@ export const loadState = async (filePath: string): Promise<OrchestratorState> =>
 };
 
 export const saveState = async (filePath: string, state: OrchestratorState): Promise<void> => {
+  await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, JSON.stringify(state, null, 2));
 };
 

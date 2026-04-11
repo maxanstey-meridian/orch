@@ -5,7 +5,7 @@ import { createInterruptState } from "#application/interrupt-state.js";
 import { createPipelineContext } from "#application/pipeline-context.js";
 import { ExecutionUnitTierSelector } from "#application/ports/execution-unit-tier-selector.port.js";
 import { ExecutionUnitTriager } from "#application/ports/execution-unit-triager.port.js";
-import { RunOrchestration } from "#application/run-orchestration.js";
+import { PipelineRuntime } from "#application/pipeline-runtime.js";
 import {
   OperatorGate,
   type CreditDecision,
@@ -480,7 +480,7 @@ describe("pipelineRunner", () => {
   it("RunOrchestration routes completeness, verify, review, gap, and final through pipelineRunner", async () => {
     useSlowAgentClock();
     const { spawner, persistence, gate, git, prompts, progress, log } = createHarness();
-    const uc = new RunOrchestration(
+    const uc = new PipelineRuntime(
       spawner,
       persistence,
       gate,
@@ -528,7 +528,7 @@ describe("pipelineRunner", () => {
   it("RunOrchestration treats non-zero gap exits as dirty and sends fixes back to TDD", async () => {
     useSlowAgentClock();
     const { spawner, persistence, gate, git, prompts, progress, log } = createHarness();
-    const uc = new RunOrchestration(
+    const uc = new PipelineRuntime(
       spawner,
       persistence,
       gate,
@@ -575,7 +575,7 @@ describe("pipelineRunner", () => {
   it("RunOrchestration does not persist a skipped slice as completed", async () => {
     useSlowAgentClock();
     const { spawner, persistence, gate, git, prompts, progress, log } = createHarness();
-    const uc = new RunOrchestration(
+    const uc = new PipelineRuntime(
       spawner,
       persistence,
       gate,
@@ -607,7 +607,7 @@ describe("pipelineRunner", () => {
 
   it("RunOrchestration honors minAgentDurationMs and retryDelayMs overrides", async () => {
     const { spawner, persistence, gate, git, prompts, progress, log } = createHarness();
-    const uc = new RunOrchestration(
+    const uc = new PipelineRuntime(
       spawner,
       persistence,
       gate,
@@ -663,7 +663,7 @@ describe("pipelineRunner", () => {
   it("RunOrchestration honors usage probe delay overrides", async () => {
     useSlowAgentClock();
     const { spawner, persistence, gate, git, prompts, progress, log } = createHarness();
-    const uc = new RunOrchestration(
+    const uc = new PipelineRuntime(
       spawner,
       persistence,
       gate,
