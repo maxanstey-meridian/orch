@@ -15,6 +15,10 @@ export class InkRuntimeInteractionGate implements RuntimeInteractionGate {
       await this.hud.askUser(`${request.summary} — (y)es / (n)o / (c)ancel: `),
     );
 
+    if (choice === "y" || choice === "yes") {
+      return { kind: "approve" };
+    }
+
     if (choice === "n" || choice === "no") {
       return { kind: "reject" };
     }
@@ -23,6 +27,6 @@ export class InkRuntimeInteractionGate implements RuntimeInteractionGate {
       return { kind: "cancel" };
     }
 
-    return { kind: "approve" };
+    return { kind: "reject" };
   }
 }

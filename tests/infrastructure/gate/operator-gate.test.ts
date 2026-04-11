@@ -200,7 +200,35 @@ describe("runtime interaction gates", () => {
     ).resolves.toEqual({ kind: "cancel" });
   });
 
-  it("InkRuntimeInteractionGate approves by default", async () => {
+  it("InkRuntimeInteractionGate approves on y", async () => {
+    const hud = new FakeHud();
+    hud.queueAskAnswer("y");
+    const gate = new InkRuntimeInteractionGate(hud);
+
+    await expect(
+      gate.decide({
+        kind: "fileChangeApproval",
+        summary: "Apply file changes",
+        files: ["src/main.ts"],
+      }),
+    ).resolves.toEqual({ kind: "approve" });
+  });
+
+  it("InkRuntimeInteractionGate rejects invalid input", async () => {
+    const hud = new FakeHud();
+    hud.queueAskAnswer("wat");
+    const gate = new InkRuntimeInteractionGate(hud);
+
+    await expect(
+      gate.decide({
+        kind: "fileChangeApproval",
+        summary: "Apply file changes",
+        files: ["src/main.ts"],
+      }),
+    ).resolves.toEqual({ kind: "reject" });
+  });
+
+  it("InkRuntimeInteractionGate rejects blank input", async () => {
     const hud = new FakeHud();
     hud.queueAskAnswer("");
     const gate = new InkRuntimeInteractionGate(hud);
@@ -211,7 +239,7 @@ describe("runtime interaction gates", () => {
         summary: "Apply file changes",
         files: ["src/main.ts"],
       }),
-    ).resolves.toEqual({ kind: "approve" });
+    ).resolves.toEqual({ kind: "reject" });
   });
 
   it("SilentRuntimeInteractionGate auto-approves", async () => {
