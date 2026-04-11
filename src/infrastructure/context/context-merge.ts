@@ -55,7 +55,7 @@ export const mergePlannerContextUpdates = (
 
     // Verified entries win — skip if effective provenance says verified
     const effectiveProv = artifact.effective.provenance[path];
-    if (effectiveProv !== undefined && (effectiveProv.source as string) === "verified") {
+    if (effectiveProv?.source === "verified") {
       continue;
     }
 

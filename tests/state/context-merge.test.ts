@@ -66,7 +66,12 @@ describe("mergePlannerContextUpdates", () => {
         operator: { context: {}, provenance: {} },
         detected: {
           context: { architecture: "Detected arch" },
-          provenance: {},
+          provenance: {
+            "context.architecture": {
+              source: "verified",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          },
         },
         planner: { context: {}, provenance: {} },
       },
@@ -74,7 +79,7 @@ describe("mergePlannerContextUpdates", () => {
         context: { architecture: "Detected arch" },
         provenance: {
           "context.architecture": {
-            source: "verified" as "detected",
+            source: "verified",
             updatedAt: "2026-01-01T00:00:00.000Z",
           },
         },
@@ -88,6 +93,7 @@ describe("mergePlannerContextUpdates", () => {
     // Verified wins — planner entry skipped
     expect(result.layers.planner.context.architecture).toBeUndefined();
     expect(result.effective.context.architecture).toBe("Detected arch");
+    expect(result.effective.provenance["context.architecture"]?.source).toBe("verified");
   });
 
   it("planner can add keys alongside existing detected entries", () => {
