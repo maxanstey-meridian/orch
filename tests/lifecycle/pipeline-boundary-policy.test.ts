@@ -46,13 +46,32 @@ describe("pipeline boundary policy", () => {
       review: "defer",
       gap: "skip",
       reason: "mixed boundary policy",
+    }, {
+      completeness: "skip",
+      verify: "skip",
+      review: "skip",
+      gap: "skip",
+      reason: "second slice boundary",
     });
 
-    harness.spawner.onNextSpawn("tdd", okResult({ assistantText: "implemented slice" }));
+    harness.spawner.onNextSpawn(
+      "tdd",
+      okResult({ assistantText: "implemented slice 1" }),
+      () => {
+        const verify = harness.spawner.lastAgent("verify");
+        expect(verify.sentPrompts).toHaveLength(1);
+
+        const review = harness.spawner.agentsForRole("review");
+        expect(review).toHaveLength(1);
+        expect(review[0].sentPrompts).toHaveLength(0);
+
+        return okResult({ assistantText: "implemented slice 2" });
+      },
+    );
     harness.spawner.onNextSpawn("verify", okResult({ assistantText: verifyPass() }));
     harness.spawner.onNextSpawn("review", okResult({ assistantText: "REVIEW_CLEAN" }));
 
-    await harness.execute([makeGroup("Core", [makeSlice(1)])]);
+    await harness.execute([makeGroup("Core", [makeSlice(1), makeSlice(2)])]);
 
     expect(harness.spawner.agentsForRole("verify")).toHaveLength(1);
     expect(harness.spawner.lastAgent("verify").sentPrompts[0]).toContain("[VERIFY:1]");

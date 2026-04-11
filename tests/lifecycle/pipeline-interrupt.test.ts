@@ -51,7 +51,7 @@ describe("pipeline interrupts", () => {
 
     await harness.execute([makeGroup("Core", [makeSlice(1), makeSlice(2)])]);
 
-    expect(harness.interrupts.quitRequested()).toBe(true);
+    expect(harness.uc.quitRequested).toBe(true);
     expect(harness.spawner.lastAgent("tdd").sentPrompts).toHaveLength(1);
     expect(harness.persistence.current.lastCompletedSlice).toBeUndefined();
   });
@@ -83,6 +83,6 @@ describe("pipeline interrupts", () => {
     expect(allTdd[allTdd.length - 1].sentPrompts.some((prompt) =>
       prompt.includes("use factory pattern instead"),
     )).toBe(true);
-    expect(harness.interrupts.hardInterrupt()).toBeNull();
+    expect(harness.uc.hardInterruptPending).toBeNull();
   });
 });
