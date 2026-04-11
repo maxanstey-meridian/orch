@@ -22,6 +22,10 @@ import {
 
 let tempDir: string;
 let orchDir: string;
+const flushBackgroundAudit = async (): Promise<void> => {
+  await Promise.resolve();
+  await Promise.resolve();
+};
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "orch-auditor-test-"));
@@ -422,7 +426,8 @@ describe("auditContextInBackground", () => {
 
     saveRepoContext(orchDir, artifact);
 
-    await auditContextInBackground(orchDir, tempDir);
+    auditContextInBackground(orchDir, tempDir);
+    await flushBackgroundAudit();
 
     const reloaded = loadRepoContext(orchDir);
     expect(reloaded).not.toBeNull();
@@ -432,13 +437,17 @@ describe("auditContextInBackground", () => {
   });
 
   it("returns cleanly when context.json does not exist", async () => {
-    await expect(auditContextInBackground(orchDir, tempDir)).resolves.toBeUndefined();
+    expect(() => auditContextInBackground(orchDir, tempDir)).not.toThrow();
+    await flushBackgroundAudit();
+    expect(loadRepoContext(orchDir)).toBeNull();
   });
 
-  it("rejects when the stored artifact is invalid", async () => {
+  it("contains invalid stored artifacts instead of rejecting", async () => {
     // Write invalid JSON to context.json
     writeFileSync(join(orchDir, "context.json"), "not json");
 
-    await expect(auditContextInBackground(orchDir, tempDir)).rejects.toThrow();
+    expect(() => auditContextInBackground(orchDir, tempDir)).not.toThrow();
+    await flushBackgroundAudit();
+    expect(() => loadRepoContext(orchDir)).toThrow();
   });
 });

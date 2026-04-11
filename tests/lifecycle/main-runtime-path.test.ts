@@ -259,8 +259,10 @@ describe("main runtime path", () => {
     expect(mocks.agentSpawnerFactorySpy).toHaveBeenCalledTimes(1);
   });
 
-  it("catches and ignores auditor rejections", async () => {
-    mocks.auditContextInBackground.mockRejectedValue(new Error("audit failed"));
+  it("catches and ignores auditor scheduling errors", async () => {
+    mocks.auditContextInBackground.mockImplementation(() => {
+      throw new Error("audit failed");
+    });
     const { main } = await import("../../src/main.js");
     const currentCwd = process.cwd();
 

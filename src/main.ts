@@ -112,8 +112,7 @@ const registerActiveRun = async (
 
 const scheduleContextAudit = (outputDir: string, cwd: string): void => {
   try {
-    const auditPromise = auditContextInBackground(outputDir, cwd);
-    void auditPromise.catch(() => {});
+    auditContextInBackground(outputDir, cwd);
   } catch {
     // Background verification must never abort foreground startup or planning.
   }

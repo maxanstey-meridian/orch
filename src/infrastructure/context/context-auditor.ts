@@ -123,6 +123,14 @@ export const auditContextEntries = (
 
 // ─── Background wrapper ───────────────────────────────────────────────────
 
-export const auditContextInBackground = async (outputDir: string, cwd: string): Promise<void> => {
+const runContextAudit = async (outputDir: string, cwd: string): Promise<void> => {
   updateRepoContext(outputDir, (artifact) => auditContextEntries(artifact, cwd));
+};
+
+export const auditContextInBackground = (outputDir: string, cwd: string): void => {
+  void Promise.resolve()
+    .then(async () => runContextAudit(outputDir, cwd))
+    .catch(() => {
+      // Background verification must never abort foreground work.
+    });
 };
