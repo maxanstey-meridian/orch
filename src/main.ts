@@ -6,7 +6,7 @@ import { resolveAllAgentConfigs } from "#domain/agent-config.js";
 import type { ExecutionMode, ExecutionPreference, OrchestratorConfig } from "#domain/config.js";
 import { hasRepoContextArtifact } from "#domain/context.js";
 import { CreditExhaustedError, IncompleteRunError } from "#domain/errors.js";
-import type { Group, PlanDocument } from "#domain/plan.js";
+import type { PlanDocument } from "#domain/plan.js";
 import {
   parseBranchFlag,
   parseExecutionPreference,
@@ -45,16 +45,6 @@ type MainRuntime = {
   readonly registryPath?: string;
   readonly onSignal?: (signal: "SIGINT" | "SIGTERM", handler: () => void) => NodeJS.Process;
   readonly exit?: (code: number) => void;
-};
-
-type RuntimeLike = {
-  readonly execute: (
-    groups: readonly Group[],
-    opts?: {
-      readonly onReady?: (info: { readonly tddSessionId: string; readonly reviewSessionId: string }) => void;
-    },
-  ) => Promise<void>;
-  readonly dispose?: () => Promise<void> | void;
 };
 
 const getArgValue = (args: readonly string[], flag: string): string | undefined => {
@@ -439,7 +429,7 @@ export const main = async (runtime: MainRuntime = {}): Promise<void> => {
   });
 
   const container = createContainer(config, hud);
-  const orch = container.resolve("pipelineRuntime") as RuntimeLike;
+  const orch = container.resolve("pipelineRuntime");
   cleanup = async () => {
     if (disposed) {
       return;
@@ -454,7 +444,7 @@ export const main = async (runtime: MainRuntime = {}): Promise<void> => {
 
   try {
     await orch.execute(groups, {
-      onReady: (info: { readonly tddSessionId: string; readonly reviewSessionId: string }) => {
+      onReady: (info) => {
         printStartupBanner(console.log, {
           planPath,
           brief,
@@ -464,7 +454,7 @@ export const main = async (runtime: MainRuntime = {}): Promise<void> => {
           interactive: isInteractive,
           tddSessionId: info.tddSessionId,
           reviewSessionId: info.reviewSessionId,
-          groups: groups as readonly Group[],
+          groups,
           worktree: worktreeInfo,
           orchrcSummary,
         });
