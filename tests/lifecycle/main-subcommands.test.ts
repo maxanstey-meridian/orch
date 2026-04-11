@@ -227,6 +227,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   process.chdir(originalCwd);
   process.argv = [...originalArgv];
   await rm(tempDir, { recursive: true, force: true });
@@ -265,6 +266,45 @@ describe("main subcommands", () => {
     expect(consoleLog).toHaveBeenCalledWith(JSON.stringify(run, null, 2));
     expect(mocks.assertGitRepo).not.toHaveBeenCalled();
     expect(mocks.executeGroups).not.toHaveBeenCalled();
+  });
+
+  it("keeps polling status in follow mode until interrupted", async () => {
+    vi.useFakeTimers();
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const handlers = new Map<string, () => void>();
+    const exit = vi.fn();
+    const { main } = await import("../../src/main.js");
+    mocks.aggregateDashboard.mockResolvedValue({
+      active: [],
+      queued: [],
+      completed: [],
+    });
+    process.argv = ["node", "/virtual/main.ts", "status", "-f"];
+
+    const mainPromise = main({
+      onSignal: (signal, handler) => {
+        handlers.set(signal, handler);
+        return process;
+      },
+      exit,
+      registryPath,
+    });
+
+    await Promise.resolve();
+    expect(mocks.aggregateDashboard).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(mocks.aggregateDashboard).toHaveBeenCalledTimes(2);
+
+    handlers.get("SIGINT")?.();
+    await expect(mainPromise).resolves.toBeUndefined();
+
+    expect(exit).toHaveBeenCalledWith(130);
+    expect(consoleLog).toHaveBeenCalledTimes(2);
+    expect(mocks.assertGitRepo).not.toHaveBeenCalled();
+    expect(mocks.executeGroups).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
   });
 
   it("routes queue add through addToQueue without starting orchestration", async () => {
@@ -352,5 +392,22 @@ describe("main subcommands", () => {
     expect(mocks.agentSpawnerFactorySpy).toHaveBeenCalledTimes(1);
     expect(mocks.executeGroups).not.toHaveBeenCalled();
     expect(hud.teardown).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects work without a plan path before startup work begins", async () => {
+    const { main } = await import("../../src/main.js");
+    process.argv = ["node", "/virtual/main.ts", "work"];
+
+    await expect(
+      main({
+        onSignal: () => process,
+        exit: vi.fn(),
+        registryPath,
+      }),
+    ).rejects.toThrow("work requires a plan path");
+
+    expect(mocks.assertGitRepo).not.toHaveBeenCalled();
+    expect(mocks.runFingerprint).not.toHaveBeenCalled();
+    expect(mocks.executeGroups).not.toHaveBeenCalled();
   });
 });

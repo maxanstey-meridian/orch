@@ -47,6 +47,8 @@ type MainRuntime = {
   readonly exit?: (code: number) => void;
 };
 
+const STATUS_FOLLOW_INTERVAL_MS = 1_000;
+
 const getArgValue = (args: readonly string[], flag: string): string | undefined => {
   const index = args.indexOf(flag);
   if (index === -1) {
@@ -154,6 +156,52 @@ const printStatus = async (
   );
 };
 
+const followStatus = async (
+  registryPath: string,
+  queuePath: string,
+  id: string | undefined,
+  onSignal: NonNullable<MainRuntime["onSignal"]>,
+  exit: NonNullable<MainRuntime["exit"]>,
+): Promise<void> =>
+  await new Promise<void>((resolve, reject) => {
+    let timeoutId: NodeJS.Timeout | null = null;
+    let active = true;
+
+    const stop = (code: number): void => {
+      if (!active) {
+        return;
+      }
+
+      active = false;
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+      exit(code);
+      resolve();
+    };
+
+    const schedule = (): void => {
+      timeoutId = setTimeout(() => {
+        void printStatus(registryPath, queuePath, id)
+          .then(() => {
+            if (active) {
+              schedule();
+            }
+          })
+          .catch(reject);
+      }, STATUS_FOLLOW_INTERVAL_MS);
+    };
+
+    onSignal("SIGINT", () => {
+      stop(130);
+    });
+    onSignal("SIGTERM", () => {
+      stop(143);
+    });
+
+    schedule();
+  });
+
 const legacyArgsForSubcommand = (
   subcommand: ReturnType<typeof parseSubcommand>,
 ): string[] => {
@@ -196,6 +244,9 @@ const scheduleContextAudit = (outputDir: string, cwd: string): void => {
 
 export const main = async (runtime: MainRuntime = {}): Promise<void> => {
   const subcommand = parseSubcommand(process.argv);
+  if (subcommand.command === "work" && "error" in subcommand) {
+    throw new Error("work requires a plan path");
+  }
   const args = legacyArgsForSubcommand(subcommand);
   const exit = runtime.exit ?? ((code: number) => process.exit(code));
   const onSignal = runtime.onSignal ?? ((signal, handler) => process.on(signal, handler));
@@ -213,6 +264,9 @@ export const main = async (runtime: MainRuntime = {}): Promise<void> => {
 
   if (subcommand.command === "status") {
     await printStatus(registryPath, defaultQueuePath(), subcommand.id);
+    if (subcommand.follow) {
+      await followStatus(registryPath, defaultQueuePath(), subcommand.id, onSignal, exit);
+    }
     return;
   }
 
