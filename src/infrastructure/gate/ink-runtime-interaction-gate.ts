@@ -12,7 +12,7 @@ export class InkRuntimeInteractionGate implements RuntimeInteractionGate {
 
   async decide(request: RuntimeInteractionRequest): Promise<RuntimeInteractionDecision> {
     const choice = normalizeChoice(
-      await this.hud.askUser(`${request.summary} - (y)es / (n)o / (c)ancel: `),
+      await this.hud.askUser(`${request.summary} — (y)es / (n)o / (c)ancel: `),
     );
 
     if (choice === "n" || choice === "no") {

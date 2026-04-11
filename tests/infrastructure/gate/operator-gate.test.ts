@@ -167,11 +167,32 @@ describe("runtime interaction gates", () => {
     await expect(
       gate.decide({ kind: "commandApproval", summary: "Run build", command: "pnpm build" }),
     ).resolves.toEqual({ kind: "reject" });
+    expect(hud.askPrompts).toEqual(["Run build — (y)es / (n)o / (c)ancel: "]);
+  });
+
+  it("InkRuntimeInteractionGate rejects on no", async () => {
+    const hud = new FakeHud();
+    hud.queueAskAnswer("no");
+    const gate = new InkRuntimeInteractionGate(hud);
+
+    await expect(
+      gate.decide({ kind: "commandApproval", summary: "Run build", command: "pnpm build" }),
+    ).resolves.toEqual({ kind: "reject" });
   });
 
   it("InkRuntimeInteractionGate cancels on c", async () => {
     const hud = new FakeHud();
     hud.queueAskAnswer("c");
+    const gate = new InkRuntimeInteractionGate(hud);
+
+    await expect(
+      gate.decide({ kind: "permissionApproval", summary: "Allow network access" }),
+    ).resolves.toEqual({ kind: "cancel" });
+  });
+
+  it("InkRuntimeInteractionGate cancels on cancel", async () => {
+    const hud = new FakeHud();
+    hud.queueAskAnswer("cancel");
     const gate = new InkRuntimeInteractionGate(hud);
 
     await expect(
