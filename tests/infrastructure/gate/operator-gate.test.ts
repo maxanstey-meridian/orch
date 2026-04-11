@@ -67,6 +67,16 @@ describe("InkOperatorGate", () => {
     });
   });
 
+  it("returns stop for retryable verify failures on t", async () => {
+    const hud = new FakeHud();
+    hud.queueAskAnswer("t");
+    const gate = new InkOperatorGate(hud);
+
+    await expect(gate.verifyFailed("Slice 1", "tests failed", true)).resolves.toEqual({
+      kind: "stop",
+    });
+  });
+
   it("returns retry on credit exhaustion when r is entered", async () => {
     const hud = new FakeHud();
     hud.queueAskAnswer("r");
@@ -101,6 +111,14 @@ describe("InkOperatorGate", () => {
     const gate = new InkOperatorGate(hud);
 
     await expect(gate.confirmNextGroup("Group 2")).resolves.toBe(false);
+  });
+
+  it("returns true from confirmNextGroup when the operator accepts the default", async () => {
+    const hud = new FakeHud();
+    hud.queueAskAnswer("");
+    const gate = new InkOperatorGate(hud);
+
+    await expect(gate.confirmNextGroup("Group 2")).resolves.toBe(true);
   });
 });
 
