@@ -166,10 +166,10 @@ const printStatus = async (
 
 const legacyArgsForSubcommand = (
   subcommand: ReturnType<typeof parseSubcommand>,
-): readonly string[] => {
+): string[] => {
   switch (subcommand.command) {
     case "legacy":
-      return subcommand.args;
+      return [...subcommand.args];
     case "work":
       return "planPath" in subcommand
         ? ["--work", subcommand.planPath, ...subcommand.flags]
